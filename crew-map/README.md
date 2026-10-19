@@ -87,3 +87,7 @@ The mod hooks Claude Code's events:
 When a code file is first opened, the mod reads that file's imports to build the tree map (JS/TS, Python, Rust including `use crate::…`, C/C++, CSS). The desks and cards are plain text and buttons, and the tree map is an SVG that only redraws when something on it changes.
 
 A warning also pops up when two Claudes edit the same file within a minute of each other.
+
+---
+
+Part of [claude-crew-mods](https://github.com/D3K1D/claude-crew-mods) by [D3K1D](https://github.com/D3K1D), made with Claude in Claude Code. MIT licensed.

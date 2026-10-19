@@ -1,5 +1,7 @@
 # Claude Crew + Codex Bridge
 
+By [D3K1D](https://github.com/D3K1D), made with [Claude](https://claude.com/claude-code).
+
 Two mods for [Claude Code](https://claude.com/claude-code) (the desktop app's Code tab and the terminal):
 
 - **Claude Crew** (`crew-map`): a live view of Claude and its helper Claudes at work. See what each one is on right now, which folders and files they've touched and changed, what it costs, how full each one's context is, when one is waiting on you, when tests are running, and which files a build broke.
@@ -119,6 +121,12 @@ To try a change live, start `claude --plugin-dir ./crew-map`, or put the folder 
 
 Each mod is one hooks module (`<mod>/hooks/register.tsx`) plus a type contract (`<mod>/types/index.d.ts`) for the state it keeps. Claude Code writes its API types into `<mod>/.claude-plugin/types/` when it loads a mod; that folder is git-ignored.
 
+## Credits
+
+Created by [D3K1D](https://github.com/D3K1D).
+
+These mods were built with the help of Claude, Anthropic's AI model, working in [Claude Code](https://claude.com/claude-code). Claude wrote much of the code, the tests and the documentation under D3K1D's direction, and D3K1D designed, reviewed and tested them in daily use. Commits made with Claude's help carry a `Co-Authored-By: Claude` line.
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © 2026 D3K1D

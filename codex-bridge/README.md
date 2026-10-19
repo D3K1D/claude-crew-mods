@@ -66,3 +66,7 @@ With the `crew-map` mod installed, a running Codex also gets its own desk and wi
 - **Linux:** `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.bun/bin`, then your login shell's PATH.
 
 Codex's home is `CODEX_HOME` if set, otherwise `~/.codex`.
+
+---
+
+Part of [claude-crew-mods](https://github.com/D3K1D/claude-crew-mods) by [D3K1D](https://github.com/D3K1D), made with Claude in Claude Code. MIT licensed.
