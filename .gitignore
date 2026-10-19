@@ -1,0 +1,17 @@
+node_modules/
+tests/.build/
+
+# Claude Code writes these into a mod folder when it loads it.
+*/.claude-plugin/types/
+
+.DS_Store
+Thumbs.db
+
+# Editors, logs, local secrets, Codex Bridge notes and settings backups.
+.vscode/
+.idea/
+*.log
+.env
+.env.*
+.codex-bridge/
+settings.json.bak-*

@@ -1,0 +1,20 @@
+{
+  "name": "codex-bridge",
+  "version": "1.2.2",
+  "description": "Gives Claude a codex tool: hand a task to OpenAI Codex (your own ChatGPT/Codex subscription) as a subagent, with model and effort choice, per-project memory, named threads you can rename, reset and archive, your plan usage at a glance, and a live pane of what Codex is doing.",
+  "author": {
+    "name": "D3K1D",
+    "url": "https://github.com/D3K1D"
+  },
+  "homepage": "https://github.com/D3K1D/claude-crew-mods",
+  "repository": "https://github.com/D3K1D/claude-crew-mods",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "openai",
+    "subagent",
+    "delegation",
+    "memory"
+  ],
+  "types": "./types/index.d.ts"
+}

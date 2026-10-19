@@ -1,0 +1,21 @@
+{
+  "name": "crew-map",
+  "version": "1.3.2",
+  "description": "A live view of what Claude and its helper Claudes are doing: a desk per Claude with what it is on now, folder cards of the files touched and changed, a window per Claude with goal, progress, cost and context, waiting-on-you alerts, running commands and tests, build errors, replay and a task summary. An optional tree map too.",
+  "author": {
+    "name": "D3K1D",
+    "url": "https://github.com/D3K1D"
+  },
+  "homepage": "https://github.com/D3K1D/claude-crew-mods",
+  "repository": "https://github.com/D3K1D/claude-crew-mods",
+  "license": "MIT",
+  "keywords": [
+    "visualization",
+    "agents",
+    "subagents",
+    "dashboard",
+    "tests",
+    "cost"
+  ],
+  "types": "./types/index.d.ts"
+}

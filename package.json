@@ -1,0 +1,16 @@
+{
+  "name": "claude-crew-mods",
+  "version": "1.3.2",
+  "private": true,
+  "description": "Claude Code mods: Claude Crew (a live view of Claude and its helpers at work) and Codex Bridge (OpenAI Codex as a Claude subagent).",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "validate": "claude plugin validate . && claude plugin validate crew-map && claude plugin validate codex-bridge"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0",
+    "fast-xml-parser": "^4.5.0"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "crew-mods",
+  "owner": {
+    "name": "D3K1D",
+    "url": "https://github.com/D3K1D"
+  },
+  "metadata": {
+    "description": "Claude Crew (a live view of Claude and its helpers at work) and Codex Bridge (OpenAI Codex as a Claude subagent)."
+  },
+  "plugins": [
+    {
+      "name": "crew-map",
+      "source": "./crew-map",
+      "description": "A live view of what Claude and its helper Claudes are doing: a desk per Claude with what it is on now, folder cards of the files touched and changed, a window per Claude with goal, progress, cost and context, waiting-on-you alerts, running commands and tests, build errors, replay and a task summary. An optional tree map too.",
+      "version": "1.3.2"
+    },
+    {
+      "name": "codex-bridge",
+      "source": "./codex-bridge",
+      "description": "Gives Claude a codex tool: hand a task to OpenAI Codex (your own ChatGPT/Codex subscription) as a subagent, with model and effort choice, per-project memory, named threads you can rename, reset and archive, your plan usage at a glance, and a live pane of what Codex is doing.",
+      "version": "1.2.2"
+    }
+  ]
+}
