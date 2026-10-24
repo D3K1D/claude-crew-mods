@@ -62,6 +62,11 @@ check('desks and folder cards are the default (no map picture, no map hands)', !
   check("the helper's desk shows the file it is on, and its folder", /auth\.test\.ts/.test(text(helper)) && /tests/.test(text(helper)), text(helper))
   check('each desk has a little animated sprite', find(helper, x => x.type === 'Svg').length === 1 && /@keyframes bob/.test(find(helper, x => x.type === 'Svg')[0].props.source))
   check('desks are all the same height (four rows under the border)', desks.every(d => kids(d).length === 4))
+  // Rows a desk takes: its first line is the sprite beside two lines of text, then one row each, and a border.
+  const rowsOfDesk = d => kids(d).reduce((n, line) => n + (line.type === 'Box' ? Math.max(...kids(line).map(k => (k.type === 'Box' ? kids(k).length : k.type === 'Svg' ? Math.ceil(k.props.height / 19) : 1))) : 1), 0) + 2
+  const area = byKey(tree, 'desks')
+  check('the desks area never clips a desk: no fixed height, nothing hidden', area.props.height === undefined && area.props.overflow !== 'hidden', JSON.stringify({ height: area.props.height, overflow: area.props.overflow }))
+  check('...and it keeps room for a whole desk (seven rows)', rowsOfDesk(desks[0]) === 7 && area.props.minHeight >= 7, `desk ${rowsOfDesk(desks[0])} rows, room ${area.props.minHeight}`)
   const main = desks.find(d => text(d).includes('Claude'))
   check("the main desk says what came before", /before: .*(token|client|useAuth|guide)/.test(text(main)), text(main))
 }

@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.2'
+const VERSION = '1.3.3'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -4577,8 +4577,10 @@ export const register: Register = on => {
     const deskCount = deskAgents.length + Math.min(CODEX_DESKS, codexAtDesks.length) + (codexAtDesks.length > CODEX_DESKS ? 1 : 0)
     deskMax = Math.max(deskMax, deskCount)
     const deskRows = Math.max(1, Math.ceil(deskMax / deskPer))
-    // A desk is six rows (four and its border); the area keeps room for the most there have been.
-    const desksH = deskRows * 6 + (deskRows - 1)
+    // A desk is seven rows: the sprite beside its name and state (two), what it is on, where, before (three),
+    // and its border (two). The area keeps at least room for the most there have been, and grows if a desk
+    // draws taller than that (it never clips one).
+    const desksH = deskRows * 7 + (deskRows - 1)
 
     // ── Folder cards: each folder the work touched, its files as chips (green edited, red with errors) ──
     // Built from the session's record of touched files (it keeps edits, and the order files were first
@@ -4696,7 +4698,7 @@ export const register: Register = on => {
     const cardsShown = folders.filter(([, info]) => !q || info.files.some(matchesQ))
     const deskSection = (
       <Box flexDirection="column" rowGap={1}>
-        <Box key="desks" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1} height={desksH} overflow="hidden">
+        <Box key="desks" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1} minHeight={desksH}>
           {deskAgents.map(desk)}
           {codexAtDesks.slice(0, CODEX_DESKS).map(codexDesk)}
           {codexAtDesks.length > CODEX_DESKS ? <Text key="desk-more-codex" dimColor>{`+${fmtK(codexAtDesks.length - CODEX_DESKS)} more Codex`}</Text> : null}

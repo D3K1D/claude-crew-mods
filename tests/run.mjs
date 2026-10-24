@@ -6,7 +6,8 @@
 //   npm test -- crew-map      # only files whose path contains "crew-map"
 import { build } from 'esbuild'
 import { spawnSync } from 'node:child_process'
-import { readdirSync, mkdirSync, existsSync, rmSync, cpSync } from 'node:fs'
+import { readdirSync, mkdirSync, existsSync, rmSync, cpSync, statSync } from 'node:fs'
+const fs_isDir = p => statSync(p).isDirectory()
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -87,13 +88,18 @@ for (const file of files) {
 // so, when no Claude Code is found (CLAUDE_EXE names one; else the desktop app's newest).
 if (!filter || 'engine'.includes(filter) || filter.includes('engine')) {
   const appData = process.env.APPDATA ?? ''
-  const versions = appData && existsSync(join(appData, 'Claude', 'claude-code')) ? readdirSync(join(appData, 'Claude', 'claude-code')).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : []
-  const exe =
-    process.env.CLAUDE_EXE ??
-    versions
-      .reverse()
-      .flatMap(v => readdirSync(join(appData, 'Claude', 'claude-code', v)).map(d => join(appData, 'Claude', 'claude-code', v, d, 'claude.exe')))
-      .find(p => existsSync(p))
+  // The desktop app keeps Claude Code under %APPDATA%/Claude/claude-code, or (newer builds)
+  // %LOCALAPPDATA%/Claude-Data/<profile>/claude-code: the newest version found in either.
+  const roots = [join(appData, 'Claude', 'claude-code')]
+  const local = process.env.LOCALAPPDATA ?? ''
+  if (local && existsSync(join(local, 'Claude-Data')))
+    for (const p of readdirSync(join(local, 'Claude-Data'))) roots.push(join(local, 'Claude-Data', p, 'claude-code'))
+  const found = roots
+    .filter(r => existsSync(r))
+    .flatMap(r => readdirSync(r).flatMap(v => (existsSync(join(r, v)) && fs_isDir(join(r, v)) ? readdirSync(join(r, v)).map(d => ({ v, exe: join(r, v, d, 'claude.exe') })) : [])))
+    .filter(x => existsSync(x.exe))
+    .sort((x, y) => y.v.localeCompare(x.v, undefined, { numeric: true }))
+  const exe = process.env.CLAUDE_EXE ?? found[0]?.exe
   if (!exe) console.log('- engine test skipped: no Claude Code found (set CLAUDE_EXE)')
   else {
     // Each test runs in a copy of the mod it is about (its name says which: codex tests in Codex Bridge).
@@ -111,7 +117,7 @@ if (!filter || 'engine'.includes(filter) || filter.includes('engine')) {
       const fail = Number(text.match(/(\d+) fail/)?.[1] ?? (r.status === 0 ? 0 : 1))
       checks += pass + fail
       failed += fail
-      console.log(`${fail ? '✗' : '✓'} engine: ${mod} (${list.length} file${list.length === 1 ? '' : 's'}) drawn by Claude Code ${relative(appData, exe).split(/[\\/]/)[2] ?? ''}  (${pass} passed${fail ? `, ${fail} failed` : ''})`)
+      console.log(`${fail ? '✗' : '✓'} engine: ${mod} (${list.length} file${list.length === 1 ? '' : 's'}) drawn by Claude Code ${found.find(x => x.exe === exe)?.v ?? ''}  (${pass} passed${fail ? `, ${fail} failed` : ''})`)
       if (fail) console.log(text.split(/\r?\n/).filter(l => /\(fail\)|Error|expected|Received|refused/i.test(l)).slice(0, 14).map(l => `    ${l}`).join('\n'))
     }
   }
