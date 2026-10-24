@@ -28,6 +28,8 @@ export type Agent = {
   progressSrc: 'todos' | 'model' | 'est' | 'done'
   todosDone: number
   todosTotal: number
+  /** To-dos (TodoWrite) in progress. */
+  todosDoing?: number
   /** The todo in progress, when it keeps a list. */
   doing: string
   /** When it took on its current goal: the window's clock for a Claude without a to-do list. */
@@ -119,6 +121,18 @@ export type Trail = { a: string; b: string; w: number }
 
 export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info'; text: string }
 
+/** One task on Claude Code's task list, as the crew last saw it. */
+export type PlanTask = {
+  subject: string
+  status: 'pending' | 'in_progress' | 'completed'
+  /** The Claude that made it: its work bar counts it. */
+  by: string
+  /** What it says while on it ("Running tests"). */
+  active?: string
+  /** Finished before the person's latest message: not part of the work now. */
+  old?: boolean
+}
+
 export type Crew = {
   agents: Agent[]
   nodes: Record<string, MapNode>
@@ -138,6 +152,8 @@ export type Crew = {
   editor: string
   /** Shell commands (not test runs) running, and those that just ended, newest last. */
   shells?: ShellRun[]
+  /** Claude Code's task list (TaskCreate, TaskUpdate, TaskList), by task id. */
+  tasks?: Record<string, PlanTask>
   /** Test runs the crew started, newest last. */
   tests: TestRun[]
   /** Errors from the last failing build or test, by file and line. */

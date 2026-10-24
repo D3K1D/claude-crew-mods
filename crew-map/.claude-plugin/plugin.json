@@ -1,6 +1,6 @@
 {
   "name": "crew-map",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "description": "A live view of what Claude and its helper Claudes are doing: a desk per Claude with what it is on now, folder cards of the files touched and changed, a window per Claude with goal, progress, cost and context, waiting-on-you alerts, running commands and tests, build errors, replay and a task summary. An optional tree map too.",
   "author": {
     "name": "D3K1D",

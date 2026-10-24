@@ -1,13 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, Problem, Replay, ShellRun, Summary, TestRun } from '../types'
+import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, PlanTask, Problem, Replay, ShellRun, Summary, TestRun } from '../types'
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.4'
+const VERSION = '1.3.5'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -1417,13 +1417,86 @@ const scan = (id: string) => {
 
 // ─── Progress ───────────────────────────────────────────────────────────────
 
-const progressOf = (a: Agent) => {
-  if (a.state === 'done' || a.progressSrc === 'done') return { pct: 100, src: 'done' }
-  if (a.todosTotal > 0) return { pct: Math.round((100 * a.todosDone) / a.todosTotal), src: `todos ${a.todosDone}/${a.todosTotal}` }
-  if (a.calls === 0) return { pct: -1, src: a.state === 'idle' ? '' : 'starting' }
+/** The tasks a Claude made that are part of its work now (not those finished before the latest message). */
+const tasksOf = (a: Agent, c: Pick<Crew, 'tasks'>) => Object.values(c.tasks ?? {}).filter(t => t.by === a.id && !t.old)
+
+/**
+ * How far along a Claude is, from its own plan: the share of its tasks (or to-dos) finished, and how many
+ * it is on now. With no plan there is no honest percentage, just what it has done and for how long.
+ */
+const progressOf = (a: Agent, c: Pick<Crew, 'tasks'> = {}): { pct: number; src: string; doing: number; total: number } => {
+  if (a.state === 'done' || a.progressSrc === 'done') return { pct: 100, src: 'done', doing: 0, total: 0 }
+  const plan = tasksOf(a, c)
+  const [done, doing, total] = plan.length
+    ? [plan.filter(t => t.status === 'completed').length, plan.filter(t => t.status === 'in_progress').length, plan.length]
+    : [a.todosDone, a.todosDoing ?? 0, a.todosTotal]
+  if (total > 0) return { pct: Math.round((100 * done) / total), src: `${done} of ${total} ${plan.length ? 'task' : 'to-do'}${total === 1 ? '' : 's'} done`, doing, total }
+  if (a.calls === 0) return { pct: -1, src: a.state === 'idle' ? '' : 'starting', doing: 0, total: 0 }
   // No to-do list: no percentage to show honestly, just what it has done and for how long.
   const secs = a.since ? elapsed((a.state === 'busy' || a.state === 'thinking' ? Date.now() : a.doneAt || Date.now()) - a.since) : ''
-  return { pct: -1, src: `${fmtK(a.calls)} step${a.calls === 1 ? '' : 's'}${secs ? ` · ${secs}` : ''}` }
+  return { pct: -1, src: `${fmtK(a.calls)} step${a.calls === 1 ? '' : 's'}${secs ? ` · ${secs}` : ''}`, doing: 0, total: 0 }
+}
+
+/**
+ * Claude Code's task list after a task call that went through: a new task (its id from the result), a
+ * change of status or wording, a deletion, or the whole list as TaskList / TaskGet report it.
+ */
+const applyTaskCall = (c: Crew, tool: string, a: Record<string, unknown>, ran: unknown, out: string, who: string): Crew => {
+  const res = ((ran as { result?: unknown } | undefined)?.result ?? {}) as Record<string, unknown>
+  const tasks: Record<string, PlanTask> = { ...(c.tasks ?? {}) }
+  const str = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '')
+  const status = (v: unknown): PlanTask['status'] | undefined => (v === 'pending' || v === 'in_progress' || v === 'completed' ? v : undefined)
+  if (tool === 'TaskCreate') {
+    const made = (res.task ?? {}) as Record<string, unknown>
+    // Ids count up from 1; the result names it (else its text does, else it is the next one).
+    const id = str(made.id) || out.match(/#\s*(\d+)/)?.[1] || String(Object.keys(tasks).reduce((m, k) => Math.max(m, Number(k) || 0), 0) + 1)
+    tasks[id] = { subject: trunc(str(made.subject) || str(a.subject), 120), status: 'pending', by: who, ...(str(a.activeForm) ? { active: trunc(str(a.activeForm), 120) } : {}) }
+  } else if (tool === 'TaskUpdate') {
+    if (res.success === false) return c
+    const id = str(a.taskId) || str(res.taskId)
+    if (!id) return c
+    if (a.status === 'deleted') delete tasks[id]
+    else {
+      const was = tasks[id] ?? { subject: '', status: 'pending' as const, by: who }
+      const to = status(a.status) ?? was.status
+      tasks[id] = {
+        ...was,
+        status: to,
+        ...(str(a.subject) ? { subject: trunc(str(a.subject), 120) } : {}),
+        ...(str(a.activeForm) ? { active: trunc(str(a.activeForm), 120) } : {}),
+        // Taken up again, an old task is part of the work now.
+        ...(to !== 'completed' ? { old: false } : {}),
+      }
+    }
+  } else if (tool === 'TaskList' && Array.isArray(res.tasks)) {
+    const seen: Record<string, PlanTask> = {}
+    for (const t of res.tasks as Record<string, unknown>[]) {
+      const id = str(t?.id)
+      const st = status(t?.status)
+      if (!id || !st) continue
+      const was = tasks[id]
+      // One it never saw finish was finished before: not part of the work now.
+      seen[id] = was
+        ? { ...was, subject: trunc(str(t.subject), 120) || was.subject, status: st, ...(st !== 'completed' ? { old: false } : {}) }
+        : { subject: trunc(str(t.subject), 120), status: st, by: who, ...(st === 'completed' ? { old: true } : {}) }
+    }
+    return { ...c, tasks: seen }
+  } else if (tool === 'TaskGet' && res.task && typeof res.task === 'object') {
+    const t = res.task as Record<string, unknown>
+    const id = str(t.id)
+    const st = status(t.status)
+    if (id && st && tasks[id]) tasks[id] = { ...tasks[id], status: st, ...(st !== 'completed' ? { old: false } : {}) }
+  } else return c
+  // A long-lived list keeps its newest 200.
+  const ids = Object.keys(tasks)
+  if (ids.length > 200) for (const k of ids.sort((x, y) => (Number(x) || 0) - (Number(y) || 0)).slice(0, ids.length - 200)) delete tasks[k]
+  return { ...c, tasks }
+}
+
+/** What a Claude is on now, from its plan: the task in progress (its spinner words), else the to-do. */
+const doingOf = (a: Agent, c: Pick<Crew, 'tasks'>) => {
+  const t = tasksOf(a, c).find(x => x.status === 'in_progress')
+  return t ? t.active || t.subject : a.doing
 }
 
 // ─── Demo ───────────────────────────────────────────────────────────────────
@@ -3405,10 +3478,11 @@ export const register: Register = on => {
         ...a,
         state: a.state === 'busy' ? 'busy' : 'thinking',
         ...(id === 'main' && e.text
-          ? { goal: trunc(oneLine(e.text), 500), progress: -1, progressSrc: 'est' as const, todosDone: 0, todosTotal: 0, doing: '', calls: 0, since: Date.now(), thoughts: [], actions: [], stuck: '', recent: [] }
+          ? { goal: trunc(oneLine(e.text), 500), progress: -1, progressSrc: 'est' as const, todosDone: 0, todosTotal: 0, todosDoing: 0, doing: '', calls: 0, since: Date.now(), thoughts: [], actions: [], stuck: '', recent: [] }
           : {}),
       }))
       if (id === 'main' && e.text) {
+        if (d.tasks) d.tasks = Object.fromEntries(Object.entries(d.tasks).map(([k, t]) => [k, t.status === 'completed' ? { ...t, old: true } : t]))
         // What the task's summary is measured against.
         d.turnBase = {
           at: Date.now(),
@@ -3718,13 +3792,7 @@ export const register: Register = on => {
         }
         if (todos) {
           const doing = todos.find(t => t.status === 'in_progress')
-          upd = { ...upd, todosTotal: todos.length, todosDone: todos.filter(t => t.status === 'completed').length, doing: doing?.activeForm ?? doing?.content ?? '' }
-        }
-        if (e.tool === 'TaskCreate') upd = { ...upd, todosTotal: upd.todosTotal + 1 }
-        if (e.tool === 'TaskUpdate') {
-          if (a.status === 'completed') upd = { ...upd, todosDone: Math.min(upd.todosTotal, upd.todosDone + 1) }
-          if (a.status === 'deleted') upd = { ...upd, todosTotal: Math.max(0, upd.todosTotal - 1) }
-          if (a.status === 'in_progress' && typeof a.activeForm === 'string') upd = { ...upd, doing: a.activeForm }
+          upd = { ...upd, todosTotal: todos.length, todosDone: todos.filter(t => t.status === 'completed').length, todosDoing: todos.filter(t => t.status === 'in_progress').length, doing: doing?.activeForm ?? doing?.content ?? '' }
         }
         return upd
       })
@@ -3765,6 +3833,7 @@ export const register: Register = on => {
         stuckNote = ''
         problemNote = ''
         let d = ok && delta && node && !isSpecial(node) ? record(c, node, id, delta) : c
+        if (ok && /^Task(Create|Update|List|Get)$/.test(e.tool)) d = applyTaskCall(d, e.tool, a, ran, out, id)
         // The call is over: a permission it waited on is settled.
         if (d.agents.some(x => x.id === id && x.needs?.tool === e.tool.slice(0, 80))) d = upsert(d, id, x => ({ ...x, needs: undefined }))
         if (testId) {
@@ -4161,8 +4230,9 @@ export const register: Register = on => {
               ? c.nodes[a.node].label
               : trunc(a.detail, 24)
           : ''
-      const { pct, src } = progressOf(a)
+      const { pct, src, doing: onNow, total } = progressOf(a, c)
       const fill = pct >= 0 ? Math.round((pct / 100) * barW) : 0
+      const shade = pct >= 0 && total ? Math.min(barW - fill, Math.round((onNow / total) * barW)) : 0
       const dot = a.state === 'busy' ? '●' : a.state === 'thinking' ? '◌' : a.state === 'done' ? '✓' : '○'
       return (
         <Box flexDirection="column" borderStyle="round" borderColor={a.needs ? NEEDS : color} paddingX={1} width={winWidth}>
@@ -4200,7 +4270,8 @@ export const register: Register = on => {
                 'work',
                 <Box flexDirection="row" flexShrink={1}>
                   <Text color={color}>{'█'.repeat(fill)}</Text>
-                  <Text dimColor>{'░'.repeat(barW - fill)}</Text>
+                  <Text color={color} dimColor>{'▒'.repeat(shade)}</Text>
+                  <Text dimColor>{'░'.repeat(barW - fill - shade)}</Text>
                   <Text bold>{` ${String(pct).padStart(3)}%`}</Text>
                   <Text dimColor wrap="truncate">{src === 'done' ? '' : ` ${src}`}</Text>
                 </Box>,
@@ -4229,7 +4300,7 @@ export const register: Register = on => {
             field('⏸', <Text bold wrap="truncate" color={NEEDS}>{`needs you: ${a.needs.what}`}</Text>)
           ) : a.stuck ? (
             field('⚠', <Text wrap="truncate" color="#FF7B72">{`Stuck? It ${a.stuck}.`}</Text>)
-          ) : (testLine(a) ?? (a.doing ? field('now', <Text wrap="truncate">{a.doing}</Text>) : null)) ?? (a.thoughts.length ? (
+          ) : (testLine(a) ?? (doingOf(a, c) ? field('now', <Text wrap="truncate">{doingOf(a, c)}</Text>) : null)) ?? (a.thoughts.length ? (
             <Box flexDirection="row">
               <Text color={color}>{'› '}</Text>
               <Box flexShrink={1}>
