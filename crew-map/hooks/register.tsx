@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.3'
+const VERSION = '1.3.4'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -1872,6 +1872,43 @@ const deskSprite = (color: string, mood: 'busy' | 'thinking' | 'idle' | 'needs' 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="52" height="34" viewBox="0 0 52 34" style="--clk:${clockNow()}"><style>@keyframes bob{50%{transform:translateY(-2px)}}@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}@keyframes dot{50%{opacity:.2}}</style><g transform="translate(2,10)"><g style="${bob}">${body}${eyes}</g></g>${badge}</svg>`
 }
 
+/**
+ * What a Claude is waiting on, when it is waiting at all:
+ * - you: a permission, an answer or a plan it needs (urgent), or, for the main Claude whose turn is over
+ *   with nothing else running, your next message;
+ * - helpers: the helpers it started, while it sits in the call that runs them, or (main, turn over)
+ *   while helpers it started in the background still work;
+ * - command: a command it runs and waits for, or (main, turn over) a background command still running.
+ */
+type Wait = { kind: 'you' | 'helpers' | 'command'; urgent: boolean; label: string; what: string; short: string }
+const WAIT_TINT = { helpers: '#D2A8FF', command: '#FFA657' } as const
+const waitOf = (a: Agent, c: Crew, now: number): Wait | undefined => {
+  if (a.needs) return { kind: 'you', urgent: true, label: 'waiting on you', what: a.needs.what.replace(/^allow (running )?/, ''), short: 'you' }
+  const kids = c.agents.filter(h => h.id !== a.id && (h.parent ?? 'main') === a.id && (h.state === 'busy' || h.state === 'thinking'))
+  const names = (list: Agent[]) => (list.length > 2 ? `${list.slice(0, 2).map(h => h.name).join(', ')} +${list.length - 2}` : list.map(h => h.name).join(', '))
+  const helpers = (list: Agent[]): Wait => ({ kind: 'helpers', urgent: false, label: `waiting on ${list.length === 1 ? 'a helper' : `${list.length} helpers`}`, what: names(list), short: names(list) })
+  const shells = runningShells(c, now).filter(x => x.agentId === a.id)
+  const command = (label: string): Wait => ({ kind: 'command', urgent: false, label: 'waiting on a command', what: label, short: trunc(label, 28) })
+  if (a.state === 'busy') {
+    // In the call that runs helpers: the ones that call started, else every helper of its own at work.
+    if (a.tool === 'Agent' || a.tool === 'Task') {
+      const mine = kids.filter(h => !!h.spawnId && a.pending.includes(h.spawnId))
+      return mine.length || kids.length ? helpers(mine.length ? mine : kids) : { kind: 'helpers', urgent: false, label: 'waiting on a helper', what: a.detail ? trunc(oneLine(a.detail), 60) : 'starting it', short: 'a helper' }
+    }
+    if (a.tool === 'Bash' || a.tool === 'PowerShell') return command((a.actions[0]?.startsWith('$ ') ? a.actions[0].slice(2) : cmdGist(a.detail)).replace(/^ran /, ''))
+    // Reading a background task's output (it may block until the task ends): the command or the helpers it waits on.
+    if (/^(BashOutput|TaskOutput|AgentOutput|Monitor)$/.test(a.tool)) return shells.length ? command(shells[0].label) : kids.length ? helpers(kids) : command('a background task')
+    return undefined
+  }
+  // The main Claude's turn is over: still waiting on what it left running, else on you.
+  if (a.id === 'main' && (a.state === 'idle' || a.state === 'done')) {
+    if (kids.length) return helpers(kids)
+    if (shells.length) return command(shells.length > 1 ? `${shells[0].label} +${shells.length - 1}` : shells[0].label)
+    return { kind: 'you', urgent: false, label: 'your turn', what: 'waiting for your next message', short: 'your turn' }
+  }
+  return undefined
+}
+
 /** A file that was changed: its outline on the map, its chip in a folder card. */
 const EDITED = '#3FB950'
 const CLOCK_BASE = Date.now()
@@ -3551,6 +3588,7 @@ export const register: Register = on => {
           ...a,
           ...(a.kind === 'agent' ? { kind: spawnKind, name: freshName(c.agents.filter(x => x.id !== id), spawnKind) } : {}),
           spawnId: e.tool_use_id,
+          parent,
           goal: trunc(oneLine([spawnDesc, typeof e.prompt === 'string' ? e.prompt.slice(0, 2000) : ''].filter(Boolean).join(': ')), 500),
           since: Date.now(),
           state: 'thinking',
@@ -4135,11 +4173,13 @@ export const register: Register = on => {
             </Box>
             <Box flexGrow={1} />
             <Box flexShrink={2}>
-              {a.needs ? (
-                <Text bold color={NEEDS} wrap="truncate">{' ⏸ waiting on you'}</Text>
-              ) : (
-                <Text color={actColor} wrap="truncate">{` ${dot} ${verb}${where ? ` ${where}` : ''}`}</Text>
-              )}
+              {(() => {
+                const w = waitOf(a, c, Date.now())
+                if (w?.urgent) return <Text bold color={NEEDS} wrap="truncate">{' ⏸ waiting on you'}</Text>
+                if (w && w.kind === 'you') return <Text dimColor wrap="truncate">{' ○ your turn'}</Text>
+                if (w) return <Text color={WAIT_TINT[w.kind]} wrap="truncate">{` ⏳ waiting on ${w.short}`}</Text>
+                return <Text color={actColor} wrap="truncate">{` ${dot} ${verb}${where ? ` ${where}` : ''}`}</Text>
+              })()}
             </Box>
             {a.id !== 'main' && a.state === 'done' ? (
               <Box flexDirection="row" flexShrink={0}>
@@ -4514,7 +4554,8 @@ export const register: Register = on => {
     const deskW = deskPer === 1 ? cols - 1 : Math.floor((cols - (deskPer - 1)) / deskPer)
     const deskAgents = replaying ? src.agents.filter(a => a.id === 'main' || a.state === 'busy' || a.state === 'thinking') : shown
     const nowOf = (a: Agent): [string, string] => {
-      if (a.needs) return [a.needs.what.replace(/^allow (running )?/, ''), 'waiting on you']
+      const w = waitOf(a, src, Date.now())
+      if (w) return [w.what, w.label]
       if (a.tool === COMPACT && a.state === 'busy') return ['compacting', 'freeing up room']
       if (a.state === 'busy' && a.node && src.nodes[a.node] && !isSpecial(a.node)) return [baseName(a.node), verbOf(a)]
       // A command: Claude's own words for it, as it runs (not "ran …").
@@ -4528,7 +4569,10 @@ export const register: Register = on => {
     const desk = (a: Agent) => {
       const color = colorOf(a)
       const [what, how] = nowOf(a)
-      const mood = a.needs ? 'needs' : a.state === 'busy' ? 'busy' : a.state === 'thinking' ? 'thinking' : a.state === 'done' ? 'done' : 'idle'
+      const wait = waitOf(a, src, Date.now())
+      // Waiting on helpers or a command: a slow bob (it is not working itself); on you: still.
+      const mood = a.needs ? 'needs' : wait && wait.kind !== 'you' ? 'thinking' : a.state === 'busy' ? 'busy' : a.state === 'thinking' ? 'thinking' : a.state === 'done' ? 'done' : 'idle'
+      const waitTint = wait && wait.kind !== 'you' ? WAIT_TINT[wait.kind] : undefined
       // The folder only while it works on a file there (not while it waits, asks or compacts).
       const onAFile = a.state === 'busy' && !a.needs && a.tool !== COMPACT && !!a.node && !!src.nodes[a.node] && !isSpecial(a.node)
       const where = onAFile ? groupOf(a.node) : ''
@@ -4539,10 +4583,10 @@ export const register: Register = on => {
             {isTerminal ? <Text color={color}>{'✻ '}</Text> : <Svg source={deskSprite(color, mood, hash(a.id))} alt={`${a.name}: ${how || what}`} width={52} height={34} />}
             <Box flexDirection="column" flexShrink={1}>
               <Text bold color={color} wrap="truncate">{`${isTerminal ? '' : ' '}${a.name}`}</Text>
-              <Text wrap="truncate" color={a.needs ? NEEDS : undefined} dimColor={!a.needs}>{`${isTerminal ? '' : ' '}${a.needs ? '⏸ ' : ''}${how}`}</Text>
+              <Text wrap="truncate" color={a.needs ? NEEDS : waitTint} dimColor={!a.needs && !waitTint}>{`${isTerminal ? '' : ' '}${a.needs ? '⏸ ' : waitTint ? '⏳ ' : ''}${how}`}</Text>
             </Box>
           </Box>
-          <Text bold wrap="truncate" color={a.needs ? NEEDS : a.state === 'busy' ? '#E6EDF3' : undefined} dimColor={a.state !== 'busy' && !a.needs}>
+          <Text bold wrap="truncate" color={a.needs ? NEEDS : waitTint ?? (a.state === 'busy' ? '#E6EDF3' : undefined)} dimColor={a.state !== 'busy' && !a.needs && !waitTint}>
             {what}
           </Text>
           <Text dimColor wrap="truncate">{where ? (where === OUTSIDE ? 'outside the project' : where === '.' ? 'project top' : where) : ' '}</Text>

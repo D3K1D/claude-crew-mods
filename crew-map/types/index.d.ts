@@ -44,6 +44,8 @@ export type Agent = {
   stuck: string
   /** Its last tool calls, newest last: what the stuck check reads. */
   recent: { sig: string; ok: boolean; at: number }[]
+  /** The Claude that started it (a helper's parent), when known. */
+  parent?: string
   /** What it is waiting on the person for (a permission, an answer, a plan to approve), and for which tool. */
   needs?: { what: string; tool: string; at: number }
   /** Its context window as of its last model request: tokens in it and the window's size. */
