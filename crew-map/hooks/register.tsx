@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.5'
+const VERSION = '1.3.6'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -503,7 +503,7 @@ const crewAt = (c: Crew, i: number, now: number): Crew => {
   return { ...c, agents, changes, nodes, tests: [], problems: [] }
 }
 
-/** The editor files open in: 'code' (VS Code), 'cursor' or 'system', chosen in the pane. */
+/** Where code and text files open: 'code' (VS Code), 'cursor' or 'system', chosen in the pane. Other files open in their own app. */
 let editor = 'code'
 /** The session's folder, for paths in tool output; set at session start. */
 let sessionDir = ''
@@ -1005,10 +1005,40 @@ const blank = (id: string, name: string, kind: string, hue: number): Agent => ({
   recent: [],
 })
 
+/** Files with an app of their own (pictures, sound, video, documents, archives, fonts, 3D): the system's app for the type opens them. */
+const OWN_APP =
+  /\.(png|jpe?g|jfif|gif|bmp|webp|tiff?|ico|heic|heif|avif|psd|cr2|nef|arw|dng|exr|hdr|dds|tga|xcf|kra|aseprite|mp3|wav|flac|ogg|oga|m4a|aac|wma|opus|aiff?|midi?|mp4|m4v|mov|mkv|avi|wmv|webm|flv|mpe?g|3gp|pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub|xps|zip|7z|rar|tar|gz|tgz|bz2|xz|iso|dmg|ttf|otf|woff2?|blend|fbx|glb|stl|3mf|rbxl|rbxm|unitypackage)$/i
+/** Programs, which the system would run rather than open: shown in their folder instead. */
+const PROGRAM = /\.(exe|com|msi|msp|msix|appx|scr|pif|lnk|url|cpl|hta|jar|app|appimage|run|dll|sys|appref-ms)$/i
+/** Scripts the system would run if handed one: opened in an editor, else shown in their folder. */
+const SCRIPT = /\.(bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|reg|sh|command|desktop)$/i
 /**
- * Opens a file in the person's editor. A file this session edited, inside a
- * git repository, opens as a diff against HEAD in VS Code or Cursor; anything
- * else opens plainly. 'system' hands the file to the OS default app.
+ * Where a click on a file sends it: the system's app for its type, the editor chosen in the pane (code and
+ * text), or its folder with it picked out (a program, or a script with no editor to open it in).
+ */
+const routeOf = (path: string, os: string, choice = editor): 'app' | 'editor' | 'reveal' => {
+  if (PROGRAM.test(path)) return 'reveal'
+  if (OWN_APP.test(path)) return 'app'
+  // cmd would act on these characters in a path, so such a file goes to the system, not the editor's launcher.
+  if (choice === 'system' || (os === 'win' && /[&|<>^%!"]/.test(path))) return SCRIPT.test(path) ? 'reveal' : 'app'
+  return 'editor'
+}
+/** How the system opens a path with its default app, and how it shows a file picked out in its folder. */
+const defaultApp = (os: string, path: string) => (os === 'win' ? ['explorer', path.replace(/\//g, '\\')] : os === 'mac' ? ['open', path] : ['xdg-open', path])
+// Explorer's /select wants the path in quotes of its own, which an argument list cannot pass when the path
+// has a space; PowerShell passes it as written (the path in a literal string, its quotes doubled).
+const revealIn = (os: string, path: string) =>
+  os === 'win'
+    ? ['powershell', '-NoProfile', '-NonInteractive', '-Command', `Start-Process explorer.exe -ArgumentList ('/select,"' + '${path.replace(/\//g, '\\').replace(/'/g, "''")}' + '"')`]
+    : os === 'mac'
+      ? ['open', '-R', path]
+      : ['xdg-open', dirOf(path) || '/']
+
+/**
+ * Opens a file: pictures, media and documents in the system's app for their type; code and text in the
+ * person's editor, where a file this session edited, inside a git repository, opens as a diff against
+ * HEAD in VS Code or Cursor; programs (and scripts with nowhere else to go) picked out in their folder,
+ * never run.
  */
 const openInEditor = async ($: EngineInterface, path: string, hasEdits: boolean, line = 0): Promise<Opened> => {
   const os = await platformOf($)
@@ -1021,9 +1051,9 @@ const openInEditor = async ($: EngineInterface, path: string, hasEdits: boolean,
   // Editors' command-line launchers are .cmd scripts on Windows, which only cmd runs; cmd would act on
   // `&`, `|` or `%` in a path, so such a path opens through Explorer instead (the default app, no diff).
   const shell = (argv: string[]) => (isWin ? ['cmd', '/d', '/c', ...argv] : argv)
-  if (editor === 'system' || (isWin && /[&|<>^%!"]/.test(path))) {
-    return handedOn(await run(isWin ? ['explorer', path.replace(/\//g, '\\')] : os === 'mac' ? ['open', path] : ['xdg-open', path]))
-  }
+  const route = routeOf(path, os)
+  if (route === 'reveal') return handedOn(await run(revealIn(os, path)))
+  if (route === 'app') return handedOn(await run(defaultApp(os, path)))
   const canDiff = /^(code|cursor|codium|windsurf)$/.test(editor)
   if (line > 0 && canDiff) {
     return launched(await run(shell([editor, '-g', `${path}:${line}`])))
@@ -2191,8 +2221,7 @@ const CELL_H = 19
 
 /** Opens a folder in the system's file manager. */
 const openFolder = async ($: EngineInterface, path: string): Promise<Opened> => {
-  const os = await platformOf($)
-  const argv = os === 'win' ? ['explorer', path.replace(/\//g, '\\')] : os === 'mac' ? ['open', path] : ['xdg-open', path]
+  const argv = defaultApp(await platformOf($), path)
   const r = await $.process.run(argv, { timeoutMs: 20_000 }).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: err instanceof Error ? err.message : String(err) }))
   // Explorer exits 1 even when it opened the folder: only a failure to start counts.
   return r.exitCode === -1 ? { ok: false, why: r.stderr } : { ok: true, why: '' }
@@ -2201,9 +2230,11 @@ const openFolder = async ($: EngineInterface, path: string): Promise<Opened> => 
 /** Opens a file or folder from a click, and says so: "Opening …", or why it could not. */
 const openAndSay = async ($: EngineInterface, what: 'file' | 'dir', path: string, name: string, hasEdits = false, line = 0) => {
   if (path.startsWith('demo/')) return void $.ui.toast(`${name} is a pretend file from the demo.`)
-  void $.ui.toast(`Opening ${name}${what === 'dir' ? ' in the file manager' : ''}…`)
+  const route = what === 'file' ? routeOf(path, await platformOf($)) : 'dir'
+  const where = { dir: ' in the file manager', app: ' in its app', editor: '', reveal: ' in its folder (a program or script: shown, not run)' }[route]
+  void $.ui.toast(`${route === 'reveal' ? 'Showing' : 'Opening'} ${name}${where}…`)
   const r = what === 'dir' ? await openFolder($, path) : await openInEditor($, path, hasEdits, line)
-  if (!r.ok) void $.ui.toast(`Couldn't open ${name}: ${r.why || 'the program did not start'}${what === 'file' && editor !== 'system' ? ` (is \`${editor}\` on your PATH? "open files in" can pick another app)` : ''}`)
+  if (!r.ok) void $.ui.toast(`Couldn't open ${name}: ${r.why || 'the program did not start'}${route === 'editor' ? ` (is \`${editor}\` on your PATH? "open files in" can pick another app)` : ''}`)
 }
 
 /** The folder group of files outside the session's project. */
@@ -4601,7 +4632,7 @@ export const register: Register = on => {
         {worked.length === 0 ? (
           <Text dimColor>{'none yet'}</Text>
         ) : (
-          <Text dimColor wrap="truncate">{editor === 'system' ? 'click to open' : 'click to open · edited files open as a diff'}</Text>
+          <Text dimColor wrap="truncate">{editor === 'system' ? 'click to open: each in its own app' : 'click to open · pictures, media and documents in their own app · edited code as a diff'}</Text>
         )}
         {workedRows}
         {worked.length > 22 ? <Text dimColor>{`+${fmtK(worked.length - 22)} more`}</Text> : null}
@@ -4783,7 +4814,8 @@ export const register: Register = on => {
           <Box flexDirection="row">
             {dirPath ? (
               <Button key={`dir:${g}`} plain onPress={() => void openAndSay($, 'dir', dirPath, label)}>
-                <Text bold color="#E3B95C">{`📁 ${trunc(label, Math.max(10, cardW - 22))}`}</Text>
+                <Text bold color="#E3B95C">{`📁 ${trunc(label, Math.max(10, cardW - 24))}`}</Text>
+                <Text color="#E3B95C" dimColor>{' ↗'}</Text>
               </Button>
             ) : (
               <Text bold color="#E3B95C" wrap="truncate">{`📁 ${label}`}</Text>
@@ -4862,7 +4894,7 @@ export const register: Register = on => {
           <Button key="view-map" plain onPress={() => void write?.(d => ({ ...d, view: 'map' }))}>
             {'⊞ tree map'}
           </Button>
-          <Text dimColor>{'   open in '}</Text>
+          <Text dimColor>{'   code in '}</Text>
           <Select
             key="editor"
             options={[
@@ -5058,7 +5090,7 @@ export const register: Register = on => {
               <Button key="fit" plain onPress={() => void update($, mapView, v => ({ ...v, ...fit, auto: false, follow: 0, rev: `r${++viewRev}` }))}>
                 {'⤢ fit'}
               </Button>
-              <Text dimColor>{'  open in '}</Text>
+              <Text dimColor>{'  code in '}</Text>
               <Select
                 key="editor"
                 options={[

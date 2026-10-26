@@ -1,6 +1,6 @@
 {
   "name": "claude-crew-mods",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "private": true,
   "description": "Claude Code mods: Claude Crew (a live view of Claude and its helpers at work) and Codex Bridge (OpenAI Codex as a Claude subagent).",
   "author": "D3K1D (https://github.com/D3K1D)",

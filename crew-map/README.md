@@ -26,9 +26,11 @@ Open it with `/crew` (it also opens by itself in a wide window). The repository'
 
 **Waiting on you.** When a Claude is waiting for a permission, an answer or a plan approval, the header says "⏸ N waiting on you", its desk and window turn amber and move to the front, and they say what it needs ("allow running Clear the old build folder").
 
+**What else it's waiting on.** The main Claude's desk and window title also say when it's waiting on its helpers (in purple, with their names: "⏳ waiting on Scout"), on a command it runs or left running in the background (in orange, in Claude's own words: "⏳ waiting on Build the app"), or simply on you, once its turn is over and nothing else is running ("○ your turn").
+
 **Finished helpers** keep their window for 20 seconds, then fold into a button on the log's title row. Click it to open the window again, and **– fold** puts it away.
 
-The bar shows a percentage only when the Claude keeps a to-do list, since that's the only real measure of progress. Otherwise the window shows what's known: how many steps it has taken and for how long. A shell command shows as Claude's own one-line description of it. Every window keeps the same rows, and long lines are cut with "…".
+The bar shows a percentage only when the Claude keeps a plan (Claude Code's task list, or a to-do list), since that's the only real measure of progress. It counts the tasks that Claude made which are finished, out of those still part of the work since your latest message ("40% · 2 of 5 tasks done"), with the one it's on shaded and named on the **now** row. Tasks finished before your latest message drop out, and a helper's tasks fill its own bar. Otherwise the window shows what's known: how many steps it has taken and for how long. A shell command shows as Claude's own one-line description of it. Every window keeps the same rows, and long lines are cut with "…".
 
 **Compaction.** When the conversation is compacted to free up room, the Claude shows "Compacting memory", the header says "🗜 compacting", and the log says how many messages went in and came out.
 
@@ -56,7 +58,7 @@ The warning clears once it gets past the problem. It may just need a hint from y
 
 **Task summary.** When a task ends, a green card sums it up: time taken, files changed with lines added and removed, tests run and the last result, which Claudes and how many Codex runs were involved, and the cost. **Copy as Markdown** puts it on your clipboard, ready for a PR description.
 
-**Opening files.** Click any file chip to open it, and a card's folder name to open that folder in your file manager. **📁 folder** opens the project folder. **▸ files** lists every file touched this session with lines added and removed, and every file there, in the Problems list and in the Codex windows is a button too. A file edited this session opens as a diff against your last commit. Pick the editor (VS Code, Cursor, or your system's default app) from the picker under the map.
+**Opening files.** Click a card's folder name (marked ↗) to open that folder in your file manager, and any file chip to open the file. Pictures, video, audio, documents, archives, fonts and 3D files open in your system's app for that type (Photos for a .png on Windows, Preview on a Mac). Code and text open in the editor you pick. Programs, and scripts when no editor is picked, are shown selected in their folder rather than run. **📁 folder** opens the project folder. **▸ files** lists every file touched this session with lines added and removed, and every file there, in the Problems list and in the Codex windows is a button too. A file edited this session opens as a diff against your last commit. Pick where code opens (VS Code, Cursor, or your system's default app) from the **code in** picker.
 
 **The log.** Everything in time order, one line per action or thought, colour-coded by who did it.
 
@@ -72,7 +74,7 @@ The warning clears once it gets past the problem. It may just need a hint from y
 - `⏪ replay` steps back through the session.
 - `▸ files N` lists every file touched this session.
 - `⊞ tree map` / `▤ desks` switches between the two views. On the tree map, `◀ ▲ ▼ ▶` moves it and `− / +` and `⤢ fit` zoom.
-- `open in` picks the editor files open in.
+- `code in` picks where code and text files open. Other files always open in their own app.
 - `budget $` sets the spending budget.
 
 ## How it works

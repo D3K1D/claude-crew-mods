@@ -14,8 +14,8 @@ They work on their own and better together: with both installed, a running Codex
 ## Claude Crew (`/crew`)
 
 - **Desks and folder cards.** Every Claude at work has a desk with a small animated Claude, what it's on now and what it touched before. Below, every folder the crew touched is a card of file chips: green with line counts when edited, red when a build failed on them, with a coloured dot while a Claude is on them. Click a chip to open the file. The older tree map is one click away.
-- **A window per Claude.** Each window shows its goal, a progress bar, tokens with a dollar estimate, how full its context is (and how often it was compacted), what it's doing and its last actions. Finished helpers fold into one line.
-- **Waiting on you.** When a Claude needs a permission, an answer or a plan approval, its desk and window turn amber, move to the front, and say what it needs.
+- **A window per Claude.** Each window shows its goal, a progress bar counted from Claude's own task list, tokens with a dollar estimate, how full its context is (and how often it was compacted), what it's doing and its last actions. Finished helpers fold into one line.
+- **What it's waiting on.** When a Claude needs a permission, an answer or a plan approval, its desk and window turn amber, move to the front, and say what it needs. The main Claude also says when it's waiting on its helpers or on a command, and when it's your turn.
 - **Tests and commands.** A running line shows each long command and test run in plain words, with a timer. Test results (passed/failed counts) appear in the window, the log and a pop-up.
 - **Problems.** When a build or test fails, the files it names turn red with an error count. A Problems list shows each error, and clicking one opens the file at that line. Supported output: rustc/cargo, tsc, C#/MSBuild, gcc/clang, Go, Python tracebacks, pytest and jest/vitest.
 - **Stuck warning.** You get a heads-up when a Claude runs the same failing command three times, has its last five tool calls fail, or keeps rewriting one file.
@@ -23,7 +23,7 @@ They work on their own and better together: with both installed, a running Codex
 - **Replay.** Step back through the session one tool call at a time, or let it play.
 - **Task summary.** When a task ends, a card lists the files changed, tests, cost and time. **Copy as Markdown** turns it into something you can paste into a PR.
 - **Tree map** (optional): files as icons hung under their folders and importers, with stations for work that isn't a file (the terminal, research, the browser, this PC or a remote one, documents, other MCP apps).
-- Click any file to open it in VS Code or Cursor (as a diff against your last commit), and any folder to open it in your file manager.
+- Click any folder to open it in your file manager, and any file to open it: pictures, video, audio and documents in your system's app for them (Photos for a .png on Windows), code in VS Code or Cursor (as a diff against your last commit). Programs are shown in their folder, never run.
 
 ![The optional tree map running the demo: Claudes swinging between files, a failing test, Codex working on a thread](docs/crew-demo.gif)
 
@@ -115,7 +115,7 @@ npm test
 claude plugin validate .
 ```
 
-`npm test` builds both mods for Node and runs the suites in `tests/` (about 670 checks, with no Claude Code needed), then, when Claude Code is installed, draws both panes through its own engine with `claude plugin test`. `claude plugin validate .` checks the marketplace and both manifests.
+`npm test` builds both mods for Node and runs the suites in `tests/` (about 720 checks, with no Claude Code needed), then, when Claude Code is installed, draws both panes through its own engine with `claude plugin test`. `claude plugin validate .` checks the marketplace and both manifests.
 
 To try a change live, start `claude --plugin-dir ./crew-map`, or put the folder in `CLAUDE_CODE_PLUGIN_DIRS`. Edits reload when Claude's turn ends.
 
