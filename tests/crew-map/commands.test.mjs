@@ -58,7 +58,7 @@ check('a quick command never flashes up', !seenQuick)
 let during
 await bash('cargo build --release 2>&1 | tail -5', async () => { now += 3000; during = await box() }, { text: 'Finished' })
 check('a long command shows while it runs', !!during && text(during).includes('1 running'), during && text(during))
-check('...in words, with who and how long, ● as Claude waits on it', !!during && text(during).includes('3s $ Claude ran cargo build'), during && text(during))
+check('...in words, with who and how long, ● as Claude waits on it', !!during && text(during).includes('3s ▸ Claude ran cargo build'), during && text(during))
 check('...never the raw command', !!during && !text(during).includes('--release') && !text(during).includes('tail'))
 check('it goes when the command returns', !(await box()))
 
@@ -91,12 +91,12 @@ check('stopping one ends it', !(await box()) && crew().log.some(l => l.text.star
 // A test run shows in the same box, marked as a test, not as a command.
 let testBox
 await bash('npm test', async () => { now += 3000; testBox = await box() }, { text: '41 passed' })
-check('a test run shows marked ⚗ as a test, not as a command', !!testBox && text(testBox).includes('⚗ Claude ') && !text(testBox).includes('$ Claude'), testBox && text(testBox))
+check('a test run shows marked ⚗ as a test, not as a command', !!testBox && text(testBox).includes('⚗ Claude ') && !text(testBox).includes('▸ Claude'), testBox && text(testBox))
 
 // Codex's running command shows, named the same way.
 codexRuns = [{ id: 'r1', task: 't', mode: 'write', root: P, cwd: P, model: 'm', effort: 'e', status: 'running', startedAt: now - 10_000, endedAt: 0, thread: '', resumed: false, caller: 'main', activity: 'Running tests', focus: '', touched: [], events: [{ at: now - 4000, kind: 'cmd', text: 'bash -lc "cargo test chunk"', ok: undefined }], files: [], commands: 1, failedCommands: 0, answer: '', notesUpdated: false }]
 b = await box()
-check("Codex's running command shows, in words", !!b && text(b).includes('4s $ Codex ran cargo test'), b && text(b))
+check("Codex's running command shows, in words", !!b && text(b).includes('4s ▸ Codex ran cargo test'), b && text(b))
 codexRuns = []
 
 // Several at once, with long names: one line each, the oldest first, and a count of the rest past the box's rows.

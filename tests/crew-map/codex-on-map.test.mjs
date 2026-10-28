@@ -112,7 +112,7 @@ const log = find(tree, x => x.type === 'Box' && x.props.borderColor === '#30363D
 const logText = log.props.children.map(text).join('\n')
 console.log('\n--- log ---\n' + logText + '\n')
 check('log shows Codex being asked and answering', logText.replace(/ +/g, ' ').includes('Codex ← Scout [chunk-loader]') && logText.replace(/ +/g, ' ').includes('Codex → Claude: done'))
-check('log shows Codex running a command, in words', logText.replace(/ +/g, ' ').includes('Codex $ ran cargo test'))
+check('log shows Codex running a command, in words', logText.replace(/ +/g, ' ').includes('Codex ▸ ran cargo test'))
 console.log('\n--- Codex windows ---\n' + windows.join('\n---\n'))
 mkdirSync(OUT, { recursive: true })
 writeFileSync(`${OUT}/codex.svg`, svg)

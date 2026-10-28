@@ -115,7 +115,7 @@ npm test
 claude plugin validate .
 ```
 
-`npm test` builds both mods for Node and runs the suites in `tests/` (about 720 checks, with no Claude Code needed), then, when Claude Code is installed, draws both panes through its own engine with `claude plugin test`. `claude plugin validate .` checks the marketplace and both manifests.
+`npm test` builds both mods for Node and runs the suites in `tests/` (about 750 checks, with no Claude Code needed), then, when Claude Code is installed, draws both panes through its own engine with `claude plugin test`. `claude plugin validate .` checks the marketplace and both manifests.
 
 To try a change live, start `claude --plugin-dir ./crew-map`, or put the folder in `CLAUDE_CODE_PLUGIN_DIRS`. Edits reload when Claude's turn ends.
 

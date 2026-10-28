@@ -104,7 +104,7 @@ tree = await render()
 check('a to-do list gives a real percentage', text(find(tree, x => x.type === 'Box' && x.props.borderColor === '#D97757')[0]).includes(' 50%'))
 const wall = `mkdir -p harness; { echo "const atom=(...a:any)=>a;"; echo "type Crew=any; tests and more tests"; } > harness/h.ts && node --version && ${'x'.repeat(1500)}`
 await hooks['tool.call']($, { tool: 'Bash', tool_use_id: `c${n++}`, command: wall, description: 'Build a small test harness for the map' }, async () => ({ text: 'ok' }))
-check('a long command reads as what Claude said it does', main().actions[0] === '$ Build a small test harness for the map', main().actions[0])
+check('a long command reads as what Claude said it does', main().actions[0] === '▸ Build a small test harness for the map', main().actions[0])
 check('...and is not mistaken for a test run', !crew().tests.some(t => t.command.includes('harness')))
 for (const [cmd, why] of [['mkdir -p tests/unit', 'mkdir'], ['test -f package.json && echo ok', 'the test builtin'], ['git log -- tests/', 'git log'], ['cat <<EOF > notes.md\nrun the tests\nEOF', 'a heredoc']]) {
   const before = crew().tests.length

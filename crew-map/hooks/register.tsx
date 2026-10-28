@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.6'
+const VERSION = '1.3.7'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -599,7 +599,7 @@ const ACT_COLOR: Record<string, string> = {
   planning: '#D2A8FF',
   thinking: '#8B949E',
 }
-const ICON: Record<string, string> = { Read: '◇', Edit: '✎', MultiEdit: '✎', Write: '✎', Bash: '$', PowerShell: '$', Grep: '⌕', Glob: '⌕', WebFetch: '◎', WebSearch: '◎', Agent: '⇢', Task: '⇢', 'mcp__codex-bridge__codex': '◎' }
+const ICON: Record<string, string> = { Read: '◇', Edit: '✎', MultiEdit: '✎', Write: '✎', Bash: '▸', PowerShell: '▸', Grep: '⌕', Glob: '⌕', WebFetch: '◎', WebSearch: '◎', Agent: '⇢', Task: '⇢', 'mcp__codex-bridge__codex': '◎' }
 VERB['mcp__codex-bridge__codex'] = 'asking Codex'
 const SPECIAL_LABEL: Record<string, string> = {
   $terminal: 'terminal',
@@ -782,6 +782,31 @@ const cutTo = (t: string, w: number) => {
   }
   return `${out.trimEnd()}…`
 }
+/** Words laid over rows of `w` cells, at most `max` rows, the last cut with "…" when there is more. */
+const wrapRows = (t: string, w: number, max: number): string[] => {
+  const rows: string[] = []
+  let row = ''
+  for (let word of oneLine(t).split(' ').filter(Boolean)) {
+    if (row && textW(`${row} ${word}`) <= w) {
+      row = `${row} ${word}`
+      continue
+    }
+    if (row) rows.push(row)
+    // A word wider than a row is broken across rows.
+    while (textW(word) > w) {
+      let head = ''
+      for (const ch of word) {
+        if (textW(head + ch) > w) break
+        head += ch
+      }
+      rows.push(head)
+      word = word.slice(head.length)
+    }
+    row = word
+  }
+  if (row) rows.push(row)
+  return rows.length > max ? [...rows.slice(0, max - 1), cutTo(rows.slice(max - 1).join(' '), w)] : rows
+}
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 /** Columns a Box's frame takes: border, padding, side margins. */
 const frameW = (p: Record<string, unknown>) =>
@@ -878,6 +903,8 @@ const WINDOW_LINGER_MS = 20_000
 const NEEDS = '#E3B341'
 /** Rows of the log: fixed, so lines coming in never move what is below. */
 const LOG_ROWS = 12
+/** Your messages in the log. */
+const YOU = '#79C0FF'
 
 /**
  * A turn the app started by itself, not a prompt: a background task or monitor
@@ -947,9 +974,12 @@ const detailOf = (tool: string, a: Record<string, unknown>): string => {
   return ''
 }
 
+/** What marks a command in the action lines: Claude's words for it follow. */
+const SHELL_MARK = '▸ '
+
 const actionLine = (tool: string, node: string, detail: string, said = '') => {
   // A command by what Claude said it does, else what it runs in a few words: never the raw command.
-  if (tool === 'Bash' || tool === 'PowerShell') return `$ ${trunc(oneLine(said), 120) || cmdGist(detail)}`
+  if (tool === 'Bash' || tool === 'PowerShell') return `${SHELL_MARK}${trunc(oneLine(said), 120) || cmdGist(detail)}`
   if (tool === COMPACT) return '🗜 compacting the conversation'
   const st = stationOf(tool)
   if (st) return `${STATION_ICON[st] ?? '▤'} ${stationLabel(st)}: ${detail}`.trim()
@@ -1998,7 +2028,7 @@ const waitOf = (a: Agent, c: Crew, now: number): Wait | undefined => {
       const mine = kids.filter(h => !!h.spawnId && a.pending.includes(h.spawnId))
       return mine.length || kids.length ? helpers(mine.length ? mine : kids) : { kind: 'helpers', urgent: false, label: 'waiting on a helper', what: a.detail ? trunc(oneLine(a.detail), 60) : 'starting it', short: 'a helper' }
     }
-    if (a.tool === 'Bash' || a.tool === 'PowerShell') return command((a.actions[0]?.startsWith('$ ') ? a.actions[0].slice(2) : cmdGist(a.detail)).replace(/^ran /, ''))
+    if (a.tool === 'Bash' || a.tool === 'PowerShell') return command((a.actions[0]?.startsWith(SHELL_MARK) ? a.actions[0].slice(SHELL_MARK.length) : cmdGist(a.detail)).replace(/^ran /, ''))
     // Reading a background task's output (it may block until the task ends): the command or the helpers it waits on.
     if (/^(BashOutput|TaskOutput|AgentOutput|Monitor)$/.test(a.tool)) return shells.length ? command(shells[0].label) : kids.length ? helpers(kids) : command('a background task')
     return undefined
@@ -3527,7 +3557,7 @@ export const register: Register = on => {
         }
         d.summary = null
       }
-      return id === 'main' && e.text ? log(d, id, 'info', `new task: ${trunc(oneLine(e.text), 120)}`) : d
+      return id === 'main' && e.text ? { ...d, log: [...d.log, { at: Date.now(), who: 'You', hue: 0, kind: 'you' as const, text: trunc(oneLine(e.text), 600) }].slice(-40) } : d
     })
     return next(e)
   })
@@ -4204,7 +4234,7 @@ export const register: Register = on => {
         const who = c.agents.find(a => a.id === t.agentId)
         return { tint: TEST_TINT, mark: '⚗', who: t.who, color: who ? colorOf(who) : '#D97757', label: t.purpose || testPurpose(t.command, ''), startedAt: t.startedAt, background: t.background }
       }),
-      ...cmdsRunning.map(x => ({ tint: '#FFA657', mark: '$', ...x })),
+      ...cmdsRunning.map(x => ({ tint: '#FFA657', mark: '▸', ...x })),
     ]
     const runItem = (x: (typeof runs)[number]) => (
       <Box flexDirection="row" flexShrink={1}>
@@ -4256,7 +4286,7 @@ export const register: Register = on => {
       const where =
         a.state === 'busy' && a.tool !== COMPACT
           ? a.tool === 'Bash' || a.tool === 'PowerShell'
-            ? trunc((a.actions[0]?.startsWith('$ ') ? a.actions[0].slice(2) : cmdGist(a.detail)).replace(/^ran /, ''), 28)
+            ? trunc((a.actions[0]?.startsWith(SHELL_MARK) ? a.actions[0].slice(SHELL_MARK.length) : cmdGist(a.detail)).replace(/^ran /, ''), 28)
             : a.node && c.nodes[a.node]
               ? c.nodes[a.node].label
               : trunc(a.detail, 24)
@@ -4370,7 +4400,7 @@ export const register: Register = on => {
           who: 'Codex',
           hue: -1,
           kind: (ev.kind === 'say' ? 'think' : 'act') as LogLine['kind'],
-          text: ev.kind === 'cmd' ? `$ ${cmdGist(ev.text)}${ev.ok === false ? ' ✗ failed' : ''}` : ev.kind === 'file' ? `✎ ${ev.text}` : ev.text,
+          text: ev.kind === 'cmd' ? `${SHELL_MARK}${cmdGist(ev.text)}${ev.ok === false ? ' ✗ failed' : ''}` : ev.kind === 'file' ? `✎ ${ev.text}` : ev.text,
         })),
       ...(r.endedAt
         ? [
@@ -4427,7 +4457,7 @@ export const register: Register = on => {
             return (
               <Box flexDirection="row">
                 <Text color={ev.kind === 'cmd' ? '#FFA657' : ev.kind === 'file' ? '#7EE787' : ev.kind === 'error' ? '#FF7B72' : CX}>
-                  {`${{ say: '›', think: '·', cmd: '$', file: '✎', plan: '☐', info: '•', error: '!' }[ev.kind] ?? '•'} `}
+                  {`${{ say: '›', think: '·', cmd: '▸', file: '✎', plan: '☐', info: '•', error: '!' }[ev.kind] ?? '•'} `}
                 </Text>
                 <Box flexShrink={1}>
                   <Text wrap="truncate" dimColor={ev.kind === 'think'}>
@@ -4458,8 +4488,20 @@ export const register: Register = on => {
         </Box>
       )
     }
-    const logLines = [...c.log, ...codexLog].sort((x, y) => x.at - y.at).slice(isTerminal ? -6 : -12)
     const nameW = Math.min(cols < 80 ? 8 : 12, Math.max(6, ...c.agents.map(a => a.name.length)))
+    const logBudget = isTerminal ? 6 : LOG_ROWS
+    // What a line's text gets: the room fitPane leaves the pane, less the log box's frame, the clock, the name and a space.
+    const logTextW = Math.max(20, (isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9 - nameW - 1)
+    const youRows = (t: string) => wrapRows(t, logTextW, 3)
+    const allLog = [...c.log, ...codexLog].sort((x, y) => x.at - y.at)
+    const logLines: LogLine[] = []
+    let logUsed = 0
+    for (let i = allLog.length - 1; i >= 0; i--) {
+      const rows = allLog[i].kind === 'you' ? youRows(allLog[i].text).length : 1
+      if (logUsed + rows > logBudget) break
+      logLines.unshift(allLog[i])
+      logUsed += rows
+    }
     const demoOn = c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done')
     const totalTokens = c.spent?.tokens ?? c.agents.reduce((n, a) => n + (a.tokens ?? 0), 0)
     const totalCost = c.spent?.cost ?? c.agents.reduce((n, a) => n + (a.cost ?? 0), 0)
@@ -4662,7 +4704,7 @@ export const register: Register = on => {
       if (a.state === 'busy' && a.node && src.nodes[a.node] && !isSpecial(a.node)) return [baseName(a.node), verbOf(a)]
       // A command: Claude's own words for it, as it runs (not "ran …").
       if (a.state === 'busy' && (a.tool === 'Bash' || a.tool === 'PowerShell'))
-        return [(a.actions[0]?.startsWith('$ ') ? a.actions[0].slice(2) : cmdGist(a.detail)).replace(/^ran /, ''), 'running']
+        return [(a.actions[0]?.startsWith(SHELL_MARK) ? a.actions[0].slice(SHELL_MARK.length) : cmdGist(a.detail)).replace(/^ran /, ''), 'running']
       if (a.state === 'busy') return [a.detail ? trunc(oneLine(a.detail), 40) : verbOf(a), verbOf(a)]
       if (a.state === 'thinking') return ['thinking', 'planning its next step']
       if (a.state === 'done') return ['done', a.cost ? fmtUsd(a.cost) : 'finished']
@@ -5142,8 +5184,24 @@ export const register: Register = on => {
           </Box>
           {logLines.length === 0 ? <Text dimColor>none yet</Text> : null}
           {/* Blank rows up to the log's fixed height, so it never grows as lines come in. */}
-          {Array.from({ length: Math.max(0, (isTerminal ? 6 : LOG_ROWS) - Math.max(1, logLines.length)) }, () => <Text>{' '}</Text>)}
-          {logLines.map(l => (
+          {Array.from({ length: Math.max(0, logBudget - Math.max(1, logUsed)) }, () => <Text>{' '}</Text>)}
+          {logLines.flatMap(l =>
+            l.kind === 'you' ? (
+              // A message of yours: a row each for its first three lines, all starting under the first.
+              youRows(l.text).map((r, i) => (
+                <Box flexDirection="row">
+                  <Box width={9} flexShrink={0}>
+                    <Text dimColor>{i ? ' ' : clock(l.at)}</Text>
+                  </Box>
+                  <Box width={nameW} flexShrink={0}>
+                    <Text color={YOU} bold>
+                      {i ? ' ' : 'You'}
+                    </Text>
+                  </Box>
+                  <Text wrap="truncate" color="#E6EDF3">{` ${r}`}</Text>
+                </Box>
+              ))
+            ) : (
             <Box flexDirection="row">
               <Text dimColor>{`${clock(l.at)} `}</Text>
               <Text color={l.hue < 0 ? CX : PALETTE[l.hue % PALETTE.length]} bold>
@@ -5155,10 +5213,11 @@ export const register: Register = on => {
                 color={l.kind === 'think' ? '#E6EDF3' : undefined}
                 italic={l.kind === 'think'}
               >
-                {l.kind === 'think' ? ` › ${l.text}` : ` ${l.text}`}
+                {l.kind === 'think' ? ` › ${l.text}` : ` ${l.text.replace(/^\$ /, SHELL_MARK)}`}
               </Text>
             </Box>
-          ))}
+            ),
+          )}
         </Box>
 
         {problemsBox}

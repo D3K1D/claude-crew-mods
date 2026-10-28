@@ -52,7 +52,7 @@ const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${
 // Commands shown without the shell noise.
 await hooks['turn.start']($, { text: 'Polish the mod', turnId: 'T1' }, async () => ({}))
 await hooks['tool.call']($, { tool: 'Bash', tool_use_id: 'b1', command: 'SP="C:/Users/me/AppData/Local/Temp/x"; D="C:/dev"\ncd "$SP" && node run2.mjs | tail -1' }, async () => ({ text: 'ok' }))
-check('a command without a description is shown as what it runs, in words (no paths, no pipes into tail)', main().actions[0] === '$ ran node run2.mjs', main().actions[0])
+check('a command without a description is shown as what it runs, in words (no paths, no pipes into tail)', main().actions[0] === '▸ ran node run2.mjs', main().actions[0])
 
 // Cost: Opus 5.5 rates on a turn's usage.
 await hooks['turn.complete']($, { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'T1', usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 20000, cache_creation_input_tokens: 0, model: 'claude-opus-5-5' } }, async () => ({ text: 'ok' }))

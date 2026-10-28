@@ -7,7 +7,7 @@ import type { Limit, PaneUi, Registry, Run, RunEvent, Touch, Usage } from '../ty
 
 const PANE = 'codex-bridge'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.2.2'
+const VERSION = '1.2.3'
 const TOOL = 'codex'
 const MAX_RUNS = 16
 const MAX_EVENTS = 60
@@ -1219,7 +1219,7 @@ export const register: Register = on => {
     // The editor choice is the crew-map mod's setting, when it is installed (another plugin's value: read only).
     const crewState = ((await $.state.get({ plugin: 'crew-map', key: 'crew' } as never).catch(() => ({}))) as { value?: { editor?: string } }).value
     editor = crewState?.editor || 'code'
-    const glyph: Record<RunEvent['kind'], string> = { say: '›', think: '·', cmd: '$', file: '✎', plan: '☐', info: '•', error: '!' }
+    const glyph: Record<RunEvent['kind'], string> = { say: '›', think: '·', cmd: '▸', file: '✎', plan: '☐', info: '•', error: '!' }
     const tint: Record<RunEvent['kind'], string | undefined> = {
       say: '#E6EDF3',
       think: undefined,

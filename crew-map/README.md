@@ -60,7 +60,7 @@ The warning clears once it gets past the problem. It may just need a hint from y
 
 **Opening files.** Click a card's folder name (marked ↗) to open that folder in your file manager, and any file chip to open the file. Pictures, video, audio, documents, archives, fonts and 3D files open in your system's app for that type (Photos for a .png on Windows, Preview on a Mac). Code and text open in the editor you pick. Programs, and scripts when no editor is picked, are shown selected in their folder rather than run. **📁 folder** opens the project folder. **▸ files** lists every file touched this session with lines added and removed, and every file there, in the Problems list and in the Codex windows is a button too. A file edited this session opens as a diff against your last commit. Pick where code opens (VS Code, Cursor, or your system's default app) from the **code in** picker.
 
-**The log.** Everything in time order, one line per action or thought, colour-coded by who did it.
+**The log.** Everything in time order, one line per action or thought, colour-coded by who did it. Your own messages show as **You**, in blue, over up to three lines so a long one stays readable. Commands show as ▸ and Claude's own words for them.
 
 **Codex.** With the `codex-bridge` mod installed, a running Codex gets its own desk, window and log lines. On the tree map it gets its own tree (Codex, its threads, and the files each thread read or edited), with a teal robot on the file it's on.
 

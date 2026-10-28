@@ -31,7 +31,7 @@ const TRAIL = '#4B5363'
 const TEXT = '#C9D1D9'
 const GHOST = '#6E7681'
 const SPECIAL: Record<string, [string, string]> = {
-  $terminal: ['$', '#FFA657'],
+  $terminal: ['▸', '#FFA657'],
   '@web': ['◎', '#56D4DD'],
   '?search': ['⌕', '#E3B341'],
   '@browser': ['◍', '#56D4DD'],
