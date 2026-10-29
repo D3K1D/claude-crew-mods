@@ -119,8 +119,8 @@ export type MapNode = {
 
 export type Trail = { a: string; b: string; w: number }
 
-/** One line of the log; 'you' is a message the person sent. */
-export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info' | 'you'; text: string }
+/** One line of the log; 'you' is a message the person sent, 'msg' one another session sent (`who` names it). */
+export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info' | 'you' | 'msg'; text: string }
 
 /** One task on Claude Code's task list, as the crew last saw it. */
 export type PlanTask = {

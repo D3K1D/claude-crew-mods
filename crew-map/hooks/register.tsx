@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.7'
+const VERSION = '1.3.8'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -903,8 +903,9 @@ const WINDOW_LINGER_MS = 20_000
 const NEEDS = '#E3B341'
 /** Rows of the log: fixed, so lines coming in never move what is below. */
 const LOG_ROWS = 12
-/** Your messages in the log. */
+/** Your messages in the log, and those another session sent. */
 const YOU = '#79C0FF'
+const RELAYED = '#D2A8FF'
 
 /**
  * A turn the app started by itself, not a prompt: a background task or monitor
@@ -921,6 +922,22 @@ const systemNote = (full: string) => {
   const kind = tag === 'task-notification' ? 'background task' : tag === 'agent-message' ? 'a helper reported back' : tag.startsWith('ci-') ? 'CI' : tag.includes('command') ? 'command' : 'update'
   return trunc(said ? `${kind}: ${said}` : kind, 120)
 }
+/**
+ * A message that reached Claude from someone other than you, in a wrapper of the app's: another Claude
+ * session (`<cross-session-message from-name="…">`), or a channel. Who sent it, and its words.
+ */
+const relayedOf = (full: string): { from: string; body: string } | undefined => {
+  const m = full.slice(0, 8000).match(/^\s*<(cross-session-message|channel|[a-z]+-message)\b([^>]*)>([\s\S]*?)(?:<\/\1>|$)/i)
+  if (!m) return undefined
+  const attr = (k: string) => m[2].match(new RegExp(`\\b${k}="([^"]*)"`, 'i'))?.[1]?.trim() ?? ''
+  const from = attr('from-name') || attr('sender') || attr('user') || attr('name') || (m[1].toLowerCase() === 'cross-session-message' ? 'another session' : m[1].replace(/-/g, ' '))
+  return { from: trunc(oneLine(from), 40), body: oneLine(m[3].replace(/<[^>]*>/g, ' ')) }
+}
+/** What a prompt asks, without the app's wrapper round it. */
+const promptOf = (t: string) => relayedOf(t)?.body || t
+/** A message in the log: yours, or another session's (also one logged as yours before this was told apart). */
+const messageOf = (l: LogLine): { from: string; body: string } | undefined =>
+  l.kind === 'msg' ? { from: l.who, body: l.text } : l.kind === 'you' ? (relayedOf(l.text) ?? { from: '', body: l.text }) : undefined
 const clock = (ms: number) => new Date(ms).toTimeString().slice(0, 8)
 const hash = (s: string) => {
   let h = 2166136261
@@ -3539,7 +3556,7 @@ export const register: Register = on => {
         ...a,
         state: a.state === 'busy' ? 'busy' : 'thinking',
         ...(id === 'main' && e.text
-          ? { goal: trunc(oneLine(e.text), 500), progress: -1, progressSrc: 'est' as const, todosDone: 0, todosTotal: 0, todosDoing: 0, doing: '', calls: 0, since: Date.now(), thoughts: [], actions: [], stuck: '', recent: [] }
+          ? { goal: trunc(oneLine(promptOf(e.text)), 500), progress: -1, progressSrc: 'est' as const, todosDone: 0, todosTotal: 0, todosDoing: 0, doing: '', calls: 0, since: Date.now(), thoughts: [], actions: [], stuck: '', recent: [] }
           : {}),
       }))
       if (id === 'main' && e.text) {
@@ -3547,7 +3564,7 @@ export const register: Register = on => {
         // What the task's summary is measured against.
         d.turnBase = {
           at: Date.now(),
-          goal: trunc(oneLine(e.text), 500),
+          goal: trunc(oneLine(promptOf(e.text)), 500),
           changes: Object.fromEntries(Object.entries(d.changes).filter(([, ch]) => ch.edits).map(([p, ch]) => [p, { added: ch.added, removed: ch.removed }])),
           tokens: d.spent?.tokens ?? 0,
           cost: d.spent?.cost ?? 0,
@@ -3557,7 +3574,12 @@ export const register: Register = on => {
         }
         d.summary = null
       }
-      return id === 'main' && e.text ? { ...d, log: [...d.log, { at: Date.now(), who: 'You', hue: 0, kind: 'you' as const, text: trunc(oneLine(e.text), 600) }].slice(-40) } : d
+      if (id !== 'main' || !e.text) return d
+      const relayed = relayedOf(e.text)
+      const line: LogLine = relayed
+        ? { at: Date.now(), who: relayed.from, hue: 0, kind: 'msg', text: trunc(relayed.body, 600) }
+        : { at: Date.now(), who: 'You', hue: 0, kind: 'you', text: trunc(oneLine(e.text), 600) }
+      return { ...d, log: [...d.log, line].slice(-40) }
     })
     return next(e)
   })
@@ -4322,7 +4344,7 @@ export const register: Register = on => {
             ) : null}
           </Box>
           {(() => {
-            const goal = a.goal && !systemNote(a.goal) ? oneLine(a.goal) : ''
+            const goal = a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : ''
             // One row: the whole goal is in the summary when the turn ends.
             return field('goal', <Text wrap="truncate" dimColor={!goal}>{goal || (a.id === 'main' ? 'waiting for a prompt' : '…')}</Text>)
           })()}
@@ -4492,12 +4514,13 @@ export const register: Register = on => {
     const logBudget = isTerminal ? 6 : LOG_ROWS
     // What a line's text gets: the room fitPane leaves the pane, less the log box's frame, the clock, the name and a space.
     const logTextW = Math.max(20, (isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9 - nameW - 1)
-    const youRows = (t: string) => wrapRows(t, logTextW, 3)
+    const msgRows = (m: { from: string; body: string }) => wrapRows(m.from ? `${m.from}: ${m.body}` : m.body, logTextW, 3)
     const allLog = [...c.log, ...codexLog].sort((x, y) => x.at - y.at)
     const logLines: LogLine[] = []
     let logUsed = 0
     for (let i = allLog.length - 1; i >= 0; i--) {
-      const rows = allLog[i].kind === 'you' ? youRows(allLog[i].text).length : 1
+      const m = messageOf(allLog[i])
+      const rows = m ? msgRows(m).length : 1
       if (logUsed + rows > logBudget) break
       logLines.unshift(allLog[i])
       logUsed += rows
@@ -5185,20 +5208,29 @@ export const register: Register = on => {
           {logLines.length === 0 ? <Text dimColor>none yet</Text> : null}
           {/* Blank rows up to the log's fixed height, so it never grows as lines come in. */}
           {Array.from({ length: Math.max(0, logBudget - Math.max(1, logUsed)) }, () => <Text>{' '}</Text>)}
-          {logLines.flatMap(l =>
-            l.kind === 'you' ? (
-              // A message of yours: a row each for its first three lines, all starting under the first.
-              youRows(l.text).map((r, i) => (
+          {logLines.flatMap(l => {
+            const m = messageOf(l)
+            // A message: a row each for its first three lines, all starting under the first. Yours is
+            // "You"; another session's is "Msg", its sender first in bold.
+            return m ? (
+              msgRows(m).map((r, i) => (
                 <Box flexDirection="row">
                   <Box width={9} flexShrink={0}>
                     <Text dimColor>{i ? ' ' : clock(l.at)}</Text>
                   </Box>
                   <Box width={nameW} flexShrink={0}>
-                    <Text color={YOU} bold>
-                      {i ? ' ' : 'You'}
+                    <Text color={m.from ? RELAYED : YOU} bold>
+                      {i ? ' ' : m.from ? 'Msg' : 'You'}
                     </Text>
                   </Box>
-                  <Text wrap="truncate" color="#E6EDF3">{` ${r}`}</Text>
+                  {i === 0 && m.from && r.startsWith(`${m.from}:`) ? (
+                    <Box flexDirection="row" flexShrink={1}>
+                      <Text bold color={RELAYED}>{` ${m.from}:`}</Text>
+                      <Text wrap="truncate" color="#E6EDF3">{r.slice(m.from.length + 1)}</Text>
+                    </Box>
+                  ) : (
+                    <Text wrap="truncate" color="#E6EDF3">{` ${r}`}</Text>
+                  )}
                 </Box>
               ))
             ) : (
@@ -5216,8 +5248,8 @@ export const register: Register = on => {
                 {l.kind === 'think' ? ` › ${l.text}` : ` ${l.text.replace(/^\$ /, SHELL_MARK)}`}
               </Text>
             </Box>
-            ),
-          )}
+            )
+          })}
         </Box>
 
         {problemsBox}

@@ -76,4 +76,26 @@ const t = await render(150)
 const rows = rowsOf(logBox(t))
 check('a short message of yours is one row', rows.filter(r => /You\s*thanks, ship it/.test(text(r))).length === 1, rows.map(text).filter(l => /ship/.test(l)).join(''))
 check('...and the log still keeps its height', rows.length === 12, String(rows.length))
+
+// A message another Claude session sent: its sender and words, never the app's wrapper.
+const relay = (id, body) =>
+  `<cross-session-message from="uds:\\\\.\\pipe\\LOCAL\\cc-msg-${id}" from-session="local_3a9ebe96-e007-4da8-ac79-8bac53e21eed" from-name="NPC Factory">\n${body}\n</cross-session-message>`
+await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'U', usage: { input_tokens: 1, output_tokens: 1, model: 'claude-opus-5-5' } }, async () => ({ text: 'ok' }))
+await fire('turn.start', { text: relay('738331bce6fa7d569a78a8979157e626', 'Merge D-16 and run the suite, then tell me which rehearsals still fail.'), turnId: 'V' }, async () => ({}))
+await fire('tool.call', { tool: 'Read', tool_use_id: 'r9', file_path: `${P}/a.ts` }, async () => {
+  const t2 = await render(150)
+  const all = text(t2)
+  const logText = rowsOf(logBox(t2)).map(text).join('\n')
+  check("another session's message is logged as a message from it", /Msg\s*NPC Factory: Merge D-16 and run the suite, then tell me which rehearsals still fail\./.test(logText), logText.split('\n').find(l => /NPC/.test(l)))
+  check('...with none of the wrapper (no tag, pipe or session id) anywhere in the pane', !/cross-session|from-session|pipe|local_3a9e/.test(all), (all.match(/.{0,20}(cross-session|from-session|pipe).{0,20}/) ?? [''])[0])
+  const goalRow = find(t2, x => x.type === 'Box' && x.props.flexDirection === 'row' && text(kids(x)[0]).trim() === 'goal')[0]
+  check("...and the window's goal is what it asks", /^goal\s*Merge D-16 and run the suite/.test(text(goalRow)), text(goalRow))
+  return { text: 'ok' }
+})
+// One logged before 1.3.8 (as yours, the wrapper and all) reads the same.
+globalThis.__store.get('crew').log.push({ at: Date.now(), who: 'You', hue: 0, kind: 'you', text: relay('83e86450c568a0801507967244441cef', 'Old one: check the bus.').replace(/\n/g, ' ') })
+const t3 = await render(150)
+const old = rowsOf(logBox(t3)).map(text).join('\n')
+check('a message logged the old way reads as from NPC Factory, not as raw tags', /Msg\s*NPC Factory: Old one: check the bus\./.test(old) && !/cross-session/.test(old), old.split('\n').at(-1))
+check('...and the log still keeps its height', rowsOf(logBox(t3)).length === 12, String(rowsOf(logBox(t3)).length))
 console.log(`\n${fails} failing check(s)`)
