@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.9'
+const VERSION = '1.3.10'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -886,6 +886,10 @@ const midCut = (name: string, w: number) => {
 }
 /** The most desks shown at once this session: the desks keep that much room, so the cards below never jump. */
 let deskMax = 0
+/** Since when fewer desks than that have been shown (0: not fewer). */
+let deskLowSince = 0
+/** How long the desk area keeps room for desks that have gone, before it gives it back. */
+const DESK_ROOM_MS = 60_000
 
 /** The pane fitted to its columns, a little spare for the desktop's proportional font. */
 const fitPane = <T,>(tree: T, cols: number): T => fitNode(tree as unknown as FitNode, Math.floor(cols * 0.97) - 1) as unknown as T
@@ -3400,6 +3404,17 @@ const replayTo = async (how: 'start' | 'back' | 'fwd' | 'end' | 'play' | 'pause'
 
 const agentOf = (e: unknown) => (e as { agentId?: string }).agentId ?? 'main'
 
+/** What the whole chat has cost so far, as /cost totals it (none where Claude Code keeps no ledger). */
+const readChatCost = async ($: EngineInterface) => {
+  let usd: unknown
+  try {
+    usd = (await $.session.usage()).cost?.usd
+  } catch {
+    return
+  }
+  if (typeof usd === 'number' && Number.isFinite(usd) && usd >= 0) await write?.(c => (c.chatCost === usd ? c : { ...c, chatCost: usd }))
+}
+
 /** Tools that wait on the person by their nature, and what they wait for. */
 const ASKS: Record<string, string> = { AskUserQuestion: 'answer a question', ExitPlanMode: 'approve the plan' }
 /** What a permission prompt asks, in a few words: "allow running npm test", "allow editing token.ts". */
@@ -3523,6 +3538,8 @@ export const register: Register = on => {
     await update($, hoverOn, () => '')
     hoverMirror = ''
     deskMax = 0
+    deskLowSince = 0
+    void readChatCost($)
     // Once per session: a reload or a worker restart starts the module again, not the session.
     if ((await $.store.get('intro').catch(() => undefined)) !== 'off' && !(await read($, intro)).played) await playIntro()
     void $.ui.open({ id: PANE, title: 'Claude Crew' })
@@ -3587,6 +3604,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     const id = agentOf(e)
+    void readChatCost($)
     if (id === 'main') codexCount = await codexRunCount($)
     let budgetNote = ''
     let summary: Summary | undefined
@@ -4529,7 +4547,8 @@ export const register: Register = on => {
     }
     const demoOn = c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done')
     const totalTokens = c.spent?.tokens ?? c.agents.reduce((n, a) => n + (a.tokens ?? 0), 0)
-    const totalCost = c.spent?.cost ?? c.agents.reduce((n, a) => n + (a.cost ?? 0), 0)
+    // The chat's cost as Claude Code totals it, else what the crew counted of it.
+    const totalCost = c.chatCost ?? c.spent?.cost ?? c.agents.reduce((n, a) => n + (a.cost ?? 0), 0)
 
     // The last task's summary: what changed, tests, cost; copied as Markdown for a PR or notes.
     const sm = c.summary
@@ -4637,9 +4656,11 @@ export const register: Register = on => {
     const spenders = c.agents.filter(a => (a.cost ?? 0) > 0).sort((x, y) => y.cost - x.cost)
     const topSpend = spenders[0]?.cost ?? 0
     const budgetTone = c.budget > 0 ? (totalCost >= c.budget ? '#F85149' : totalCost >= c.budget * 0.8 ? '#E3B341' : '#3FB950') : '#8B949E'
-    const spendRow = !spenders.length && !c.budget ? null : (
+    const spendRow = !spenders.length && !c.budget && !(totalCost > 0) ? null : (
       <Box key="spend" flexDirection="row" flexWrap="wrap">
         <Text dimColor>{'spend '}</Text>
+        {totalCost > 0 ? <Text bold>{`chat ${fmtUsd(totalCost)}`}</Text> : null}
+        {totalCost > 0 && spenders.length ? <Text dimColor>{'  ·  '}</Text> : null}
         {spenders.slice(0, 5).map(a => (
           <Box flexDirection="row">
             <Text color={colorOf(a)}>{'█'.repeat(Math.max(1, Math.round((a.cost / (topSpend || 1)) * 8)))}</Text>
@@ -4829,7 +4850,16 @@ export const register: Register = on => {
     const codexAtDesks = replaying ? [] : codexRuns.filter(r => r.status === 'running' || Date.now() - (r.endedAt || 0) < WINDOW_LINGER_MS)
     const CODEX_DESKS = 3
     const deskCount = deskAgents.length + Math.min(CODEX_DESKS, codexAtDesks.length) + (codexAtDesks.length > CODEX_DESKS ? 1 : 0)
-    deskMax = Math.max(deskMax, deskCount)
+    // It keeps room for the most there have been, so the cards below hold still as helpers come and go,
+    // and gives the room back once there have been fewer for a minute.
+    if (deskCount >= deskMax) {
+      deskMax = deskCount
+      deskLowSince = 0
+    } else if (!deskLowSince) deskLowSince = Date.now()
+    else if (Date.now() - deskLowSince > DESK_ROOM_MS) {
+      deskMax = deskCount
+      deskLowSince = 0
+    }
     const deskRows = Math.max(1, Math.ceil(deskMax / deskPer))
     // A desk is seven rows: the sprite beside its name and state (two), what it is on, where, before (three),
     // and its border (two). The area keeps at least room for the most there have been, and grows if a desk
@@ -4953,7 +4983,7 @@ export const register: Register = on => {
     const cardsShown = folders.filter(([, info]) => !q || info.files.some(matchesQ))
     const deskSection = (
       <Box flexDirection="column" rowGap={1}>
-        <Box key="desks" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1} minHeight={desksH}>
+        <Box key="desks" flexDirection="row" flexWrap="wrap" alignItems="flex-start" columnGap={1} rowGap={1} minHeight={desksH}>
           {deskAgents.map(desk)}
           {codexAtDesks.slice(0, CODEX_DESKS).map(codexDesk)}
           {codexAtDesks.length > CODEX_DESKS ? <Text key="desk-more-codex" dimColor>{`+${fmtK(codexAtDesks.length - CODEX_DESKS)} more Codex`}</Text> : null}
@@ -5040,13 +5070,13 @@ export const register: Register = on => {
                 const claudes = `${fmtK(c.agents.length)} claude${c.agents.length === 1 ? '' : 's'}`
                 const codex = codexRuns.length ? ` · codex ${codexRuns.filter(r => r.status === 'running').length}/${codexRuns.length}` : ''
                 const squeeze = c.agents.some(a => a.tool === COMPACT && a.state === 'busy') ? ' · 🗜 compacting' : ''
-                const spend = totalTokens ? ` · ${fmtUsd(totalCost)}${c.budget ? ` of ${fmtUsd(c.budget)}` : ''}` : ''
+                const spend = totalCost > 0 ? ` · chat ${fmtUsd(totalCost)}${c.budget ? ` of ${fmtUsd(c.budget)}` : ''}` : ''
                 if (isTerminal || cols >= 170)
                   return `  ${claudes} · ${fmtK(busy)} busy · ${fmtK(files)} file${files === 1 ? '' : 's'} · ${fmtK(c.calls)} call${c.calls === 1 ? '' : 's'}${totalTokens ? ` · ${fmtK(totalTokens)} tokens` : ''}${spend}${codex}${squeeze} · ${uptime}`
                 if (cols >= 140) return `  ${claudes} · ${fmtK(busy)} busy · ${fmtK(files)} file${files === 1 ? '' : 's'}${spend}${codex}${squeeze} · ${uptime}`
                 if (cols >= 110) return `  ${claudes} · ${fmtK(busy)} busy${spend}${codex}${squeeze}`
                 if (cols >= 96) return `  ${fmtK(busy)}/${fmtK(c.agents.length)} busy${spend}${squeeze}`
-                return ''
+                return spend ? `  ${spend.slice(3)}` : ''
               })()}
             </Text>
           </Box>

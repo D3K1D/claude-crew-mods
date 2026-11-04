@@ -165,6 +165,8 @@ export type Crew = {
   timeline: Frame[]
   /** Tokens and dollars the whole session has used: kept here, since old helpers drop off the agent list. */
   spent: { tokens: number; cost: number }
+  /** What the whole chat has cost, as Claude Code's own /cost totals it (every reply, helpers' too), when it says. */
+  chatCost?: number
   /** Spending limit in dollars (0: none), and the highest share of it already announced. */
   budget: number
   budgetWarned: number

@@ -52,7 +52,7 @@ The pass and fail counts land in its window, the log and a pop-up.
 
 The warning clears once it gets past the problem. It may just need a hint from you.
 
-**Spending.** The spend row shows each Claude's share as a bar. Type a dollar amount into **budget $** to get a pop-up as the session passes 50%, 80% and 100% of it. The header shows how much has been spent against the budget, and the budget is remembered between sessions.
+**Spending.** The header and the spend row show what the whole chat has cost (**chat $12.40**), as Claude Code's own `/cost` totals it: every reply, helpers' included. The spend row then shows each Claude's share as a bar. Type a dollar amount into **budget $** to get a pop-up as the session passes 50%, 80% and 100% of it. The header shows how much has been spent against the budget, and the budget is remembered between sessions.
 
 **Replay.** Press **⏪ replay** to step back through the session, one tool call at a time. You can play, pause, step, jump to either end, or go back to live.
 
