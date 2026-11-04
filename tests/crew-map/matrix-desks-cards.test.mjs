@@ -131,7 +131,7 @@ for (const N of [0, 1, 3, 6, 10]) {
   const comp = E.fire('session.compact', { trigger: 'auto', messages: [1, 2, 3] }, () => new Promise(r => (release = r)))
   await tick()
   const desk = byKey(await E.render(150), 'desk-main')
-  check('a compacting desk says so and names no folder it is not in', /compacting/.test(text(kids(desk)[1])) && text(kids(desk)[2]).trim() === '', kids(desk).slice(1).map(text).join(' / '))
+  check('a compacting desk says so and names no folder it is not in', /compacting/.test(text(kids(desk)[1])) && /^freeing up room$/.test(text(kids(desk)[2]).trim()) && !/ in |project top|outside the project/.test(kids(desk).slice(1).map(text).join(' ')), kids(desk).slice(1).map(text).join(' / '))
   release({ messages: [1] })
   await comp
 }

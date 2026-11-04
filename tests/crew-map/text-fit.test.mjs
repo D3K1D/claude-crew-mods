@@ -46,6 +46,16 @@ await hooks['tool.call']($, { tool: 'Bash', tool_use_id: 'b1', command: 'npm run
 })
 
 // Every bordered box: each of its lines (a Text, or a row of them) is no wider than its inside.
+// A line's width as laid out: a row is its parts side by side, a column (text beside a sprite) its widest
+// line, a sprite its own width in cells.
+const lineW = x => {
+  if (typeof x === 'string' || typeof x === 'number') return width(String(x))
+  if (!x || typeof x !== 'object') return 0
+  if (x.type === 'Svg') return Math.ceil((x.props?.width ?? 0) / 7.9)
+  if (x.type === 'Text') return width(plain(x))
+  const ws = kids(x).map(lineW)
+  return x.props?.flexDirection === 'column' ? Math.max(0, ...ws) : ws.reduce((n, w) => n + w, 0)
+}
 for (const [cols, tree] of mid) {
   const over = []
   const walk = (x, avail) => {
@@ -58,7 +68,7 @@ for (const [cols, tree] of mid) {
       for (const line of kids(x)) {
         if (!line || typeof line !== 'object' || line.type === 'Svg' || line.type === 'Client' || line.props?.flexDirection === 'column' || line.props?.flexWrap) continue
         const t = plain(line)
-        if (width(t) > inside) over.push(`${width(t)}>${inside}: ${t.slice(0, 50)}`)
+        if (lineW(line) > inside) over.push(`${lineW(line)}>${inside}: ${t.slice(0, 50)}`)
       }
     for (const k of kids(x)) walk(k, p.flexWrap || (p.flexDirection ?? 'row') === 'column' ? inside : inside)
   }

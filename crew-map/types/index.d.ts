@@ -46,6 +46,8 @@ export type Agent = {
   stuck: string
   /** Its last tool calls, newest last: what the stuck check reads. */
   recent: { sig: string; ok: boolean; at: number }[]
+  /** What it was started for, in its starter's words (a helper: the Agent call's description). */
+  job?: string
   /** The Claude that started it (a helper's parent), when known. */
   parent?: string
   /** What it is waiting on the person for (a permission, an answer, a plan to approve), and for which tool. */

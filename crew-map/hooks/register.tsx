@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.8'
+const VERSION = '1.3.9'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -1502,7 +1502,7 @@ const tasksOf = (a: Agent, c: Pick<Crew, 'tasks'>) => Object.values(c.tasks ?? {
  * it is on now. With no plan there is no honest percentage, just what it has done and for how long.
  */
 const progressOf = (a: Agent, c: Pick<Crew, 'tasks'> = {}): { pct: number; src: string; doing: number; total: number } => {
-  if (a.state === 'done' || a.progressSrc === 'done') return { pct: 100, src: 'done', doing: 0, total: 0 }
+  if (a.state === 'done' || (a.progressSrc === 'done' && a.state !== 'busy' && a.state !== 'thinking')) return { pct: 100, src: 'done', doing: 0, total: 0 }
   const plan = tasksOf(a, c)
   const [done, doing, total] = plan.length
     ? [plan.filter(t => t.status === 'completed').length, plan.filter(t => t.status === 'in_progress').length, plan.length]
@@ -3746,6 +3746,7 @@ export const register: Register = on => {
           ...(a.kind === 'agent' ? { kind: spawnKind, name: freshName(c.agents.filter(x => x.id !== id), spawnKind) } : {}),
           spawnId: e.tool_use_id,
           parent,
+          job: trunc(oneLine(spawnDesc || (typeof e.prompt === 'string' ? e.prompt.slice(0, 300) : '')), 120),
           goal: trunc(oneLine([spawnDesc, typeof e.prompt === 'string' ? e.prompt.slice(0, 2000) : ''].filter(Boolean).join(': ')), 500),
           since: Date.now(),
           state: 'thinking',
@@ -3988,7 +3989,8 @@ export const register: Register = on => {
           const pending = x.pending.filter(p => p !== callId)
           return { ...x, pending, state: pending.length ? 'busy' : x.state === 'busy' ? 'thinking' : x.state, doneAt: stamp }
         })
-        if (e.tool === 'Agent' || e.tool === 'Task')
+        // (One started in the background works on after the call returns: its own turn's end says it is done.)
+        if ((e.tool === 'Agent' || e.tool === 'Task') && a.run_in_background !== true)
           d = {
             ...d,
             agents: d.agents.map(x =>
@@ -4717,7 +4719,8 @@ export const register: Register = on => {
     // ── Desks: one card per Claude at work (and each Codex run), what it is on now, and before ──
     const src = replaying ? crewAt(c, rpAt, replayShown.stamp) : c
     // Desks fill the row edge to edge, as many across as fit.
-    const deskPer = cols >= 170 ? 5 : cols >= 130 ? 4 : cols >= 100 ? 3 : cols >= 60 ? 2 : 1
+    // About 45 columns or more each, room for a helper's job and the task it is on.
+    const deskPer = cols >= 200 ? 4 : cols >= 140 ? 3 : cols >= 90 ? 2 : 1
     const deskW = deskPer === 1 ? cols - 1 : Math.floor((cols - (deskPer - 1)) / deskPer)
     const deskAgents = replaying ? src.agents.filter(a => a.id === 'main' || a.state === 'busy' || a.state === 'thinking') : shown
     const nowOf = (a: Agent): [string, string] => {
@@ -4744,20 +4747,60 @@ export const register: Register = on => {
       const onAFile = a.state === 'busy' && !a.needs && a.tool !== COMPACT && !!a.node && !!src.nodes[a.node] && !isSpecial(a.node)
       const where = onAFile ? groupOf(a.node) : ''
       const before = a.visited.filter(v => v !== a.node && src.nodes[v] && !isSpecial(v)).slice(0, 3).map(v => src.nodes[v].label || baseName(v))
+      const pad = isTerminal ? '' : ' '
+      const at = a.state === 'busy' || a.state === 'thinking'
+      // How long it has been at its job, beside its name; once done, what it cost.
+      const clockOf = at && a.since ? ` · ${elapsed(Date.now() - a.since)}` : a.state === 'done' && a.cost ? ` · ${fmtUsd(a.cost)}` : ''
+      // Its job: what it was started for (a helper), or your message (the main Claude).
+      const job = a.job || (a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : '') || (a.id === 'main' ? 'waiting for a prompt' : '')
+      const folder = where ? (where === OUTSIDE ? 'outside the project' : where === '.' ? 'the project top' : where) : ''
+      // On now, and the detail under it: what it waits on, else the task it is on (from its plan) and the
+      // step it is taking for it, else that step, else (thinking) what it last said and did.
+      const task = at && !a.needs ? doingOf(a, src) : ''
+      const step = a.state === 'busy' ? `${how} ${what}${folder ? ` in ${folder}` : ''}` : ''
+      const lastDid = a.actions[0] ? `just did: ${a.actions[0]}` : 'planning its next step'
+      const [onNow, detail] = task && wait && wait.kind !== 'you'
+        ? [task, `⏳ ${wait.label}: ${wait.what}`]
+        : wait
+        ? [`${a.needs ? '⏸ ' : waitTint ? '⏳ ' : '○ '}${wait.label}`, wait.what]
+        : task
+          ? [task, step || lastDid]
+          : a.state === 'busy'
+            ? [what, `${how}${folder ? ` in ${folder}` : ''}`]
+            : a.state === 'thinking'
+              ? [a.thoughts[0] ? `› ${oneLine(a.thoughts[0])}` : 'thinking', lastDid]
+              : [what, how]
+      // Its plan's progress, else the files it was on before.
+      const plan = progressOf(a, src)
+      const cells = 6
+      const filled = plan.total ? Math.round((plan.pct / 100) * cells) : 0
       return (
         <Box key={`desk-${a.id}`} flexDirection="column" borderStyle="round" borderColor={a.needs ? NEEDS : color} paddingX={1} width={deskW}>
           <Box flexDirection="row">
-            {isTerminal ? <Text color={color}>{'✻ '}</Text> : <Svg source={deskSprite(color, mood, hash(a.id))} alt={`${a.name}: ${how || what}`} width={52} height={34} />}
+            {isTerminal ? <Text color={color}>{'✻ '}</Text> : <Svg source={deskSprite(color, mood, hash(a.id))} alt={`${a.name}: ${onNow}`} width={52} height={34} />}
             <Box flexDirection="column" flexShrink={1}>
-              <Text bold color={color} wrap="truncate">{`${isTerminal ? '' : ' '}${a.name}`}</Text>
-              <Text wrap="truncate" color={a.needs ? NEEDS : waitTint} dimColor={!a.needs && !waitTint}>{`${isTerminal ? '' : ' '}${a.needs ? '⏸ ' : waitTint ? '⏳ ' : ''}${how}`}</Text>
+              <Box flexDirection="row" flexShrink={1}>
+                <Text bold color={color} wrap="truncate">{`${pad}${a.name}`}</Text>
+                <Text dimColor wrap="truncate">{clockOf}</Text>
+              </Box>
+              <Text dimColor italic={!!job && job !== 'waiting for a prompt'} wrap="truncate">{`${pad}${job || ' '}`}</Text>
             </Box>
           </Box>
-          <Text bold wrap="truncate" color={a.needs ? NEEDS : waitTint ?? (a.state === 'busy' ? '#E6EDF3' : undefined)} dimColor={a.state !== 'busy' && !a.needs && !waitTint}>
-            {what}
+          <Text bold wrap="truncate" color={a.needs ? NEEDS : waitTint ?? (at ? '#E6EDF3' : undefined)} dimColor={!at && !a.needs && !waitTint}>
+            {onNow}
           </Text>
-          <Text dimColor wrap="truncate">{where ? (where === OUTSIDE ? 'outside the project' : where === '.' ? 'project top' : where) : ' '}</Text>
-          <Text dimColor wrap="truncate">{before.length ? `before: ${before.join(', ')}` : ' '}</Text>
+          <Text wrap="truncate" color={waitTint} dimColor={!waitTint}>
+            {detail || ' '}
+          </Text>
+          {plan.total ? (
+            <Box flexDirection="row" flexShrink={1}>
+              <Text color={color}>{'▰'.repeat(filled)}</Text>
+              <Text dimColor>{'▱'.repeat(cells - filled)}</Text>
+              <Text dimColor wrap="truncate">{` ${plan.src}`}</Text>
+            </Box>
+          ) : (
+            <Text dimColor wrap="truncate">{before.length ? `before: ${before.join(', ')}` : ' '}</Text>
+          )}
         </Box>
       )
     }
