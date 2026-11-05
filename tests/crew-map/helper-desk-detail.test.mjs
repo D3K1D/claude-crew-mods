@@ -37,8 +37,15 @@ const render = (cols = 150) => fire('ui.render', { component: 'Pane', requestId:
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 const deskOf = (t, id) => find(t, x => x.props?.key === `desk-${id}`)[0]
-// A desk's rows: [name row, job], on now, detail, plan.
-const rows = d => { const [top, ...rest] = kids(d); const col = kids(top).find(k => k.type === 'Box'); return [...kids(col).map(text), ...rest.map(text)].map(s => s.trim()) }
+// A desk's lines, each as read across its rows: name, job, on now, detail, plan.
+const joined = xs => xs.map(x => text(x).trim()).filter(Boolean).join(' ')
+const rows = d => {
+  const [top, n0, n1, d0, d1, plan] = kids(d)
+  const [name, ...job] = kids(kids(top).find(k => k.type === 'Box'))
+  return [text(name).trim(), joined(job), joined([n0, n1]), joined([d0, d1]), text(plan).trim()]
+}
+// Every row the desk draws, as drawn.
+const rawRows = d => { const [top, ...rest] = kids(d); return [...kids(kids(top).find(k => k.type === 'Box')).map(text), ...rest.map(text)] }
 let n = 0
 const call = (tool, input, during, result = { text: 'ok' }) => fire('tool.call', { tool, tool_use_id: `c${n++}`, agentId: 'sub1', ...input }, async e => { if (during) await during(e); return result })
 let ids = 0
@@ -99,5 +106,25 @@ check('...and it says it waits on its helper, and which', /waiting on a helper/.
 
 // Narrow (a side pane, one desk across): every line still fits.
 const narrow = deskOf(await render(50), 'sub1')
-check('a narrow desk cuts its lines, never spills', rows(narrow).every(r => r.length <= 50 - 1 - 4), rows(narrow).join(' | '))
+check('a narrow desk cuts its lines, never spills', rawRows(narrow).every(r => r.length <= 50 - 1 - 4), rawRows(narrow).join(' | '))
+
+// A long job and task, in your 87-column pane: each reads whole over two rows, no words lost.
+await fire('turn.start', { text: 'Go on', turnId: 'W' }, async () => ({}))
+const longJob = 'Wire the production UI to every adapter, then run the adapter tests on Windows and macOS'
+await fire('tool.call', { tool: 'Agent', tool_use_id: 'spawn2', description: longJob, prompt: longJob, subagent_type: 'general-purpose', run_in_background: true }, async e => {
+  await fire('agent.spawn', { tool_use_id: e.tool_use_id, prompt: longJob, description: longJob, subagentType: 'general-purpose', provider: {}, parentModel: 'm' }, async () => ({ agentId: 'sub2' }))
+  return { text: 'Started in the background' }
+})
+const longTask = 'Applying the agent request_action schema to the fixture agent and re-running the adapter suite until it passes'
+await fire('tool.call', { tool: 'TaskCreate', tool_use_id: 'lt1', agentId: 'sub2', subject: longTask, description: longTask, activeForm: longTask }, async () => ({ result: { task: { id: '50', subject: longTask } }, text: 'ok' }))
+await fire('tool.call', { tool: 'TaskUpdate', tool_use_id: 'lt2', agentId: 'sub2', taskId: '50', status: 'in_progress' }, async () => ({ result: { success: true, taskId: '50', updatedFields: ['status'] }, text: 'ok' }))
+await fire('tool.call', { tool: 'Read', tool_use_id: 'lt3', agentId: 'sub2', file_path: `${P}/ui/a.js` }, async () => {
+  const d2 = deskOf(await render(87), 'sub2')
+  const [, job2, now2] = rows(d2)
+  check('87 cols: a long job reads whole over two rows', job2 === longJob, job2)
+  check('87 cols: a long task reads whole over two rows', now2 === longTask, now2)
+  const inner = Math.floor(87 * 0.97) - 1 - 4
+  check('87 cols: no row of the desk runs past it', rawRows(d2).every(r => r.length <= inner), rawRows(d2).map(r => r.length).join(','))
+  return { text: 'ok' }
+})
 console.log(`\n${fails} failing check(s)`)

@@ -79,8 +79,8 @@ for (const N of [0, 1, 3, 6, 10]) {
   for (const cols of WIDTHS) {
     const t = await E.render(cols)
     const desks = kids(byKey(t, 'desks'))
-    const ok = desks.length === Math.max(1, N) && desks.every(d => kids(d).length === 4 && d.props.borderStyle && typeof d.props.width === 'number' && d.props.width <= cols)
-    if (!ok || cols === 150) check(`${N} at work, ${cols} cols: ${Math.max(1, N)} desks, four rows each, within the pane`, ok, desks.map(d => `${d.props.width}w/${kids(d).length}r`).join(','))
+    const ok = desks.length === Math.max(1, N) && desks.every(d => kids(d).length === 6 && d.props.borderStyle && typeof d.props.width === 'number' && d.props.width <= cols)
+    if (!ok || cols === 150) check(`${N} at work, ${cols} cols: ${Math.max(1, N)} desks, the same rows each, within the pane`, ok, desks.map(d => `${d.props.width}w/${kids(d).length}r`).join(','))
     const raw = text(t).match(/undefined|NaN|\[object Object\]/g)
     if (raw) check(`${N} at work, ${cols} cols: no raw internal text`, false, raw.join(','))
   }
@@ -131,7 +131,7 @@ for (const N of [0, 1, 3, 6, 10]) {
   const comp = E.fire('session.compact', { trigger: 'auto', messages: [1, 2, 3] }, () => new Promise(r => (release = r)))
   await tick()
   const desk = byKey(await E.render(150), 'desk-main')
-  check('a compacting desk says so and names no folder it is not in', /compacting/.test(text(kids(desk)[1])) && /^freeing up room$/.test(text(kids(desk)[2]).trim()) && !/ in |project top|outside the project/.test(kids(desk).slice(1).map(text).join(' ')), kids(desk).slice(1).map(text).join(' / '))
+  check('a compacting desk says so and names no folder it is not in', /compacting/.test(text(kids(desk)[1])) && /^freeing up room$/.test(text(kids(desk)[3]).trim()) && !/ in |project top|outside the project/.test(kids(desk).slice(1).map(text).join(' ')), kids(desk).slice(1).map(text).join(' / '))
   release({ messages: [1] })
   await comp
 }
@@ -145,7 +145,7 @@ for (const N of [0, 1, 3, 6, 10]) {
   const cx = deskKeys(t).filter(k => k.startsWith('desk-cx-'))
   check('four Codex runs at work: four desks, or the ones not shown counted', cx.length === 4 || /\+\d+ more Codex/.test(text(byKey(t, 'desks'))), cx.join(','))
   const d = byKey(t, 'desk-cx-cx1')
-  check('a Codex desk does not say the same thing twice', text(kids(d)[1]) !== text(kids(d)[2]), kids(d).slice(1).map(text).join(' / '))
+  check('a Codex desk does not say the same thing twice', text(kids(d)[1]) !== text(kids(d)[3]), kids(d).slice(1).map(text).join(' / '))
 }
 
 // ── 6. Folder order stays as first reached, past MAX_NODES ──

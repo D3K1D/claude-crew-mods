@@ -53,7 +53,7 @@ for (let i = 1; i <= 7; i++)
   })
 let t = await render(87)
 const busyH = area(t).props.minHeight
-check('seven desks at 87 columns: the area keeps room for them', busyH >= 7 * 4, String(busyH))
+check('seven desks at 87 columns: the area keeps room for them', busyH >= 7 * 10, String(busyH))
 for (let i = 1; i <= 7; i++) await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: `S${i}`, agentId: `sub${i}`, usage }, async () => ({ text: 'ok' }))
 now += 30_000
 t = await render(87)
@@ -63,7 +63,7 @@ now += 25_000
 t = await render(87)
 now += 40_000
 t = await render(87)
-check('a minute after they went, it gives the room back: one desk, seven rows', area(t).props.minHeight === 7, String(area(t).props.minHeight))
+check('a minute after they went, it gives the room back: one desk, ten rows', area(t).props.minHeight === 10, String(area(t).props.minHeight))
 
 // The chat's cost: Claude Code's own total, at every width.
 usd = 12.4

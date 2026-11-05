@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.10'
+const VERSION = '1.3.11'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -4743,6 +4743,13 @@ export const register: Register = on => {
     // About 45 columns or more each, room for a helper's job and the task it is on.
     const deskPer = cols >= 200 ? 4 : cols >= 140 ? 3 : cols >= 90 ? 2 : 1
     const deskW = deskPer === 1 ? cols - 1 : Math.floor((cols - (deskPer - 1)) / deskPer)
+    const deskInner = Math.max(10, Math.min(deskW, isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4)
+    const besideW = Math.max(6, deskInner - (isTerminal ? 2 : Math.ceil(52 / CELL_W) + 1))
+    /** A desk's text over exactly `n` rows of `w` cells (blank rows kept, so every desk is one height). */
+    const deskLines = (t: string, w: number, n: number) => {
+      const r = wrapRows(t || ' ', w, n)
+      return [...r, ...Array(Math.max(0, n - r.length)).fill(' ')] as string[]
+    }
     const deskAgents = replaying ? src.agents.filter(a => a.id === 'main' || a.state === 'busy' || a.state === 'thinking') : shown
     const nowOf = (a: Agent): [string, string] => {
       const w = waitOf(a, src, Date.now())
@@ -4804,15 +4811,21 @@ export const register: Register = on => {
                 <Text bold color={color} wrap="truncate">{`${pad}${a.name}`}</Text>
                 <Text dimColor wrap="truncate">{clockOf}</Text>
               </Box>
-              <Text dimColor italic={!!job && job !== 'waiting for a prompt'} wrap="truncate">{`${pad}${job || ' '}`}</Text>
+              {deskLines(job, besideW, 2).map((l, i) => (
+                <Text key={`job${i}`} dimColor italic={!!job && job !== 'waiting for a prompt'} wrap="truncate">{`${pad}${l}`}</Text>
+              ))}
             </Box>
           </Box>
-          <Text bold wrap="truncate" color={a.needs ? NEEDS : waitTint ?? (at ? '#E6EDF3' : undefined)} dimColor={!at && !a.needs && !waitTint}>
-            {onNow}
-          </Text>
-          <Text wrap="truncate" color={waitTint} dimColor={!waitTint}>
-            {detail || ' '}
-          </Text>
+          {deskLines(onNow, deskInner, 2).map((l, i) => (
+            <Text key={`now${i}`} bold wrap="truncate" color={a.needs ? NEEDS : waitTint ?? (at ? '#E6EDF3' : undefined)} dimColor={!at && !a.needs && !waitTint}>
+              {l}
+            </Text>
+          ))}
+          {deskLines(detail, deskInner, 2).map((l, i) => (
+            <Text key={`det${i}`} wrap="truncate" color={waitTint} dimColor={!waitTint}>
+              {l}
+            </Text>
+          ))}
           {plan.total ? (
             <Box flexDirection="row" flexShrink={1}>
               <Text color={color}>{'▰'.repeat(filled)}</Text>
@@ -4836,12 +4849,17 @@ export const register: Register = on => {
             <Box flexDirection="column" flexShrink={1}>
               <Text bold color={CX} wrap="truncate">{`${isTerminal ? '' : ' '}Codex${r.thread ? ` · ${r.thread}` : ''}`}</Text>
               <Text dimColor wrap="truncate">{`${isTerminal ? '' : ' '}for ${nameFor(r.caller)}`}</Text>
+              <Text>{' '}</Text>
             </Box>
           </Box>
-          <Text bold wrap="truncate" color={r.status === 'running' ? '#E6EDF3' : undefined} dimColor={r.status !== 'running'}>
-            {what}
-          </Text>
-          <Text dimColor wrap="truncate">{r.status === 'running' ? activity || ' ' : `${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'} changed`}</Text>
+          {deskLines(what, deskInner, 2).map((l, i) => (
+            <Text key={`now${i}`} bold wrap="truncate" color={r.status === 'running' ? '#E6EDF3' : undefined} dimColor={r.status !== 'running'}>
+              {l}
+            </Text>
+          ))}
+          {deskLines(r.status === 'running' ? activity : `${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'} changed`, deskInner, 2).map((l, i) => (
+            <Text key={`det${i}`} dimColor wrap="truncate">{l}</Text>
+          ))}
           <Text dimColor wrap="truncate">{r.files.length ? `files: ${r.files.slice(0, 3).map(baseName).join(', ')}` : ' '}</Text>
         </Box>
       )
@@ -4861,10 +4879,10 @@ export const register: Register = on => {
       deskLowSince = 0
     }
     const deskRows = Math.max(1, Math.ceil(deskMax / deskPer))
-    // A desk is seven rows: the sprite beside its name and state (two), what it is on, where, before (three),
-    // and its border (two). The area keeps at least room for the most there have been, and grows if a desk
+    // A desk is ten rows: its name and job (three, beside the sprite), what it is on now (two), the detail
+    // under it (two), its plan (one), and its border (two). The area keeps at least room for the most there have been, and grows if a desk
     // draws taller than that (it never clips one).
-    const desksH = deskRows * 7 + (deskRows - 1)
+    const desksH = deskRows * 10 + (deskRows - 1)
 
     // ── Folder cards: each folder the work touched, its files as chips (green edited, red with errors) ──
     // Built from the session's record of touched files (it keeps edits, and the order files were first
