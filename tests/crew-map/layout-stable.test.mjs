@@ -54,7 +54,7 @@ const layout = async cols => {
   let at = 0
   for (const k of parts) {
     const h = rowsOf(k)
-    const name = find(k, x => x.props?.key === 'map').length ? 'map+toolbar' : k.props?.key === 'running' ? 'running' : find(k, x => x.type === 'Text' && text(x).startsWith('✻ Claude')).length ? 'windows' : find(k, x => x.type === 'Text' && text(x) === 'log').length && k.props?.borderStyle ? 'log' : null
+    const name = find(k, x => x.props?.key === 'map').length ? 'map+toolbar' : k.props?.key === 'running' ? 'running' : find(k, x => x.type === 'Text' && text(x).startsWith('✻ Claude')).length ? 'windows' : find(k, x => x.type === 'Text' && text(x).trim() === 'log').length && k.props?.borderStyle ? 'log' : null
     if (name) out[name] = [at, h]
     at += h + (tree.props.rowGap ?? 0)
   }
@@ -105,7 +105,7 @@ for (const cols of [140, 100]) {
 check("the turn's summary is drawn below the log", (() => {
   const st = states.at(-1)
   const parts = st.tree.props.children.filter(k => k && typeof k === 'object')
-  const logAt = parts.findIndex(k => k.props?.borderStyle && find(k, x => x.type === 'Text' && text(x) === 'log').length)
+  const logAt = parts.findIndex(k => k.props?.borderStyle && find(k, x => x.type === 'Text' && text(x).trim() === 'log').length)
   const doneAt = parts.findIndex(k => k.props?.key === 'summary')
   return logAt >= 0 && doneAt > logAt
 })())

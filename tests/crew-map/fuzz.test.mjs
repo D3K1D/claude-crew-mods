@@ -210,7 +210,7 @@ for (let step = 0; step < STEPS; step++) {
     }
     const c = globalThis.__store.get('crew')
     check('agents stay capped', c.agents.length <= 12, String(c.agents.length))
-    check('the log stays capped', c.log.length <= 40, String(c.log.length))
+    check('the log stays capped', c.log.length <= 120, String(c.log.length))
     check('the timeline stays capped', c.timeline.length <= 600, String(c.timeline.length))
     check('test runs stay capped', c.tests.length <= 12, String(c.tests.length))
     check('problems stay capped', c.problems.length <= 30, String(c.problems.length))
@@ -220,7 +220,7 @@ for (let step = 0; step < STEPS; step++) {
     check('totals stay finite and non-negative', Number.isFinite(c.spent.cost) && c.spent.cost >= 0 && Number.isFinite(c.spent.tokens))
     check('every agent is a real agent', c.agents.every(a => typeof a.id === 'string' && typeof a.name === 'string' && Array.isArray(a.pending)))
     check('nothing typed into the computer is kept', !JSON.stringify(c).includes('SECRET-TYPED-TEXT'))
-    check('stored goals are cut', c.agents.every(a => a.goal.length <= 500), String(Math.max(...c.agents.map(a => a.goal.length))))
+    check('stored goals are cut', c.agents.every(a => a.goal.length <= 1500), String(Math.max(...c.agents.map(a => a.goal.length))))
   }
 }
 check('every hook stays fast on hostile text', slowest.ms < 250, `${slowest.ms.toFixed(0)} ms: ${slowest.what}`)

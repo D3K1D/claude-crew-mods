@@ -70,7 +70,7 @@ now += 212_000
 await call('Bash', { command: 'node --test ui/tests/ 2>&1 | grep -E "^# (pass|fail)"', description: 'Run the adapter tests' }, async () => {
   const d = deskOf(await render(), 'sub1')
   const [name, job, onNow, detail, plan] = rows(d)
-  check('its name row says how long it has been at it', /^Helper.* · 3m32s$/.test(name), name)
+  check('its name row says how long it has been at it', /^Helper.* · 3m32s(  › more)?$/.test(name), name)
   check('its job is what it was started for', job === 'Production UI with adapters', job)
   check('on now: the task it is on, in its own words', /^Applying agent request_action and run/.test(onNow), onNow)
   check('...and under it, the command it waits on for that task', detail === '⏳ waiting on a command: Run the adapter tests', detail)

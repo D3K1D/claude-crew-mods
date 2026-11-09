@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.11'
+const VERSION = '1.3.12'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -907,6 +907,13 @@ const WINDOW_LINGER_MS = 20_000
 const NEEDS = '#E3B341'
 /** Rows of the log: fixed, so lines coming in never move what is below. */
 const LOG_ROWS = 12
+/** Lines the log keeps to scroll back through. */
+const LOG_KEEP = 120
+/** Rows an opened log line may take, and an opened desk's line. */
+const LOG_OPEN_ROWS = 40
+const DESK_OPEN_ROWS = 12
+/** How many lines a press of ▲ or ▼ moves the log. */
+const LOG_STEP = 3
 /** Your messages in the log, and those another session sent. */
 const YOU = '#79C0FF'
 const RELAYED = '#D2A8FF'
@@ -943,6 +950,8 @@ const promptOf = (t: string) => relayedOf(t)?.body || t
 const messageOf = (l: LogLine): { from: string; body: string } | undefined =>
   l.kind === 'msg' ? { from: l.who, body: l.text } : l.kind === 'you' ? (relayedOf(l.text) ?? { from: '', body: l.text }) : undefined
 const clock = (ms: number) => new Date(ms).toTimeString().slice(0, 8)
+/** A log line's address, for opening it: its time and what it says. */
+const logKey = (l: LogLine) => `${l.at}:${(hash(`${l.who}|${l.kind}|${l.text}`) >>> 0).toString(36)}`
 const hash = (s: string) => {
   let h = 2166136261
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
@@ -1010,9 +1019,10 @@ const actionLine = (tool: string, node: string, detail: string, said = '') => {
 }
 
 /** The first meaningful sentence or two of a block of model text. */
+/** What a Claude said, on one line: code blocks and Markdown marks out (underscores stay, as in read_chunk). */
+const cleanSaid = (text: string) => oneLine(text.replace(/```[\s\S]*?```/g, ' ').replace(/[#*`>]/g, ''))
 const summarise = (text: string): string => {
-  // Markdown marks go; underscores stay, since code names like read_chunk use them.
-  const clean = oneLine(text.replace(/```[\s\S]*?```/g, ' ').replace(/[#*`>]/g, ''))
+  const clean = cleanSaid(text)
   if (!clean) return ''
   // A sentence ends at . ! or ? before a space or the end, so chunk.rs stays whole.
   const sentences = clean.split(/(?<=[.!?])\s+/)
@@ -1227,15 +1237,16 @@ const upsert = (c: Crew, id: string, fn: (a: Agent) => Agent): Crew => {
   return { ...c, agents }
 }
 
-const log = (c: Crew, id: string, kind: LogLine['kind'], text: string): Crew => {
+const log = (c: Crew, id: string, kind: LogLine['kind'], text: string, full?: string): Crew => {
   const a = c.agents.find(x => x.id === id)
   if (!a || !text) return c
-  return { ...c, log: [...c.log, { at: Date.now(), who: a.name, hue: a.hue, kind, text: trunc(text, 300) }].slice(-40) }
+  const line: LogLine = { at: Date.now(), who: a.name, hue: a.hue, kind, text: trunc(text, 300), ...(full && full !== text ? { full: trunc(full, 2000) } : {}) }
+  return { ...c, log: [...c.log, line].slice(-LOG_KEEP) }
 }
 
-const think = (c: Crew, id: string, line: string): Crew => {
+const think = (c: Crew, id: string, line: string, full?: string): Crew => {
   if (!line || c.agents.find(a => a.id === id)?.thoughts[0] === line) return c
-  return log(upsert(c, id, a => ({ ...a, thoughts: [line, ...a.thoughts].slice(0, 6) })), id, 'think', line)
+  return log(upsert(c, id, a => ({ ...a, thoughts: [line, ...a.thoughts].slice(0, 6) })), id, 'think', line, full)
 }
 
 // ─── The map's graph ────────────────────────────────────────────────────────
@@ -3478,6 +3489,7 @@ export const register: Register = on => {
         .map(a => (a.state === 'busy' ? { ...a, state: 'thinking' as const, pending: [] } : a))
       return {
         ...base,
+        logView: undefined,
         changes: Object.fromEntries(Object.entries(base.changes).filter(([p]) => !p.startsWith('demo/'))),
         demoCodex: [],
         // A reload loses the calls that were waiting on tests; a background run may still be going but can't be followed.
@@ -3594,9 +3606,9 @@ export const register: Register = on => {
       if (id !== 'main' || !e.text) return d
       const relayed = relayedOf(e.text)
       const line: LogLine = relayed
-        ? { at: Date.now(), who: relayed.from, hue: 0, kind: 'msg', text: trunc(relayed.body, 600) }
-        : { at: Date.now(), who: 'You', hue: 0, kind: 'you', text: trunc(oneLine(e.text), 600) }
-      return { ...d, log: [...d.log, line].slice(-40) }
+        ? { at: Date.now(), who: relayed.from, hue: 0, kind: 'msg', text: trunc(relayed.body, 2000) }
+        : { at: Date.now(), who: 'You', hue: 0, kind: 'you', text: trunc(oneLine(e.text), 2000) }
+      return { ...d, log: [...d.log, line].slice(-LOG_KEEP) }
     })
     return next(e)
   })
@@ -3764,8 +3776,8 @@ export const register: Register = on => {
           ...(a.kind === 'agent' ? { kind: spawnKind, name: freshName(c.agents.filter(x => x.id !== id), spawnKind) } : {}),
           spawnId: e.tool_use_id,
           parent,
-          job: trunc(oneLine(spawnDesc || (typeof e.prompt === 'string' ? e.prompt.slice(0, 300) : '')), 120),
-          goal: trunc(oneLine([spawnDesc, typeof e.prompt === 'string' ? e.prompt.slice(0, 2000) : ''].filter(Boolean).join(': ')), 500),
+          job: trunc(oneLine(spawnDesc || (typeof e.prompt === 'string' ? e.prompt.slice(0, 600) : '')), 400),
+          goal: trunc(oneLine([spawnDesc, typeof e.prompt === 'string' ? e.prompt.slice(0, 3000) : ''].filter(Boolean).join(': ')), 1500),
           since: Date.now(),
           state: 'thinking',
           node: from,
@@ -3784,14 +3796,15 @@ export const register: Register = on => {
         text?: string
         thinking?: string
       }[]
+      // Its gist for the desk and the log, and all of it for the log line opened.
       const lines = blocks
         .map(b => (b.type === 'thinking' ? b.thinking : b.type === 'text' ? b.text : '') ?? '')
-        .map(summarise)
-        .filter(Boolean)
+        .map(t => ({ line: summarise(t), full: cleanSaid(t) }))
+        .filter(x => x.line)
         .slice(0, 2)
       if (lines.length) {
         const id = agentOf(e)
-        await write?.(c => lines.reduce((d, line) => think(d, id, line), c))
+        await write?.(c => lines.reduce((d, x) => think(d, id, x.line, x.full), c))
       }
     }
     return r
@@ -4534,17 +4547,56 @@ export const register: Register = on => {
     const logBudget = isTerminal ? 6 : LOG_ROWS
     // What a line's text gets: the room fitPane leaves the pane, less the log box's frame, the clock, the name and a space.
     const logTextW = Math.max(20, (isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9 - nameW - 1)
-    const msgRows = (m: { from: string; body: string }) => wrapRows(m.from ? `${m.from}: ${m.body}` : m.body, logTextW, 3)
-    const allLog = [...c.log, ...codexLog].sort((x, y) => x.at - y.at)
-    const logLines: LogLine[] = []
-    let logUsed = 0
-    for (let i = allLog.length - 1; i >= 0; i--) {
-      const m = messageOf(allLog[i])
-      const rows = m ? msgRows(m).length : 1
-      if (logUsed + rows > logBudget) break
-      logLines.unshift(allLog[i])
-      logUsed += rows
+    // A line's mark (› to open it, ⌄ to close it) takes two of that, before the space.
+    const logRowW = Math.max(10, logTextW - 2)
+    const lv = c.logView ?? {}
+    const openLog = new Set(lv.open ?? [])
+    // A line as it reads folded (a message's first three rows, else one), and all of it.
+    const shortOf = (l: LogLine) => {
+      const m = messageOf(l)
+      return m ? (m.from ? `${m.from}: ${m.body}` : m.body) : l.kind === 'think' ? l.text : l.text.replace(/^\$ /, SHELL_MARK)
     }
+    const fullOf = (l: LogLine) => (l.kind === 'think' && l.full ? l.full : shortOf(l))
+    const foldRows = (l: LogLine) => (messageOf(l) ? 3 : 1)
+    const cutLine = (l: LogLine) => fullOf(l) !== shortOf(l) || wrapRows(shortOf(l), logRowW, foldRows(l) + 1).length > foldRows(l)
+    const rowsOfLine = (l: LogLine) => (openLog.has(logKey(l)) ? wrapRows(fullOf(l), logRowW, LOG_OPEN_ROWS) : wrapRows(shortOf(l), logRowW, foldRows(l)))
+    const allLog = [...c.log, ...codexLog].sort((x, y) => x.at - y.at)
+    // Where the log ends: its newest line (following), or where the person scrolled it to (held there
+    // while new lines come in below).
+    const held = typeof lv.anchor === 'number'
+    let upto = held ? allLog.filter(l => l.at <= (lv.anchor as number)) : allLog
+    if (!upto.length) upto = allLog.slice(0, 1)
+    const newerCount = allLog.length - upto.length
+    const logLines: LogLine[] = []
+    const logRows: string[][] = []
+    let logUsed = 0
+    for (let i = upto.length - 1; i >= 0; i--) {
+      const rows = rowsOfLine(upto[i])
+      // An opened line taller than the log still shows whole (the log grows for it).
+      if (logLines.length && logUsed + rows.length > logBudget) break
+      logLines.unshift(upto[i])
+      logRows.unshift(rows)
+      logUsed += rows.length
+    }
+    const firstShown = logLines.length ? allLog.indexOf(logLines[0]) : 0
+    const lastShown = logLines.length ? allLog.indexOf(logLines[logLines.length - 1]) : -1
+    const canUp = firstShown > 0
+    const canDown = held && newerCount > 0
+    const logTo = (anchor: number | undefined) => void write?.(d => ({ ...d, logView: { ...(d.logView ?? {}), anchor } }))
+    const logUp = () => logTo(allLog[Math.max(0, lastShown - LOG_STEP)]?.at)
+    const logDown = () => {
+      const to = lastShown + LOG_STEP
+      logTo(to >= allLog.length - 1 ? undefined : allLog[to].at)
+    }
+    // Opening a line holds the log where it is, so new lines don't push it away while it's read.
+    const newestShownAt = logLines.length ? logLines[logLines.length - 1].at : undefined
+    const toggleLog = (k: string) =>
+      void write?.(d => {
+        const v = d.logView ?? {}
+        const open = (v.open ?? []).filter(x => x !== k)
+        const opening = open.length === (v.open ?? []).length
+        return { ...d, logView: { anchor: v.anchor ?? (opening ? newestShownAt : undefined), open: opening ? [...open, k].slice(-30) : open } }
+      })
     const demoOn = c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done')
     const totalTokens = c.spent?.tokens ?? c.agents.reduce((n, a) => n + (a.tokens ?? 0), 0)
     // The chat's cost as Claude Code totals it, else what the crew counted of it.
@@ -4746,8 +4798,8 @@ export const register: Register = on => {
     const deskInner = Math.max(10, Math.min(deskW, isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4)
     const besideW = Math.max(6, deskInner - (isTerminal ? 2 : Math.ceil(52 / CELL_W) + 1))
     /** A desk's text over exactly `n` rows of `w` cells (blank rows kept, so every desk is one height). */
-    const deskLines = (t: string, w: number, n: number) => {
-      const r = wrapRows(t || ' ', w, n)
+    const deskLines = (t: string, w: number, n: number, open = false) => {
+      const r = wrapRows(t || ' ', w, open ? DESK_OPEN_ROWS : n)
       return [...r, ...Array(Math.max(0, n - r.length)).fill(' ')] as string[]
     }
     const deskAgents = replaying ? src.agents.filter(a => a.id === 'main' || a.state === 'busy' || a.state === 'thinking') : shown
@@ -4802,6 +4854,11 @@ export const register: Register = on => {
       const plan = progressOf(a, src)
       const cells = 6
       const filled = plan.total ? Math.round((plan.pct / 100) * cells) : 0
+      // Opened, its job, what it is on and the detail show whole; offered only when one is cut short.
+      const deskOpen = !!c.deskOpen?.[a.id]
+      const asked = a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : ''
+      const fullJob = asked.length > job.length ? asked : job
+      const longer = deskOpen || fullJob !== job || ([[job, besideW], [onNow, deskInner], [detail, deskInner]] as [string, number][]).some(([t, w]) => wrapRows(t || ' ', w, 3).length > 2)
       return (
         <Box key={`desk-${a.id}`} flexDirection="column" borderStyle="round" borderColor={a.needs ? NEEDS : color} paddingX={1} width={deskW}>
           <Box flexDirection="row">
@@ -4810,18 +4867,23 @@ export const register: Register = on => {
               <Box flexDirection="row" flexShrink={1}>
                 <Text bold color={color} wrap="truncate">{`${pad}${a.name}`}</Text>
                 <Text dimColor wrap="truncate">{clockOf}</Text>
+                {longer ? (
+                  <Button key={`deskopen:${a.id}`} plain dimColor={!deskOpen} onPress={() => void write?.(d => ({ ...d, deskOpen: { ...(d.deskOpen ?? {}), [a.id]: !d.deskOpen?.[a.id] } }))}>
+                    {deskOpen ? '  ⌄ less' : '  › more'}
+                  </Button>
+                ) : null}
               </Box>
-              {deskLines(job, besideW, 2).map((l, i) => (
+              {deskLines(deskOpen ? fullJob : job, besideW, 2, deskOpen).map((l, i) => (
                 <Text key={`job${i}`} dimColor italic={!!job && job !== 'waiting for a prompt'} wrap="truncate">{`${pad}${l}`}</Text>
               ))}
             </Box>
           </Box>
-          {deskLines(onNow, deskInner, 2).map((l, i) => (
+          {deskLines(onNow, deskInner, 2, deskOpen).map((l, i) => (
             <Text key={`now${i}`} bold wrap="truncate" color={a.needs ? NEEDS : waitTint ?? (at ? '#E6EDF3' : undefined)} dimColor={!at && !a.needs && !waitTint}>
               {l}
             </Text>
           ))}
-          {deskLines(detail, deskInner, 2).map((l, i) => (
+          {deskLines(detail, deskInner, 2, deskOpen).map((l, i) => (
             <Text key={`det${i}`} wrap="truncate" color={waitTint} dimColor={!waitTint}>
               {l}
             </Text>
@@ -5280,7 +5342,26 @@ export const register: Register = on => {
         <Box flexDirection="column" borderStyle="round" borderColor="#30363D" paddingX={1}>
           {/* The log's title row also names the helpers that finished (no row of its own to come and go). */}
           <Box flexDirection="row">
-            <Text dimColor>{'log'}</Text>
+            <Text dimColor>{'log '}</Text>
+            {canUp ? (
+              <Button key="log-up" plain dimColor onPress={logUp}>
+                {' ▲ '}
+              </Button>
+            ) : (
+              <Text dimColor>{'   '}</Text>
+            )}
+            {canDown ? (
+              <Button key="log-down" plain dimColor onPress={logDown}>
+                {' ▼ '}
+              </Button>
+            ) : (
+              <Text dimColor>{'   '}</Text>
+            )}
+            {held ? (
+              <Button key="log-latest" plain onPress={() => logTo(undefined)}>
+                {newerCount ? ` ⤓ latest · ${fmtK(newerCount)} new` : ' ⤓ latest'}
+              </Button>
+            ) : null}
             <Box flexGrow={1} />
             {folded.length ? <Text dimColor>{'done: '}</Text> : null}
             {[...folded]
@@ -5299,47 +5380,51 @@ export const register: Register = on => {
           {logLines.length === 0 ? <Text dimColor>none yet</Text> : null}
           {/* Blank rows up to the log's fixed height, so it never grows as lines come in. */}
           {Array.from({ length: Math.max(0, logBudget - Math.max(1, logUsed)) }, () => <Text>{' '}</Text>)}
-          {logLines.flatMap(l => {
+          {logLines.flatMap((l, li) => {
             const m = messageOf(l)
-            // A message: a row each for its first three lines, all starting under the first. Yours is
-            // "You"; another session's is "Msg", its sender first in bold.
-            return m ? (
-              msgRows(m).map((r, i) => (
-                <Box flexDirection="row">
-                  <Box width={9} flexShrink={0}>
-                    <Text dimColor>{i ? ' ' : clock(l.at)}</Text>
-                  </Box>
-                  <Box width={nameW} flexShrink={0}>
+            const k = logKey(l)
+            const open = openLog.has(k)
+            // A line cut short gets a › to open it whole, over as many rows as it needs; ⌄ folds it again.
+            const cut = open || cutLine(l)
+            // Each row starts under the first: the time and name on the first only. Yours is "You";
+            // another session's is "Msg", its sender first in bold.
+            return logRows[li].map((r, i) => (
+              <Box flexDirection="row">
+                <Box width={9} flexShrink={0}>
+                  <Text dimColor>{i ? ' ' : `${clock(l.at)} `}</Text>
+                </Box>
+                <Box width={nameW} flexShrink={0}>
+                  {m ? (
                     <Text color={m.from ? RELAYED : YOU} bold>
                       {i ? ' ' : m.from ? 'Msg' : 'You'}
                     </Text>
-                  </Box>
-                  {i === 0 && m.from && r.startsWith(`${m.from}:`) ? (
-                    <Box flexDirection="row" flexShrink={1}>
-                      <Text bold color={RELAYED}>{` ${m.from}:`}</Text>
-                      <Text wrap="truncate" color="#E6EDF3">{r.slice(m.from.length + 1)}</Text>
-                    </Box>
                   ) : (
-                    <Text wrap="truncate" color="#E6EDF3">{` ${r}`}</Text>
+                    <Text color={l.hue < 0 ? CX : PALETTE[l.hue % PALETTE.length]} bold>
+                      {i ? ' ' : trunc(l.who, nameW)}
+                    </Text>
                   )}
                 </Box>
-              ))
-            ) : (
-            <Box flexDirection="row">
-              <Text dimColor>{`${clock(l.at)} `}</Text>
-              <Text color={l.hue < 0 ? CX : PALETTE[l.hue % PALETTE.length]} bold>
-                {trunc(l.who, nameW).padEnd(nameW)}
-              </Text>
-              <Text
-                wrap="truncate"
-                dimColor={l.kind === 'info'}
-                color={l.kind === 'think' ? '#E6EDF3' : undefined}
-                italic={l.kind === 'think'}
-              >
-                {l.kind === 'think' ? ` › ${l.text}` : ` ${l.text.replace(/^\$ /, SHELL_MARK)}`}
-              </Text>
-            </Box>
-            )
+                <Box width={2} flexShrink={0}>
+                  {i === 0 && cut ? (
+                    <Button key={`logopen:${k}`} plain dimColor={!open} onPress={() => toggleLog(k)}>
+                      {open ? ' ⌄' : ' ›'}
+                    </Button>
+                  ) : (
+                    <Text dimColor>{i === 0 && l.kind === 'think' ? ' ›' : '  '}</Text>
+                  )}
+                </Box>
+                {i === 0 && m?.from && r.startsWith(`${m.from}:`) ? (
+                  <Box flexDirection="row" flexShrink={1}>
+                    <Text bold color={RELAYED}>{` ${m.from}:`}</Text>
+                    <Text wrap="truncate" color="#E6EDF3">{r.slice(m.from.length + 1)}</Text>
+                  </Box>
+                ) : (
+                  <Text wrap="truncate" dimColor={l.kind === 'info'} color={m || l.kind === 'think' ? '#E6EDF3' : undefined} italic={l.kind === 'think'}>
+                    {` ${r}`}
+                  </Text>
+                )}
+              </Box>
+            ))
           })}
         </Box>
 

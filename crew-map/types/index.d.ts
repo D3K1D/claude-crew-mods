@@ -122,7 +122,7 @@ export type MapNode = {
 export type Trail = { a: string; b: string; w: number }
 
 /** One line of the log; 'you' is a message the person sent, 'msg' one another session sent (`who` names it). */
-export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info' | 'you' | 'msg'; text: string }
+export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info' | 'you' | 'msg'; text: string; /** All of what a Claude said, when the line is its gist. */ full?: string }
 
 /** One task on Claude Code's task list, as the crew last saw it. */
 export type PlanTask = {
@@ -180,6 +180,10 @@ export type Crew = {
   hideOutside?: boolean
   /** Finished helpers whose windows the person opened again (true) or folded at once (false). */
   unfolded?: Record<string, boolean>
+  /** Where the person scrolled the log to (absent: it follows the newest line), and the lines they opened. */
+  logView?: { anchor?: number; open?: string[] }
+  /** Desks the person opened to read every line whole, by agent. */
+  deskOpen?: Record<string, boolean>
   /** Which picture of the work the pane shows: desks and folder cards (absent: desks), or the tree map. */
   view?: 'desks' | 'map'
   /** Folder cards the person opened to show every file (by folder). */
