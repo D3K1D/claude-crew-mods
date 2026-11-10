@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.12'
+const VERSION = '1.3.13'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -4572,8 +4572,16 @@ export const register: Register = on => {
     let logUsed = 0
     for (let i = upto.length - 1; i >= 0; i--) {
       const rows = rowsOfLine(upto[i])
-      // An opened line taller than the log still shows whole (the log grows for it).
-      if (logLines.length && logUsed + rows.length > logBudget) break
+      if (logLines.length && logUsed + rows.length > logBudget) {
+        // An opened line that was in view shows whole, the log growing for it, with the lines after it
+        // still below; never dropped for being taller than the rows left above them (that left blanks).
+        if (logUsed < logBudget && openLog.has(logKey(upto[i]))) {
+          logLines.unshift(upto[i])
+          logRows.unshift(rows)
+          logUsed += rows.length
+        }
+        break
+      }
       logLines.unshift(upto[i])
       logRows.unshift(rows)
       logUsed += rows.length
