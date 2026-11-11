@@ -64,6 +64,10 @@ The warning clears once it gets past the problem. It may just need a hint from y
 
 A line that's cut short has a **›** before it: click it to open the line over as many rows as it needs (a Claude's thought opens to everything it said, not just its gist), and **⌄** folds it again. **▲** and **▼** beside the log's title scroll back through the last 120 lines. While you're scrolled back, or have a line open, the log holds still as new lines come in, and **⤓ latest · N new** says how many arrived; click it (or **▼** to the bottom) to follow the newest lines again.
 
+**Following a Claude.** **◎ follow** in a Claude's window points the tree map's camera at it, closer than the whole map, and the camera moves with it from file to file. Moving the map yourself (arrows, zoom, drag, fit), pressing **◉ following** again, or the Claude finishing stops it.
+
+**Times.** Every action in the log ends with how long it took, measured from start to end (340ms, 2.4s, 1m12s), and one still running counts up with a ●. Thinking is timed too: a Claude between actions says how long its current step has been thinking ("thinking 12s"). The clocks count every second while any Claude works or thinks.
+
 **Codex.** With the `codex-bridge` mod installed, a running Codex gets its own desk, window and log lines. On the tree map it gets its own tree (Codex, its threads, and the files each thread read or edited), with a teal robot on the file it's on.
 
 **The intro.** When the mod starts and when you open `/crew`, a six-second intro plays: the title rises a letter at a time, and four little Claudes drop onto it and hop across the letters before the pane takes over. **skip ▸** jumps past it, **don't show again** turns it off, and **⏻ intro** in the header plays it again (and turns it back on).

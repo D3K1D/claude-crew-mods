@@ -95,9 +95,13 @@ check('still running while the output says so', crew().tests.at(-1).status === '
 await hooks['tool.call']($, { tool: 'BashOutput', tool_use_id: 'o2', bash_id: 'bash_7' }, async () => ({ text: '<status>completed</status>\n<exit_code>0</exit_code>\n<stdout>test result: ok. 120 passed; 0 failed</stdout>' }))
 t = crew().tests.at(-1)
 check('background run settles from its output', t.status === 'passed' && t.passed === 120, JSON.stringify(t))
+const workingAt = globalThis.__store.get('tick')
+await advance(2000)
+check('the tick goes on while Claude still works (its clocks count)', globalThis.__store.get('tick') > workingAt)
+await hooks['turn.complete']($, { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'T1', usage: { input_tokens: 1, output_tokens: 1, model: 'claude-opus-5-5' } }, async () => ({ text: 'ok' }))
 const tickAt = globalThis.__store.get('tick')
 await advance(3000)
-check('the tick stops once nothing runs', globalThis.__store.get('tick') === tickAt)
+check('the tick stops once the turn is over and nothing runs', globalThis.__store.get('tick') === tickAt)
 
 // 6. The demo runs tests: fail, then pass.
 find(tree, x => x.type === 'Button' && x.props.key === 'demo')[0].props.onPress()

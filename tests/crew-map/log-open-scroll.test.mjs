@@ -39,7 +39,8 @@ let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 const logBox = t => find(t, x => x.type === 'Box' && x.props.borderStyle && /^\s*log\b/i.test(text(kids(x)[0])))[0]
 const logRows = t => kids(logBox(t)).slice(1)
-const logText = t => logRows(t).map(text).join('\n')
+// A row's columns read apart (the time, the name, the mark, the words, how long it took).
+const logText = t => logRows(t).map(r => kids(r).map(text).join('|')).join('\n')
 const button = (t, pred) => find(t, x => x.type === 'Button' && pred(String(x.props.key ?? ''), text(x)))[0]
 const press = async b => { b.props.onPress(); await tick() }
 const say = (agentId, words) => fire('session.append', { ...(agentId ? { agentId } : {}), door: 'response', message: { role: 'assistant', content: [{ type: 'text', text: words }] }, origin: {}, uuid: `u${now}` }, async () => ({}))
@@ -58,12 +59,12 @@ check('the log is its 12 rows', logRows(t).length === 12, String(logRows(t).leng
 const opener = button(t, k => k.startsWith('logopen:'))
 check('a thought cut short has a › to open it', !!opener && text(opener) === ' ›', opener && text(opener))
 check('a line that fits has no ›', !button(t, (k, l) => k.startsWith('logopen:') && false) && logRows(t).filter(r => /Step number 14/.test(text(r))).every(r => !find(r, x => x.type === 'Button').length))
-check('following: no ▼ and no ⤓ latest', !button(t, k => k === 'log-down') && !button(t, k => k === 'log-latest'))
+check('following: ▼ is dim (nowhere newer to go), and no ⤓ latest', text(button(t, k => k === 'log-down')) === ' ▽ ' && !button(t, k => k === 'log-latest'))
 
 // Open it: all of it, over as many rows as it takes, every word; the log holds still.
 await press(opener)
 t = await render()
-const said = logRows(t).filter(r => kids(r)[1] && /^\s*$|Claude/.test(text(kids(r)[1])) && kids(r).length === 4).map(r => text(kids(r)[3]).trim())
+const said = logRows(t).filter(r => kids(r)[1] && /^\s*$|Claude/.test(text(kids(r)[1])) && kids(r).length === 5).map(r => text(kids(r)[3]).trim())
 const at = said.findIndex(s => s.startsWith('The save bug'))
 const whole = said.slice(at).join(' ')
 check('opened, the thought reads whole over several rows', at >= 0 && whole === long, whole)
@@ -110,7 +111,7 @@ const youOpen = logRows(t).find(r => /You/.test(text(kids(r)[1] ?? '')) && find(
 check('a long message of yours has a › on its first row', !!youOpen)
 await press(find(youOpen, x => x.type === 'Button')[0])
 t = await render()
-const mine = logRows(t).filter(r => kids(r).length === 4 && kids(r)[1].props?.width && kids(r)[0].props?.width === 9)
+const mine = logRows(t).filter(r => kids(r).length === 5 && kids(r)[1].props?.width && kids(r)[0].props?.width === 9)
 const yAt = mine.findIndex(r => /You/.test(text(kids(r)[1])))
 const yRows = mine.slice(yAt).map(r => text(kids(r)[3]).trim())
 check('opened, all of your message reads, every word', yRows.join(' ') === msg, `${yRows.length} rows`)

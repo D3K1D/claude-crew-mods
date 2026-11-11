@@ -219,7 +219,14 @@ check('the map takes the whole width', find(tree, x => x.type === 'Box' && x.pro
   check('however far the arrows push, the window stays partly over the map', props().view.x >= -(props().vw / props().view.k) * 0.75 - 1e-6 && props().view.y >= -(props().vh / props().view.k) * 0.75 - 1e-6, JSON.stringify(props().view))
   await press('fit')
   await draw()
-  check('at the whole map, the arrows are drawn dim and do nothing (nowhere to move)', !find(tree, x => x.type === 'Button' && String(x.props.key).startsWith('move-')).length && /◀/.test(text(tree)))
+  {
+    const arrows = find(tree, x => x.type === 'Button' && String(x.props.key).startsWith('move-'))
+    const before = JSON.stringify(props().view)
+    arrows.forEach(b => b.props.onPress())
+    await settleView()
+    await draw()
+    check('at the whole map, the arrows stay buttons (no jumping) but are dim and do nothing', arrows.length === 4 && arrows.every(b => b.props.dimColor === true) && JSON.stringify(props().view) === before, arrows.map(b => `${b.props.key}:${b.props.dimColor}`).join(','))
+  }
 }
 
 // ── Hover: an outline, the import lines, and the full name in a tip ──

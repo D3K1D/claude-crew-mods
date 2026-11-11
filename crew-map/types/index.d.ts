@@ -122,7 +122,7 @@ export type MapNode = {
 export type Trail = { a: string; b: string; w: number }
 
 /** One line of the log; 'you' is a message the person sent, 'msg' one another session sent (`who` names it). */
-export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info' | 'you' | 'msg'; text: string; /** All of what a Claude said, when the line is its gist. */ full?: string }
+export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info' | 'you' | 'msg'; text: string; /** All of what a Claude said, when the line is its gist. */ full?: string; /** The tool call it records, and how long that took once done (ms). */ call?: string; took?: number }
 
 /** One task on Claude Code's task list, as the crew last saw it. */
 export type PlanTask = {
@@ -184,6 +184,8 @@ export type Crew = {
   logView?: { anchor?: number; open?: string[] }
   /** The theme the pane paints for: auto (follows the app), or light or dark as the person chose. */
   theme?: 'auto' | 'light' | 'dark'
+  /** The Claude the tree map's camera follows, and the camera's state when following began (moving the map by hand stops it). */
+  track?: { id: string; rev: string }
   /** Desks the person opened to read every line whole, by agent. */
   deskOpen?: Record<string, boolean>
   /** Which picture of the work the pane shows: desks and folder cards (absent: desks), or the tree map. */

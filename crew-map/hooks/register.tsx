@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.14'
+const VERSION = '1.3.15'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -284,6 +284,9 @@ const elapsed = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000))
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, '0')}m`
 }
+
+/** How long something took, as the log shows it: 340ms, 2.4s, 1m12s, 1h03m. */
+const took = (ms: number) => (ms < 1000 ? `${Math.max(1, Math.round(ms))}ms` : ms < 60_000 ? `${(Math.floor(ms / 100) / 10).toFixed(1)}s` : elapsed(ms))
 
 /** A tool result's text, whatever shape it came back in. */
 const resultText = (r: unknown): string => {
@@ -890,6 +893,12 @@ const midCut = (name: string, w: number) => {
 let deskMax = 0
 /** Since when fewer desks than that have been shown (0: not fewer). */
 let deskLowSince = 0
+/** How close the camera comes when following a Claude: nearer than the whole map, not right up to it. */
+const FOLLOW_K = 1.35
+/** Where the camera last stood on the Claude it follows (kept while that Claude is between files). */
+let lastTrack: { id: string; view: { x: number; y: number; k: number } } | undefined
+/** When each Claude's current model step began, by agent: how long it has been thinking (kept here, not written). */
+const stepStart = new Map<string, number>()
 /** How long the desk area keeps room for desks that have gone, before it gives it back. */
 const DESK_ROOM_MS = 60_000
 
@@ -1058,6 +1067,8 @@ const WINDOW_LINGER_MS = 20_000
 const NEEDS = '#E3B341'
 /** Rows of the log: fixed, so lines coming in never move what is below. */
 const LOG_ROWS = 12
+/** The log's duration column at the right edge: a space, then up to "●12m30s". */
+const LOG_DUR_W = 8
 /** Lines the log keeps to scroll back through. */
 const LOG_KEEP = 120
 /** Rows an opened log line may take, and an opened desk's line. */
@@ -3273,6 +3284,8 @@ const mindMap = (c: Crew, W: number, now: number, codex: CodexRun[] = [], lite =
   }
   if (sessionDir && !files.every(n => n.id.startsWith('demo/'))) targets.push({ id: 'root', kind: 'dir', path: sessionDir, name: 'the project folder', x: fold.x, y: fold.y, w: fold.w, h: fold.h + 30 })
   const busyAt = live.map(a => pos.get(a.node)).filter((p): p is Cell => !!p).map(p => ({ x: p.x, y: p.y }))
+  // Where each Claude stands (at work, or idle at the file it was last on): what the camera centres on when following one.
+  const agentAt: Record<string, { x: number; y: number }> = Object.fromEntries(c.agents.filter(a => a.state !== 'done' && a.node && pos.get(a.node)).map(a => [a.id, { x: pos.get(a.node)!.x, y: pos.get(a.node)!.y }]))
   // Resting the pointer on a thing: its full name (the map shortens long ones), what a click does, its links.
   const relOf = (id: string) => (id.startsWith('demo/') ? id.slice(5) : sessionDir && id.toLowerCase().startsWith(`${sessionDir.toLowerCase()}/`) ? id.slice(sessionDir.length + 1) : id)
   const at = (id: string): [number, number] | undefined => (pos.get(id) ? [pos.get(id)!.x, pos.get(id)!.y] : undefined)
@@ -3325,6 +3338,7 @@ const mindMap = (c: Crew, W: number, now: number, codex: CodexRun[] = [], lite =
     alt,
     targets,
     busyAt,
+    agentAt,
     hits,
     folded: [...dirMeta.values()].filter(m => m.folded).map(m => m.group),
     outsideHidden,
@@ -3685,7 +3699,9 @@ export const register: Register = on => {
         const c = await read($, crew)
         const running = (c.tests ?? []).filter(t => t.status === 'running')
         const shellsOn = (c.shells ?? []).filter(x => x.status === 'running')
-        if (!running.length && !shellsOn.length) return
+        // A Claude at work or thinking has clocks on its desk, its window and the log that count each second.
+        const atWork = c.agents.some(a => a.state === 'busy' || a.state === 'thinking')
+        if (!running.length && !shellsOn.length && !atWork) return
         await update($, tick, n => n + 1)
         const now = Date.now()
         if (shellsOn.some(x => now - x.startedAt > SHELL_GIVE_UP_MS))
@@ -3853,6 +3869,8 @@ export const register: Register = on => {
   on('tool.call', { tool: 'ExitPlanMode' }, async ($, e, next) => (await asking(e, () => next(e))) as Awaited<ReturnType<typeof next>>)
   // Each model request: how much of its context window the Claude is using now.
   on('turn.step', async function* ($, e, next) {
+    // When this model step began, kept here (no write per step): how long "thinking" has run.
+    stepStart.set(e.agentId ?? 'main', Date.now())
     const r = yield* next(e)
     const u = (r as { usage?: Usage | null } | undefined)?.usage
     if (u && fin(u.input_tokens) + fin(u.cache_read_input_tokens) + fin(u.cache_creation_input_tokens) > 0) {
@@ -4080,7 +4098,9 @@ export const register: Register = on => {
         }
         d = { ...d, timeline: [...(d.timeline ?? []), frame].slice(-MAX_FRAMES) }
       }
-      return log({ ...d, calls: d.calls + 1 }, id, 'act', line)
+      const logged = log({ ...d, calls: d.calls + 1 }, id, 'act', line)
+      const last = logged.log[logged.log.length - 1]
+      return last && last !== d.log[d.log.length - 1] ? { ...logged, log: [...logged.log.slice(0, -1), { ...last, call: callId }] } : logged
     })
     if (fresh && CODE_EXT.test(node)) scan(node)
 
@@ -4101,6 +4121,8 @@ export const register: Register = on => {
         stuckNote = ''
         problemNote = ''
         let d = ok && delta && node && !isSpecial(node) ? record(c, node, id, delta) : c
+        // How long the call took, on its line in the log.
+        if (d.log.some(l => l.call === callId && l.took === undefined)) d = { ...d, log: d.log.map(l => (l.call === callId && l.took === undefined ? { ...l, took: Math.max(0, stamp - l.at) } : l)) }
         if (ok && /^Task(Create|Update|List|Get)$/.test(e.tool)) d = applyTaskCall(d, e.tool, a, ran, out, id)
         // The call is over: a permission it waited on is settled.
         if (d.agents.some(x => x.id === id && x.needs?.tool === e.tool.slice(0, 80))) d = upsert(d, id, x => ({ ...x, needs: undefined }))
@@ -4368,7 +4390,7 @@ export const register: Register = on => {
     // The step's swing starts when the step is first shown, so a redraw does not restart it.
     if (replaying && replayShown.at !== rpAt) replayShown = { at: rpAt, stamp: Date.now() }
     const map = isTerminal || deskMode
-      ? { svg: '', body: '', mw: 1, mh: 1, alt: '', targets: [] as MapTarget[], busyAt: [] as { x: number; y: number }[], hits: [] as { x: number; y: number }[], folded: [] as string[], outsideHidden: 0, codexShown: false, drawn: [] as { x: number; y: number; w: number; h: number }[], hoverable: {} as Record<string, HoverInfo> }
+      ? { svg: '', body: '', mw: 1, mh: 1, alt: '', targets: [] as MapTarget[], busyAt: [] as { x: number; y: number }[], agentAt: {} as Record<string, { x: number; y: number }>, hits: [] as { x: number; y: number }[], folded: [] as string[], outsideHidden: 0, codexShown: false, drawn: [] as { x: number; y: number; w: number; h: number }[], hoverable: {} as Record<string, HoverInfo> }
       : replaying
         ? cachedMap(crewAt(c, rpAt, replayShown.stamp), mapW, Date.now(), [], sq.q)
         : cachedMap(c, mapW, Date.now(), codexRuns, sq.q)
@@ -4386,8 +4408,19 @@ export const register: Register = on => {
           return clampView({ x: at.x - mapW / k / 2, y: at.y - vh / k / 2, k }, limits)
         })()
       : undefined
-    const view = hitView ?? (vs.auto || !panning ? startView(mapW, vh, map.mw, map.mh, map.busyAt) : clampView(vs, limits))
-    const panRev = hitView ? `s${sq.rev}:${hitNo}:${mapW}x${vh}` : vs.auto || !panning ? `fit:${Math.round(map.mw)}x${Math.round(map.mh)}:${mapW}x${vh}:${Math.round(view.y)}` : vs.rev
+    // Following a Claude: the camera centres on it, closer than the whole map but not right up to it,
+    // and moves with it from file to file. Moving the map by hand (its rev changes) stops it, as does the
+    // Claude finishing; between files (no spot yet) the camera stays where it last was.
+    const tracked = c.track ? c.agents.find(a => a.id === c.track?.id && a.state !== 'done') : undefined
+    if (c.track && (!tracked || (panning && vs.rev !== c.track.rev))) void write?.(d => (d.track ? { ...d, track: undefined } : d))
+    const trackAt = panning && tracked && !onHit ? map.agentAt[tracked.id] : undefined
+    if (trackAt) {
+      const k = Math.min(limits.kMax, Math.max(FOLLOW_K, limits.kMin))
+      lastTrack = { id: tracked!.id, view: clampView({ x: trackAt.x - mapW / k / 2, y: trackAt.y - vh / k / 2, k }, limits) }
+    }
+    const trackView = panning && tracked && !onHit && lastTrack?.id === tracked.id ? lastTrack.view : undefined
+    const view = hitView ?? trackView ?? (vs.auto || !panning ? startView(mapW, vh, map.mw, map.mh, map.busyAt) : clampView(vs, limits))
+    const panRev = hitView ? `s${sq.rev}:${hitNo}:${mapW}x${vh}` : trackView ? `t:${tracked!.id}:${Math.round(trackView.x)},${Math.round(trackView.y)},${trackView.k.toFixed(2)}:${mapW}x${vh}` : vs.auto || !panning ? `fit:${Math.round(map.mw)}x${Math.round(map.mh)}:${mapW}x${vh}:${Math.round(view.y)}` : vs.rev
     const surfaceKey = `${e.surface}${panning ? '+pan' : ''}`
     draws[surfaceKey] = (draws[surfaceKey] ?? 0) + 1
     // A drawing without the pan module (another surface, the terminal) must not replace the window the
@@ -4499,13 +4532,15 @@ export const register: Register = on => {
             : a.node && c.nodes[a.node]
               ? c.nodes[a.node].label
               : trunc(a.detail, 24)
-          : ''
+          : a.state === 'thinking' && stepStart.has(a.id)
+            ? elapsed(Date.now() - (stepStart.get(a.id) ?? 0))
+            : ''
       const { pct, src, doing: onNow, total } = progressOf(a, c)
       const fill = pct >= 0 ? Math.round((pct / 100) * barW) : 0
       const shade = pct >= 0 && total ? Math.min(barW - fill, Math.round((onNow / total) * barW)) : 0
       const dot = a.state === 'busy' ? '●' : a.state === 'thinking' ? '◌' : a.state === 'done' ? '✓' : '○'
       return (
-        <Box flexDirection="column" borderStyle="round" borderColor={a.needs ? NEEDS : color} paddingX={1} width={winWidth}>
+        <Box key={`win-${a.id}`} flexDirection="column" borderStyle="round" borderColor={a.needs ? NEEDS : color} paddingX={1} width={winWidth}>
           <Box flexDirection="row">
             <Box flexShrink={1} flexDirection="row">
               <Text bold color={color}>{`✻ ${trunc(a.name, 18)}`}</Text>
@@ -4521,6 +4556,23 @@ export const register: Register = on => {
                 return <Text color={actColor} wrap="truncate">{` ${dot} ${verb}${where ? ` ${where}` : ''}`}</Text>
               })()}
             </Box>
+            {a.state !== 'done' ? (
+              <Box flexDirection="row" flexShrink={0}>
+                <Text>{'  '}</Text>
+                <Button
+                  key={`follow:${a.id}`}
+                  plain
+                  dimColor={c.track?.id !== a.id}
+                  onPress={() => {
+                    const wasFollowing = c.track?.id === a.id
+                    void write?.(d => ({ ...d, track: wasFollowing ? undefined : { id: a.id, rev: vs.rev } }))
+                    if (!wasFollowing && deskMode) void $.ui.toast(`Following ${a.name}: the tree map's camera stays on it. Open ⊞ tree map to watch.`)
+                  }}
+                >
+                  {c.track?.id === a.id ? '◉ following' : '◎ follow'}
+                </Button>
+              </Box>
+            ) : null}
             {a.id !== 'main' && a.state === 'done' ? (
               <Box flexDirection="row" flexShrink={0}>
                 <Text>{'  '}</Text>
@@ -4702,7 +4754,11 @@ export const register: Register = on => {
     // What a line's text gets: the room fitPane leaves the pane, less the log box's frame, the clock, the name and a space.
     const logTextW = Math.max(20, (isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9 - nameW - 1)
     // A line's mark (› to open it, ⌄ to close it) takes two of that, before the space.
-    const logRowW = Math.max(10, logTextW - 2)
+    // ...and the duration column at the right edge takes LOG_DUR_W.
+    const logRowW = Math.max(10, logTextW - 2 - LOG_DUR_W)
+    // How long an action took (340ms, 2.4s, 1m12s), or how long it has run so far (● 12.3s); none for the rest.
+    const durOf = (l: LogLine) =>
+      l.took !== undefined ? took(l.took) : l.call && Date.now() - l.at >= 1000 && Date.now() - l.at < SHELL_GIVE_UP_MS ? `●${took(Date.now() - l.at)}` : ' '
     const lv = c.logView ?? {}
     const openLog = new Set(lv.open ?? [])
     // A line as it reads folded (a message's first three rows, else one), and all of it.
@@ -5001,16 +5057,20 @@ export const register: Register = on => {
       const task = at && !a.needs ? doingOf(a, src) : ''
       const step = a.state === 'busy' ? `${how} ${what}${folder ? ` in ${folder}` : ''}` : ''
       const lastDid = a.actions[0] ? `just did: ${a.actions[0]}` : 'planning its next step'
+      // How long its current model step has run: thinking is time too.
+      const thinkFor = a.state === 'thinking' && stepStart.has(a.id) ? elapsed(Date.now() - (stepStart.get(a.id) ?? 0)) : ''
       const [onNow, detail] = task && wait && wait.kind !== 'you'
         ? [task, `⏳ ${wait.label}: ${wait.what}`]
         : wait
         ? [`${a.needs ? '⏸ ' : waitTint ? '⏳ ' : '○ '}${wait.label}`, wait.what]
         : task
-          ? [task, step || lastDid]
+          ? [task, step || (thinkFor ? `thinking ${thinkFor} · ${lastDid}` : lastDid)]
           : a.state === 'busy'
             ? [what, `${how}${folder ? ` in ${folder}` : ''}`]
             : a.state === 'thinking'
-              ? [a.thoughts[0] ? `› ${oneLine(a.thoughts[0])}` : 'thinking', lastDid]
+              ? a.thoughts[0]
+                ? [`› ${oneLine(a.thoughts[0])}`, thinkFor ? `thinking ${thinkFor} · ${lastDid}` : lastDid]
+                : [thinkFor ? `thinking ${thinkFor}` : 'thinking', lastDid]
               : [what, how]
       // Its plan's progress, else the files it was on before.
       const plan = progressOf(a, src)
@@ -5239,13 +5299,10 @@ export const register: Register = on => {
         </Box>
         <Box flexDirection="row" flexWrap="wrap">
           <Box flexDirection="row">
-            {frames.length > 1 && !replaying ? (
-              <Button key="replay" plain onPress={() => void replayTo('play')}>
-                {'⏪ replay'}
-              </Button>
-            ) : (
-              <Text dimColor>{'⏪ replay'}</Text>
-            )}
+            {/* Always a button (dim while there is nothing to replay): text in its place would jump the row. */}
+            <Button key="replay" plain dimColor={!(frames.length > 1 && !replaying)} onPress={() => (frames.length > 1 && !replaying ? void replayTo('play') : undefined)}>
+              {'⏪ replay'}
+            </Button>
             <Text>{'   '}</Text>
           </Box>
           {sessionDir ? (
@@ -5423,13 +5480,9 @@ export const register: Register = on => {
             </Box>
             <Box flexDirection="row" flexWrap="wrap">
               <Box flexDirection="row">
-                {frames.length > 1 && !replaying ? (
-                  <Button key="replay" plain onPress={() => void replayTo('play')}>
-                    {'⏪ replay'}
-                  </Button>
-                ) : (
-                  <Text dimColor>{'⏪ replay'}</Text>
-                )}
+                <Button key="replay" plain dimColor={!(frames.length > 1 && !replaying)} onPress={() => (frames.length > 1 && !replaying ? void replayTo('play') : undefined)}>
+                  {'⏪ replay'}
+                </Button>
                 <Text>{'   '}</Text>
               </Box>
               {sessionDir ? (
@@ -5461,14 +5514,12 @@ export const register: Register = on => {
               {panning ? <Text>{'  '}</Text> : null}
               {panning
                 ? ([['left', '◀', -1, 0], ['up', '▲', 0, -1], ['down', '▼', 0, 1], ['right', '▶', 1, 0]] as const).map(([dir, glyph, dx, dy]) => (
-                    <Box key={`move-${dir}`} flexDirection="row">
-                      {canGo[dir] ? (
-                        <Button key={`move-${dir}`} plain onPress={() => nudgeView($, dx, dy)}>
-                          {glyph}
-                        </Button>
-                      ) : (
-                        <Text dimColor>{glyph}</Text>
-                      )}
+                    <Box key={`arrow-${dir}`} flexDirection="row">
+                      {/* Always a button, dim where the map has nowhere to go: swapping it for text as the map
+                          grows made the row's spacing jump and the highlight under the pointer flash. */}
+                      <Button key={`move-${dir}`} plain dimColor={!canGo[dir]} onPress={() => (canGo[dir] ? nudgeView($, dx, dy) : undefined)}>
+                        {glyph}
+                      </Button>
                       <Text>{' '}</Text>
                     </Box>
                   ))
@@ -5520,20 +5571,13 @@ export const register: Register = on => {
           {/* The log's title row also names the helpers that finished (no row of its own to come and go). */}
           <Box flexDirection="row">
             <Text dimColor>{'log '}</Text>
-            {canUp ? (
-              <Button key="log-up" plain dimColor onPress={logUp}>
-                {' ▲ '}
-              </Button>
-            ) : (
-              <Text dimColor>{'   '}</Text>
-            )}
-            {canDown ? (
-              <Button key="log-down" plain dimColor onPress={logDown}>
-                {' ▼ '}
-              </Button>
-            ) : (
-              <Text dimColor>{'   '}</Text>
-            )}
+            {/* Always buttons, dim when there is nowhere to scroll (text in their place would jump). */}
+            <Button key="log-up" plain dimColor onPress={() => (canUp ? logUp() : undefined)}>
+              {canUp ? ' ▲ ' : ' △ '}
+            </Button>
+            <Button key="log-down" plain dimColor onPress={() => (canDown ? logDown() : undefined)}>
+              {canDown ? ' ▼ ' : ' ▽ '}
+            </Button>
             {held ? (
               <Button key="log-latest" plain onPress={() => logTo(undefined)}>
                 {newerCount ? ` ⤓ latest · ${fmtK(newerCount)} new` : ' ⤓ latest'}
@@ -5566,7 +5610,7 @@ export const register: Register = on => {
             // Each row starts under the first: the time and name on the first only. Yours is "You";
             // another session's is "Msg", its sender first in bold.
             return logRows[li].map((r, i) => (
-              <Box flexDirection="row">
+              <Box key={`row:${k}:${i}`} flexDirection="row">
                 <Box width={9} flexShrink={0}>
                   <Text dimColor>{i ? ' ' : `${clock(l.at)} `}</Text>
                 </Box>
@@ -5590,16 +5634,22 @@ export const register: Register = on => {
                     <Text dimColor>{i === 0 && l.kind === 'think' ? ' ›' : '  '}</Text>
                   )}
                 </Box>
-                {i === 0 && m?.from && r.startsWith(`${m.from}:`) ? (
-                  <Box flexDirection="row" flexShrink={1}>
-                    <Text bold color={RELAYED}>{` ${m.from}:`}</Text>
-                    <Text wrap="truncate" color="#E6EDF3">{r.slice(m.from.length + 1)}</Text>
-                  </Box>
-                ) : (
-                  <Text wrap="truncate" dimColor={l.kind === 'info'} color={m || l.kind === 'think' ? '#E6EDF3' : undefined} italic={l.kind === 'think'}>
-                    {` ${r}`}
-                  </Text>
-                )}
+                <Box flexDirection="row" flexGrow={1} flexShrink={1}>
+                  {i === 0 && m?.from && r.startsWith(`${m.from}:`) ? (
+                    <Box flexDirection="row" flexShrink={1}>
+                      <Text bold color={RELAYED}>{` ${m.from}:`}</Text>
+                      <Text wrap="truncate" color="#E6EDF3">{r.slice(m.from.length + 1)}</Text>
+                    </Box>
+                  ) : (
+                    <Text wrap="truncate" dimColor={l.kind === 'info'} color={m || l.kind === 'think' ? '#E6EDF3' : undefined} italic={l.kind === 'think'}>
+                      {` ${r}`}
+                    </Text>
+                  )}
+                </Box>
+                {/* How long it took, at the right edge: exact, as it ended (or counting, ● while it runs). */}
+                <Box width={LOG_DUR_W} flexShrink={0} justifyContent="flex-end">
+                  <Text dimColor>{i === 0 ? durOf(l) : ' '}</Text>
+                </Box>
               </Box>
             ))
           })}
