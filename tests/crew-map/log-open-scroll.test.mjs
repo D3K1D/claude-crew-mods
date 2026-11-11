@@ -129,9 +129,9 @@ check('a helper asked more than its job says has › more', !!more && /› more/
 const folded = kids(desk(t)).length
 await press(more)
 t = await render()
-const jobRows = kids(kids(kids(desk(t))[0]).find(k => k.type === 'Box')).slice(1).map(x => text(x).trim())
-check('opened, the desk reads all it was asked', jobRows.join(' ') === `Inventory panel: ${job}`, jobRows.join(' | '))
+const jobRows = kids(desk(t)).slice(1).map(x => text(x).trim()).join(' ')
+check('opened, the lane reads all it was asked', jobRows.includes(`for: Inventory panel: ${job}`), jobRows)
 check('...and says ⌄ less', /⌄ less/.test(text(find(desk(t), x => x.type === 'Button' && x.props.key === 'deskopen:sub1')[0])))
 await press(find(desk(t), x => x.type === 'Button' && x.props.key === 'deskopen:sub1')[0])
-check('⌄ less folds it back to its size', kids(desk(await render())).length === folded && kids(kids(kids(desk(await render()))[0]).find(k => k.type === 'Box')).length === 3)
+check('⌄ less folds it back to its size', kids(desk(await render())).length === folded && folded === 1)
 console.log(`\n${fails} failing check(s)`)

@@ -53,17 +53,17 @@ for (let i = 1; i <= 7; i++)
   })
 let t = await render(87)
 const busyH = area(t).props.minHeight
-check('seven desks at 87 columns: the area keeps room for them', busyH >= 7 * 10, String(busyH))
+check('eight lanes at 87 columns: one line each, and the area keeps room for them', busyH >= 8 + 2 && find(area(t), x => x.type === 'Svg').every(x => x.props.height === 19), `${busyH} · ${find(area(t), x => x.type === 'Svg').map(x => x.props.height).join(',')}`)
 for (let i = 1; i <= 7; i++) await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: `S${i}`, agentId: `sub${i}`, usage }, async () => ({ text: 'ok' }))
 now += 30_000
 t = await render(87)
-check('the desks never stretch to fill the room the area keeps', area(t).props.alignItems === 'flex-start', String(area(t).props.alignItems))
+check('the lanes stack, each its own height (none stretched to fill the room kept)', area(t).props.flexDirection === 'column', String(area(t).props.flexDirection))
 check('...which it keeps for a while after they go, so the cards hold still', area(t).props.minHeight === busyH, String(area(t).props.minHeight))
 now += 25_000
 t = await render(87)
 now += 40_000
 t = await render(87)
-check('a minute after they went, it gives the room back: one desk, ten rows', area(t).props.minHeight === 10, String(area(t).props.minHeight))
+check('a minute after they went, it gives the room back: one lane, two lines and its frame', area(t).props.minHeight === 4, String(area(t).props.minHeight))
 
 // The chat's cost: Claude Code's own total, at every width.
 usd = 12.4

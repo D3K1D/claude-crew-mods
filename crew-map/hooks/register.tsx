@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.15'
+const VERSION = '1.4.0'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -1074,6 +1074,8 @@ const LOG_KEEP = 120
 /** Rows an opened log line may take, and an opened desk's line. */
 const LOG_OPEN_ROWS = 40
 const DESK_OPEN_ROWS = 12
+/** From this many lanes up, each lane is one line (eight still fit in about ten rows). */
+const LANE_COMPACT_AT = 6
 /** How many lines a press of ▲ or ▼ moves the log. */
 const LOG_STEP = 3
 /** Your messages in the log, and those another session sent. */
@@ -2175,28 +2177,96 @@ const clampView = (v: { x: number; y: number; k: number }, f: { vw: number; vh: 
 }
 /** The map drawn through a window: the same picture, a new viewBox; `onMap` in map units, `onWindow` in window pixels. */
 /** Seconds on the clock the map's looping animations share (see `loop` in mindMap). */
+
+/** The icons a lane's tile shows for what its Claude is doing (16-unit stroke paths). */
+const LANE_ICON: Record<string, string> = {
+  hourglass: 'M4.5 2h7M4.5 14h7M5.5 2c0 3.5 5 3.5 5 6s-5 2.5-5 6M10.5 2c0 3.5-5 3.5-5 6s5 2.5 5 6',
+  pencil: 'M10.5 2.5l3 3L6 13H3v-3l7.5-7.5zM9 4l3 3',
+  terminal: 'M2.5 3.5h11v9h-11zM5 7l2 1.5L5 10M8.5 10.5H11',
+  alert: 'M8 2.2l6.3 11.3H1.7zM8 6.5v3M8 11.6v.2',
+  eye: 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z',
+  search: 'M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM10.3 10.3l3.2 3.2',
+  globe: 'M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12',
+  branch: 'M5 2.5v11M5 9c0-3 6-2 6-6.5M11 2.5v.01',
+  think: 'M4 8h.01M8 8h.01M12 8h.01',
+  check: 'M3 8.5l3 3 7-7',
+  robot: 'M3.5 5.5h9v7h-9zM8 5.5V3M6 9h.01M10 9h.01',
+  ring: 'M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z',
+  tool: 'M10 2.5a3.5 3.5 0 0 0-3.2 4.9L2.5 11.7l1.8 1.8 4.3-4.3A3.5 3.5 0 0 0 13.5 6l-2 2-2-2 2-2a3.5 3.5 0 0 0-1.5-1.5z',
+}
+/** The text glyph standing for a lane's icon where no picture is drawn (the terminal). */
+const LANE_GLYPH: Record<string, string> = { hourglass: '⏳', pencil: '✎', terminal: '▸', alert: '!', eye: '◇', search: '⌕', globe: '◎', branch: '⇢', think: '›', check: '✓', robot: '◎', ring: '○', tool: '•' }
+
 /**
- * A Claude at its desk, as a small picture: its sprite bobbing as it works (quick when busy, slow
- * when thinking, still when idle), a "!" bubble when it waits on the person, a tick when done.
- * Animations take their phase from the clock the picture is drawn at, so a redraw does not restart them.
+ * A lane's picture, left of its words: the thin tree it hangs on (a dot for the main Claude; for a helper,
+ * the line to it, purple dashes flowing while the one that started it waits on it), a tile showing what
+ * it is doing, and its plan as a track of tasks with the Claude standing on the one it is on. Exactly as
+ * tall as its rows of text, so lanes stack into one tree.
  */
-const deskSprite = (color: string, mood: 'busy' | 'thinking' | 'idle' | 'needs' | 'done', seed: number) => {
-  const U = 2.2
-  const R = (x: number, y: number, w: number, h: number, fill: string) => `<rect x="${(x * U).toFixed(1)}" y="${(y * U).toFixed(1)}" width="${(w * U).toFixed(1)}" height="${(h * U).toFixed(1)}" fill="${fill}"/>`
-  const off = (seed % 10) / 10
-  const anim = (name: string, dur: number, extra = 0) => `animation:${name} ${dur}s ease-in-out infinite;animation-delay:calc(-1s * var(--clk, 0) - ${(off + extra).toFixed(2)}s)`
-  const body = R(2, 0, 12, 7, color) + R(0, 3, 2, 2, color) + R(14, 3, 2, 2, color) + [3, 5, 10, 12].map(x => R(x, 7, 1, 2, color)).join('')
-  const eyes = `<g style="transform-origin:center;transform-box:fill-box;${anim('blink', 4.2)}">${R(4, 2, 1, 2, '#0D1117')}${R(11, 2, 1, 2, '#0D1117')}</g>`
-  const bob = mood === 'busy' ? anim('bob', 0.7) : mood === 'thinking' || mood === 'needs' ? anim('bob', 1.8) : ''
-  const badge =
-    mood === 'needs'
-      ? '<circle cx="44" cy="8" r="7" fill="#E3B341"/><text x="44" y="11.5" text-anchor="middle" font-size="10" font-weight="800" fill="#0D1117">!</text>'
-      : mood === 'done'
-        ? '<circle cx="44" cy="8" r="7" fill="#2EA043"/><path d="M40.5 8l2.4 2.4 4.2-4.6" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>'
-        : mood === 'thinking'
-          ? [0, 1, 2].map(i => `<circle cx="${38 + i * 4}" cy="7" r="1.4" fill="#9CA3AF" style="${anim('dot', 1.2, i * 0.2)}"/>`).join('')
-          : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" data-keep-darks="1" width="52" height="34" viewBox="0 0 52 34" style="--clk:${clockNow()}"><style>@keyframes bob{50%{transform:translateY(-2px)}}@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}@keyframes dot{50%{opacity:.2}}</style><g transform="translate(2,10)"><g style="${bob}">${body}${eyes}</g></g>${badge}</svg>`
+const laneSvg = (o: {
+  h: number
+  compact: boolean
+  track: boolean
+  depth: 'root' | 'child' | 'last' | 'none'
+  below: boolean
+  waited: boolean
+  hue: string
+  icon: string
+  iconHue: string
+  total: number
+  done: number
+  cur: number
+  frac: number
+  mood: 'busy' | 'thinking' | 'idle' | 'needs' | 'done'
+  seed: number
+}) => {
+  const H = o.h
+  const mid = H / 2
+  const tile = o.compact ? 15 : 30
+  const tx = 20
+  const ty = (H - tile) / 2
+  const x0 = tx + tile + 12
+  const x1 = x0 + (o.compact ? 84 : 104)
+  const W = o.track ? x1 + 12 : tx + tile + 4
+  const line = '#30363D'
+  let s = ''
+  if (o.depth === 'root') s += `<circle cx="7" cy="${mid}" r="3.2" fill="${o.hue}"/>${o.below ? `<path d="M7 ${mid}V${H}" stroke="${line}" stroke-width="1.2"/>` : ''}`
+  if (o.depth === 'child' || o.depth === 'last') {
+    s += `<path d="M7 0V${o.depth === 'child' ? H : mid}" stroke="${line}" stroke-width="1.2"/>`
+    s += o.waited
+      ? `<path d="M7 ${mid}H${tx - 2}" stroke="#D2A8FF" stroke-width="1.4" stroke-dasharray="2 3"><animate attributeName="stroke-dashoffset" from="10" to="0" dur="0.9s" repeatCount="indefinite"/></path>`
+      : `<path d="M7 ${mid}H${tx - 2}" stroke="${line}" stroke-width="1.2"/>`
+  }
+  s += `<rect x="${tx}" y="${ty}" width="${tile}" height="${tile}" rx="${o.compact ? 4 : 7}" fill="${o.iconHue}" fill-opacity="0.13" stroke="${o.iconHue}" stroke-width="1.4"/>`
+  const isz = o.compact ? 11 : 16
+  s += `<g transform="translate(${(tx + (tile - isz) / 2).toFixed(1)},${(ty + (tile - isz) / 2).toFixed(1)}) scale(${(isz / 16).toFixed(3)})" fill="none" stroke="${o.iconHue}" stroke-width="${o.icon === 'think' ? 2.8 : 1.7}" stroke-linecap="round" stroke-linejoin="round"><path d="${LANE_ICON[o.icon] ?? LANE_ICON.ring}"/></g>`
+  if (o.track) {
+    const base = H - (o.compact ? 4 : 6)
+    const n = o.total
+    const xs = n > 1 ? Array.from({ length: n }, (_, k) => x0 + (k * (x1 - x0)) / (n - 1)) : n === 1 ? [(x0 + x1) / 2] : []
+    const at = n ? (o.cur >= 0 && o.cur < n ? xs[o.cur] : o.done >= n ? x1 : x0) : x0 + (x1 - x0) * Math.min(1, Math.max(0, o.frac))
+    // No plan: a dotted path, the Claude on it as far as the work is known to have come.
+    s += n
+      ? `<path d="M${x0} ${base}H${x1}" stroke="${line}" stroke-width="2" stroke-linecap="round"/>`
+      : `<path d="M${x0} ${base}H${x1}" stroke="#484F58" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="0.1 6"/>`
+    if (n && at > x0) s += `<path d="M${x0} ${base}H${at.toFixed(1)}" stroke="${o.hue}" stroke-width="2" stroke-linecap="round"/>`
+    const r = o.compact ? 2.4 : 3.2
+    for (const [k, x] of xs.entries())
+      s += `<circle cx="${x.toFixed(1)}" cy="${base}" r="${r}" fill="${k < o.done ? o.hue : 'none'}" stroke="${k < o.done || k === o.cur ? o.hue : '#484F58'}" stroke-width="1.6"/>`
+    // The Claude, standing where it is on its plan: bobbing while it works, slowly while it thinks or waits.
+    const U = o.compact ? 0.85 : 1.5
+    const R = (x: number, y: number, w: number, hh: number, fill: string) => `<rect x="${(x * U).toFixed(1)}" y="${(y * U).toFixed(1)}" width="${(w * U).toFixed(1)}" height="${(hh * U).toFixed(1)}" fill="${fill}"/>`
+    const off = (o.seed % 10) / 10
+    const anim = (name: string, dur: number) => `animation:${name} ${dur}s ease-in-out infinite;animation-delay:calc(-1s * var(--clk, 0) - ${off.toFixed(2)}s)`
+    const body = R(2, 0, 12, 7, o.hue) + R(0, 3, 2, 2, o.hue) + R(14, 3, 2, 2, o.hue) + [3, 5, 10, 12].map(x => R(x, 7, 1, 2, o.hue)).join('')
+    const eyes = `<g style="transform-origin:center;transform-box:fill-box;${anim('blink', 4.2)}">${R(4, 2, 1, 2, '#0D1117')}${R(11, 2, 1, 2, '#0D1117')}</g>`
+    const bob = o.mood === 'busy' ? anim('bob', 0.7) : o.mood === 'thinking' || o.mood === 'needs' ? anim('bob', 1.8) : ''
+    s += `<g transform="translate(${(at - 8 * U).toFixed(1)},${(base - r - 1 - 9 * U).toFixed(1)})"><g style="${bob}">${body}${eyes}</g></g>`
+  }
+  return {
+    w: W,
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" data-keep-darks="1" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="--clk:${clockNow()}"><style>@keyframes bob{50%{transform:translateY(-${o.compact ? 1 : 2}px)}}@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}</style>${s}</svg>`,
+  }
 }
 
 /**
@@ -5007,19 +5077,11 @@ export const register: Register = on => {
     }
     renderDone?.()
     renderDone = null
-    // ── Desks: one card per Claude at work (and each Codex run), what it is on now, and before ──
+    // ── Desks, as lanes: one per Claude at work (and each Codex run), hung on a thin tree from the main ──
+    // Claude. Left, a picture: the tree, a tile for what it is doing, its plan as a track with the Claude
+    // standing on the task it is on. Right, two lines: its name, what it is for and its times; then what
+    // it is doing now (the file as a button), or what it waits on. Six or more: one line each.
     const src = replaying ? crewAt(c, rpAt, replayShown.stamp) : c
-    // Desks fill the row edge to edge, as many across as fit.
-    // About 45 columns or more each, room for a helper's job and the task it is on.
-    const deskPer = cols >= 200 ? 4 : cols >= 140 ? 3 : cols >= 90 ? 2 : 1
-    const deskW = deskPer === 1 ? cols - 1 : Math.floor((cols - (deskPer - 1)) / deskPer)
-    const deskInner = Math.max(10, Math.min(deskW, isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4)
-    const besideW = Math.max(6, deskInner - (isTerminal ? 2 : Math.ceil(52 / CELL_W) + 1))
-    /** A desk's text over exactly `n` rows of `w` cells (blank rows kept, so every desk is one height). */
-    const deskLines = (t: string, w: number, n: number, open = false) => {
-      const r = wrapRows(t || ' ', w, open ? DESK_OPEN_ROWS : n)
-      return [...r, ...Array(Math.max(0, n - r.length)).fill(' ')] as string[]
-    }
     const deskAgents = replaying ? src.agents.filter(a => a.id === 'main' || a.state === 'busy' || a.state === 'thinking') : shown
     const nowOf = (a: Agent): [string, string] => {
       const w = waitOf(a, src, Date.now())
@@ -5034,121 +5096,7 @@ export const register: Register = on => {
       if (a.state === 'done') return ['done', a.cost ? fmtUsd(a.cost) : 'finished']
       return ['—', a.id === 'main' ? 'waiting for a prompt' : 'idle']
     }
-    const desk = (a: Agent) => {
-      const color = colorOf(a)
-      const [what, how] = nowOf(a)
-      const wait = waitOf(a, src, Date.now())
-      // Waiting on helpers or a command: a slow bob (it is not working itself); on you: still.
-      const mood = a.needs ? 'needs' : wait && wait.kind !== 'you' ? 'thinking' : a.state === 'busy' ? 'busy' : a.state === 'thinking' ? 'thinking' : a.state === 'done' ? 'done' : 'idle'
-      const waitTint = wait && wait.kind !== 'you' ? WAIT_TINT[wait.kind] : undefined
-      // The folder only while it works on a file there (not while it waits, asks or compacts).
-      const onAFile = a.state === 'busy' && !a.needs && a.tool !== COMPACT && !!a.node && !!src.nodes[a.node] && !isSpecial(a.node)
-      const where = onAFile ? groupOf(a.node) : ''
-      const before = a.visited.filter(v => v !== a.node && src.nodes[v] && !isSpecial(v)).slice(0, 3).map(v => src.nodes[v].label || baseName(v))
-      const pad = isTerminal ? '' : ' '
-      const at = a.state === 'busy' || a.state === 'thinking'
-      // How long it has been at its job, beside its name; once done, what it cost.
-      const clockOf = at && a.since ? ` · ${elapsed(Date.now() - a.since)}` : a.state === 'done' && a.cost ? ` · ${fmtUsd(a.cost)}` : ''
-      // Its job: what it was started for (a helper), or your message (the main Claude).
-      const job = a.job || (a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : '') || (a.id === 'main' ? 'waiting for a prompt' : '')
-      const folder = where ? (where === OUTSIDE ? 'outside the project' : where === '.' ? 'the project top' : where) : ''
-      // On now, and the detail under it: what it waits on, else the task it is on (from its plan) and the
-      // step it is taking for it, else that step, else (thinking) what it last said and did.
-      const task = at && !a.needs ? doingOf(a, src) : ''
-      const step = a.state === 'busy' ? `${how} ${what}${folder ? ` in ${folder}` : ''}` : ''
-      const lastDid = a.actions[0] ? `just did: ${a.actions[0]}` : 'planning its next step'
-      // How long its current model step has run: thinking is time too.
-      const thinkFor = a.state === 'thinking' && stepStart.has(a.id) ? elapsed(Date.now() - (stepStart.get(a.id) ?? 0)) : ''
-      const [onNow, detail] = task && wait && wait.kind !== 'you'
-        ? [task, `⏳ ${wait.label}: ${wait.what}`]
-        : wait
-        ? [`${a.needs ? '⏸ ' : waitTint ? '⏳ ' : '○ '}${wait.label}`, wait.what]
-        : task
-          ? [task, step || (thinkFor ? `thinking ${thinkFor} · ${lastDid}` : lastDid)]
-          : a.state === 'busy'
-            ? [what, `${how}${folder ? ` in ${folder}` : ''}`]
-            : a.state === 'thinking'
-              ? a.thoughts[0]
-                ? [`› ${oneLine(a.thoughts[0])}`, thinkFor ? `thinking ${thinkFor} · ${lastDid}` : lastDid]
-                : [thinkFor ? `thinking ${thinkFor}` : 'thinking', lastDid]
-              : [what, how]
-      // Its plan's progress, else the files it was on before.
-      const plan = progressOf(a, src)
-      const cells = 6
-      const filled = plan.total ? Math.round((plan.pct / 100) * cells) : 0
-      // Opened, its job, what it is on and the detail show whole; offered only when one is cut short.
-      const deskOpen = !!c.deskOpen?.[a.id]
-      const asked = a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : ''
-      const fullJob = asked.length > job.length ? asked : job
-      const longer = deskOpen || fullJob !== job || ([[job, besideW], [onNow, deskInner], [detail, deskInner]] as [string, number][]).some(([t, w]) => wrapRows(t || ' ', w, 3).length > 2)
-      return (
-        <Box key={`desk-${a.id}`} flexDirection="column" borderStyle="round" borderColor={a.needs ? NEEDS : color} paddingX={1} width={deskW}>
-          <Box flexDirection="row">
-            {isTerminal ? <Text color={color}>{'✻ '}</Text> : <Svg source={deskSprite(color, mood, hash(a.id))} alt={`${a.name}: ${onNow}`} width={52} height={34} />}
-            <Box flexDirection="column" flexShrink={1}>
-              <Box flexDirection="row" flexShrink={1}>
-                <Text bold color={color} wrap="truncate">{`${pad}${a.name}`}</Text>
-                <Text dimColor wrap="truncate">{clockOf}</Text>
-                {longer ? (
-                  <Button key={`deskopen:${a.id}`} plain dimColor={!deskOpen} onPress={() => void write?.(d => ({ ...d, deskOpen: { ...(d.deskOpen ?? {}), [a.id]: !d.deskOpen?.[a.id] } }))}>
-                    {deskOpen ? '  ⌄ less' : '  › more'}
-                  </Button>
-                ) : null}
-              </Box>
-              {deskLines(deskOpen ? fullJob : job, besideW, 2, deskOpen).map((l, i) => (
-                <Text key={`job${i}`} dimColor italic={!!job && job !== 'waiting for a prompt'} wrap="truncate">{`${pad}${l}`}</Text>
-              ))}
-            </Box>
-          </Box>
-          {deskLines(onNow, deskInner, 2, deskOpen).map((l, i) => (
-            <Text key={`now${i}`} bold wrap="truncate" color={a.needs ? NEEDS : waitTint ?? (at ? '#E6EDF3' : undefined)} dimColor={!at && !a.needs && !waitTint}>
-              {l}
-            </Text>
-          ))}
-          {deskLines(detail, deskInner, 2, deskOpen).map((l, i) => (
-            <Text key={`det${i}`} wrap="truncate" color={waitTint} dimColor={!waitTint}>
-              {l}
-            </Text>
-          ))}
-          {plan.total ? (
-            <Box flexDirection="row" flexShrink={1}>
-              <Text color={color}>{'▰'.repeat(filled)}</Text>
-              <Text dimColor>{'▱'.repeat(cells - filled)}</Text>
-              <Text dimColor wrap="truncate">{` ${plan.src}`}</Text>
-            </Box>
-          ) : (
-            <Text dimColor wrap="truncate">{before.length ? `before: ${before.join(', ')}` : ' '}</Text>
-          )}
-        </Box>
-      )
-    }
-    const codexDesk = (r: CodexRun) => {
-      const cmd = [...r.events].reverse().find(ev => ev.kind === 'cmd' || ev.kind === 'file')
-      const what = r.status !== 'running' ? r.status : cmd ? (cmd.kind === 'cmd' ? cmdGist(cmd.text).replace(/^ran /, '') : baseName(cmd.text)) : r.activity || 'working'
-      const activity = r.status === 'running' && r.activity && r.activity !== what ? r.activity : ''
-      return (
-        <Box key={`desk-cx-${r.id}`} flexDirection="column" borderStyle="round" borderColor={CX} paddingX={1} width={deskW}>
-          <Box flexDirection="row">
-            {isTerminal ? <Text color={CX}>{'◎ '}</Text> : <Svg source={deskSprite(CX, r.status === 'running' ? 'busy' : 'done', hash(r.id))} alt={`Codex: ${what}`} width={52} height={34} />}
-            <Box flexDirection="column" flexShrink={1}>
-              <Text bold color={CX} wrap="truncate">{`${isTerminal ? '' : ' '}Codex${r.thread ? ` · ${r.thread}` : ''}`}</Text>
-              <Text dimColor wrap="truncate">{`${isTerminal ? '' : ' '}for ${nameFor(r.caller)}`}</Text>
-              <Text>{' '}</Text>
-            </Box>
-          </Box>
-          {deskLines(what, deskInner, 2).map((l, i) => (
-            <Text key={`now${i}`} bold wrap="truncate" color={r.status === 'running' ? '#E6EDF3' : undefined} dimColor={r.status !== 'running'}>
-              {l}
-            </Text>
-          ))}
-          {deskLines(r.status === 'running' ? activity : `${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'} changed`, deskInner, 2).map((l, i) => (
-            <Text key={`det${i}`} dimColor wrap="truncate">{l}</Text>
-          ))}
-          <Text dimColor wrap="truncate">{r.files.length ? `files: ${r.files.slice(0, 3).map(baseName).join(', ')}` : ' '}</Text>
-        </Box>
-      )
-    }
-    // Codex at its desk while it runs, and a little after (as a helper's lingers); the rest counted.
+    // Codex in a lane while it runs, and a little after (as a helper's lingers); the rest counted.
     const codexAtDesks = replaying ? [] : codexRuns.filter(r => r.status === 'running' || Date.now() - (r.endedAt || 0) < WINDOW_LINGER_MS)
     const CODEX_DESKS = 3
     const deskCount = deskAgents.length + Math.min(CODEX_DESKS, codexAtDesks.length) + (codexAtDesks.length > CODEX_DESKS ? 1 : 0)
@@ -5162,11 +5110,212 @@ export const register: Register = on => {
       deskMax = deskCount
       deskLowSince = 0
     }
-    const deskRows = Math.max(1, Math.ceil(deskMax / deskPer))
-    // A desk is ten rows: its name and job (three, beside the sprite), what it is on now (two), the detail
-    // under it (two), its plan (one), and its border (two). The area keeps at least room for the most there have been, and grows if a desk
-    // draws taller than that (it never clips one).
-    const desksH = deskRows * 10 + (deskRows - 1)
+    // Two rows a lane, one each from six lanes up; the area keeps room for the most lanes lately, plus its border.
+    const compactLanes = deskCount >= LANE_COMPACT_AT
+    const laneRows = compactLanes ? 1 : 2
+    const rowsFor = (n: number) => (n >= LANE_COMPACT_AT ? n : n * 2)
+    const desksH = rowsFor(Math.max(1, deskMax)) + 2
+    // The plan track needs room: in a narrow pane a lane shows its tile only.
+    const laneTrack = cols >= 60
+    type Bit = { t: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; file?: string }
+    type LaneSpec = {
+      id: string
+      name: string
+      hue: string
+      icon: string
+      iconHue: string
+      mood: 'busy' | 'thinking' | 'idle' | 'needs' | 'done'
+      headline: string
+      urgent: boolean
+      bits: Bit[]
+      right: string
+      plan: { total: number; done: number; cur: number; frac: number }
+      waited: boolean
+      job: string
+      seed: number
+    }
+    /** A Claude's plan as the track draws it: how many tasks, how many done, the one it is on. */
+    const planOf = (a: Agent) => {
+      const tasks = tasksOf(a, src)
+      if (a.state === 'done') {
+        const n = tasks.length || a.todosTotal
+        return { total: n, done: n, cur: -1, frac: 1 }
+      }
+      if (tasks.length) {
+        const cur = tasks.findIndex(t => t.status === 'in_progress')
+        return { total: tasks.length, done: tasks.filter(t => t.status === 'completed').length, cur, frac: 0 }
+      }
+      if (a.todosTotal) return { total: a.todosTotal, done: a.todosDone, cur: a.todosDoing ? a.todosDone : -1, frac: 0 }
+      // No plan: the Claude walks a dotted path, further the more steps it has taken (never to its end).
+      return { total: 0, done: 0, cur: -1, frac: a.calls ? Math.min(0.85, 0.15 + a.calls / 40) : 0 }
+    }
+    const laneOfAgent = (a: Agent): LaneSpec => {
+      const color = colorOf(a)
+      const [what, how] = nowOf(a)
+      const wait = waitOf(a, src, Date.now())
+      const at = a.state === 'busy' || a.state === 'thinking'
+      const mood = a.needs ? 'needs' : wait && wait.kind !== 'you' ? 'thinking' : a.state === 'busy' ? 'busy' : a.state === 'thinking' ? 'thinking' : a.state === 'done' ? 'done' : 'idle'
+      const verb = verbOf(a)
+      const onAFile = a.state === 'busy' && !a.needs && a.tool !== COMPACT && !!a.node && !!src.nodes[a.node] && !isSpecial(a.node)
+      const shell = a.state === 'busy' && (a.tool === 'Bash' || a.tool === 'PowerShell')
+      const [icon, iconHue] = a.needs
+        ? ['alert', NEEDS]
+        : wait && wait.kind === 'helpers'
+          ? ['hourglass', WAIT_TINT.helpers]
+          : wait && wait.kind === 'command'
+            ? ['hourglass', WAIT_TINT.command]
+            : wait
+              ? ['ring', '#8B949E']
+              : a.state === 'done'
+                ? ['check', '#3FB950']
+                : a.tool === COMPACT && a.state === 'busy'
+                  ? ['think', color]
+                  : shell
+                    ? ['terminal', WAIT_TINT.command]
+                    : a.state === 'busy'
+                      ? [verb === 'editing' || verb === 'writing' ? 'pencil' : verb === 'reading' ? 'eye' : verb === 'searching' || verb === 'finding' ? 'search' : verb === 'fetching' ? 'globe' : verb === 'delegating' ? 'branch' : 'tool', color]
+                      : a.state === 'thinking'
+                        ? ['think', color]
+                        : ['ring', '#8B949E']
+      const task = doingOf(a, src)
+      const goal = a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : ''
+      const job = a.job || goal
+      // Opened, all it was asked (a helper's goal holds its description and its brief), when that says more.
+      const fullJob = goal.length > job.length ? goal : job
+      // The headline: what it waits on you for; else the task it is on; else what it is for.
+      const headline = a.needs && wait
+        ? `⏸ needs you: ${wait.what}`
+        : (at && task) || (a.id === 'main' ? goal || 'waiting for a prompt' : job || what)
+      const where = onAFile ? groupOf(a.node) : ''
+      const folder = where ? (where === OUTSIDE ? 'outside the project' : where === '.' ? 'the project top' : where) : ''
+      const lastDid = a.actions[0] ? `just did: ${a.actions[0]}` : 'planning its next step'
+      const thinkFor = a.state === 'thinking' && stepStart.has(a.id) ? elapsed(Date.now() - (stepStart.get(a.id) ?? 0)) : ''
+      const ch = onAFile ? src.changes[a.node] : undefined
+      // The line under it: what it is doing right now, or what it waits on.
+      const bits: Bit[] = a.needs
+        ? [{ t: 'answer it in the chat' }, { t: task ? ` · task: ${task}` : '', dim: true }]
+        : wait && wait.kind !== 'you'
+          ? [{ t: `⏳ ${wait.label}: ${wait.what}`, color: WAIT_TINT[wait.kind] }]
+          : wait
+            ? [{ t: `○ ${wait.label}`, dim: true }, { t: ` · ${wait.what}`, dim: true }]
+            : a.tool === COMPACT && a.state === 'busy'
+              ? [{ t: 'compacting · freeing up room', dim: true }]
+              : onAFile
+                ? [
+                    { t: `${ICON[a.tool] ?? '•'} ${how} `, dim: true },
+                    { t: baseName(a.node), file: a.node },
+                    { t: folder ? ` in ${folder}` : '', dim: true },
+                    ...(ch?.edits ? [{ t: `  +${fmtK(ch.added)}`, color: '#3FB950' }, { t: ` −${fmtK(ch.removed)}`, color: '#F85149' }] : []),
+                  ]
+                : shell
+                  ? [{ t: `${SHELL_MARK}${what}`, color: WAIT_TINT.command }]
+                  : a.state === 'busy'
+                    ? [{ t: `${how} ${what}`, dim: true }]
+                    : a.state === 'thinking'
+                      ? a.thoughts[0]
+                        ? [{ t: `› ${oneLine(a.thoughts[0])}`, italic: true }, { t: thinkFor ? ` · thinking ${thinkFor}` : '', dim: true }]
+                        : [{ t: thinkFor ? `thinking ${thinkFor}` : 'thinking', dim: true }, { t: ` · ${lastDid}`, dim: true }]
+                      : a.state === 'done'
+                        ? [{ t: `✓ done${a.cost ? ` · ${fmtUsd(a.cost)}` : ''}`, dim: true }]
+                        : [{ t: a.id === 'main' ? 'waiting for a prompt' : 'idle', dim: true }]
+      const plan = planOf(a)
+      const planLabel = plan.total ? (plan.done >= plan.total ? `${fmtK(plan.total)} of ${fmtK(plan.total)}` : `${fmtK(Math.min(plan.total, plan.done + 1))} of ${fmtK(plan.total)}`) : ''
+      const clockOf = at && a.since ? elapsed(Date.now() - a.since) : ''
+      const right = [planLabel, a.needs && wait ? '' : clockOf, a.cost ? fmtUsd(a.cost) : ''].filter(Boolean).join(' · ')
+      // Its line on the tree flows while the Claude that started it waits on its helpers.
+      const parent = src.agents.find(x => x.id === (a.parent ?? 'main'))
+      const waited = a.id !== 'main' && at && !!parent && waitOf(parent, src, Date.now())?.kind === 'helpers'
+      return { id: a.id, name: a.name, hue: color, icon, iconHue, mood, headline, urgent: !!a.needs, bits, right, plan, waited, job: fullJob, seed: hash(a.id) }
+    }
+    const laneOfCodex = (r: CodexRun): LaneSpec => {
+      const cmd = [...r.events].reverse().find(ev => ev.kind === 'cmd' || ev.kind === 'file')
+      const what = r.status !== 'running' ? r.status : cmd ? (cmd.kind === 'cmd' ? cmdGist(cmd.text).replace(/^ran /, '') : baseName(cmd.text)) : r.activity || 'working'
+      const running = r.status === 'running'
+      return {
+        id: `cx-${r.id}`,
+        name: 'Codex',
+        hue: CX,
+        icon: running ? 'robot' : 'check',
+        iconHue: running ? CX : '#3FB950',
+        mood: running ? 'busy' : 'done',
+        headline: `${r.thread ? `[${r.thread}] ` : ''}${r.activity && r.activity !== what ? r.activity : r.task ? oneLine(r.task) : ''}`,
+        urgent: false,
+        bits: running ? [{ t: `${SHELL_MARK}${what}`, color: WAIT_TINT.command }, { t: ` · for ${nameFor(r.caller)}`, dim: true }] : [{ t: `${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'} changed · ${fmtK(r.commands)} command${r.commands === 1 ? '' : 's'}`, dim: true }],
+        right: [running && r.startedAt ? elapsed(Date.now() - r.startedAt) : '', `${fmtK(r.commands)} cmd${r.commands === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
+        plan: { total: 0, done: 0, cur: -1, frac: running ? Math.min(0.85, 0.15 + r.commands / 20) : 1 },
+        waited: false,
+        job: r.task ? oneLine(r.task) : '',
+        seed: hash(r.id),
+      }
+    }
+    const laneSpecs = [...deskAgents.map(laneOfAgent), ...codexAtDesks.slice(0, CODEX_DESKS).map(laneOfCodex)]
+    // Room for words beside the picture: the pane, less the area's frame and the picture.
+    const laneTextW = Math.max(16, (isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - (isTerminal ? 2 : Math.ceil(laneSvg({ h: 38, compact: compactLanes, track: laneTrack, depth: 'none', below: false, waited: false, hue: '#fff', icon: 'ring', iconHue: '#fff', total: 0, done: 0, cur: -1, frac: 0, mood: 'idle', seed: 0 }).w / CELL_W)) - 1)
+    const lane = (o: LaneSpec, i: number) => {
+      const hasRoot = laneSpecs[0]?.id === 'main'
+      const depth = i === 0 ? (hasRoot ? 'root' : 'none') : !hasRoot ? 'none' : i === laneSpecs.length - 1 ? 'last' : 'child'
+      const pic = laneSvg({ h: laneRows * CELL_H, compact: compactLanes, track: laneTrack, depth, below: i < laneSpecs.length - 1, waited: o.waited, hue: o.hue, icon: o.icon, iconHue: o.iconHue, total: o.plan.total, done: o.plan.done, cur: o.plan.cur, frac: o.plan.frac, mood: o.mood, seed: o.seed })
+      const line2 = o.bits.map(b => b.t).join('')
+      // Opened, a lane shows whole what it is for, its headline and its line; offered only when one is cut short.
+      const open = !!c.deskOpen?.[o.id] && !compactLanes
+      const headRoom = laneTextW - textW(o.name) - 1 - (o.right ? textW(o.right) + 2 : 0)
+      const more = !compactLanes && (open || textW(o.headline) > headRoom || textW(line2) > laneTextW - 8 || (!!o.job && o.job !== o.headline))
+      const toggle = () => void write?.(d => ({ ...d, deskOpen: { ...(d.deskOpen ?? {}), [o.id]: !d.deskOpen?.[o.id] } }))
+      const openRows = open
+        ? [
+            ...(o.job && o.job !== o.headline ? wrapRows(`for: ${o.job}`, laneTextW, DESK_OPEN_ROWS) : []),
+            ...wrapRows(o.headline, laneTextW, DESK_OPEN_ROWS),
+            ...wrapRows(line2, laneTextW, DESK_OPEN_ROWS),
+          ]
+        : []
+      return (
+        <Box key={`desk-${o.id}`} flexDirection="column" backgroundColor={o.urgent && !isTerminal ? 'rgba(227,179,65,0.12)' : undefined}>
+          <Box flexDirection="row">
+            {isTerminal ? (
+              <Text color={o.iconHue}>{`${LANE_GLYPH[o.icon] ?? '•'} `}</Text>
+            ) : (
+              <Svg source={pic.svg} alt={`${o.name}: ${o.headline}`} width={pic.w} height={laneRows * CELL_H} />
+            )}
+            <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+              <Box flexDirection="row">
+                <Text bold color={o.hue}>{o.name}</Text>
+                <Text wrap="truncate" bold={o.urgent} color={o.urgent ? NEEDS : undefined}>{` ${compactLanes && !o.urgent ? (line2 || o.headline) : o.headline}`}</Text>
+                <Box flexGrow={1} />
+                <Text color={o.urgent ? NEEDS : undefined} dimColor={!o.urgent}>{o.right ? `  ${o.right}` : ''}</Text>
+              </Box>
+              {laneRows === 2 ? (
+                <Box flexDirection="row">
+                  {o.bits.map((b, k) =>
+                    b.file ? (
+                      <Box key={`lanefile:${o.id}`} flexDirection="row" flexShrink={0}>
+                        <Button key={`open-lane:${o.id}`} plain onPress={() => void openAndSay($, 'file', b.file!, baseName(b.file!), !!src.changes[b.file!]?.edits)}>
+                          {b.t}
+                        </Button>
+                      </Box>
+                    ) : (
+                      <Text key={`bit${k}`} wrap="truncate" color={b.color} dimColor={b.dim} bold={b.bold} italic={b.italic}>
+                        {b.t}
+                      </Text>
+                    ),
+                  )}
+                  <Box flexGrow={1} />
+                  <Box key={`moreslot:${o.id}`} flexDirection="row" flexShrink={0}>
+                    {more ? (
+                      <Button key={`deskopen:${o.id}`} plain dimColor={!open} onPress={toggle}>
+                        {open ? '  ⌄ less' : '  › more'}
+                      </Button>
+                    ) : null}
+                  </Box>
+                </Box>
+              ) : null}
+            </Box>
+          </Box>
+          {openRows.map((r, k) => (
+            <Text key={`open${k}`} wrap="truncate" dimColor>{`${' '.repeat(isTerminal ? 2 : Math.ceil(pic.w / CELL_W))}${r}`}</Text>
+          ))}
+        </Box>
+      )
+    }
 
     // ── Folder cards: each folder the work touched, its files as chips (green edited, red with errors) ──
     // Built from the session's record of touched files (it keeps edits, and the order files were first
@@ -5285,9 +5434,8 @@ export const register: Register = on => {
     const cardsShown = folders.filter(([, info]) => !q || info.files.some(matchesQ))
     const deskSection = (
       <Box flexDirection="column" rowGap={1}>
-        <Box key="desks" flexDirection="row" flexWrap="wrap" alignItems="flex-start" columnGap={1} rowGap={1} minHeight={desksH}>
-          {deskAgents.map(desk)}
-          {codexAtDesks.slice(0, CODEX_DESKS).map(codexDesk)}
+        <Box key="desks" flexDirection="column" borderStyle="round" borderColor="#21262D" paddingX={1} minHeight={desksH}>
+          {laneSpecs.map(lane)}
           {codexAtDesks.length > CODEX_DESKS ? <Text key="desk-more-codex" dimColor>{`+${fmtK(codexAtDesks.length - CODEX_DESKS)} more Codex`}</Text> : null}
         </Box>
         <Box key="cards" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>

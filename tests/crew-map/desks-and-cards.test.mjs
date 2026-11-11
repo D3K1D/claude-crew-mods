@@ -58,17 +58,17 @@ check('desks and folder cards are the default (no map picture, no map hands)', !
 {
   const desks = kids(byKey(tree, 'desks'))
   const helper = desks.find(d => text(d).includes(crew().agents.find(a => a.id === 'sub1').name))
-  check('a desk per Claude at work: the main one and the helper', desks.length === 2 && !!helper, desks.map(d => text(d).slice(0, 30)).join(' | '))
-  check("the helper's desk shows the file it is on, and its folder", /auth\.test\.ts/.test(text(helper)) && /tests/.test(text(helper)), text(helper))
-  check('each desk has a little animated sprite', find(helper, x => x.type === 'Svg').length === 1 && /@keyframes bob/.test(find(helper, x => x.type === 'Svg')[0].props.source))
-  check('desks are all the same height (name and job, two rows on now, two of detail, the plan)', desks.every(d => kids(d).length === 6))
-  // Rows a desk takes: its first line is the sprite beside two lines of text, then one row each, and a border.
-  const rowsOfDesk = d => kids(d).reduce((n, line) => n + (line.type === 'Box' ? Math.max(...kids(line).map(k => (k.type === 'Box' ? kids(k).length : k.type === 'Svg' ? Math.ceil(k.props.height / 19) : 1))) : 1), 0) + 2
+  check('a lane per Claude at work: the main one and the helper', desks.length === 2 && !!helper, desks.map(d => text(d).slice(0, 30)).join(' | '))
+  check("the helper's lane shows the file it is on, and its folder", /auth\.test\.ts/.test(text(helper)) && /tests/.test(text(helper)), text(helper))
+  check('each lane has its picture: the tree, its tile and the little animated Claude on its track', find(helper, x => x.type === 'Svg').length === 1 && /@keyframes bob/.test(find(helper, x => x.type === 'Svg')[0].props.source))
+  // A lane: its picture beside two lines of words, the picture exactly as tall as them (so the tree joins up).
+  const linesOf = d => kids(kids(kids(d)[0])[1]).length
+  check('lanes are all two lines, their pictures two rows tall', desks.every(d => linesOf(d) === 2 && find(d, x => x.type === 'Svg')[0].props.height === 2 * 19), desks.map(d => `${linesOf(d)}/${find(d, x => x.type === 'Svg')[0]?.props.height}`).join(','))
   const area = byKey(tree, 'desks')
-  check('the desks area never clips a desk: no fixed height, nothing hidden', area.props.height === undefined && area.props.overflow !== 'hidden', JSON.stringify({ height: area.props.height, overflow: area.props.overflow }))
-  check('...and it keeps room for a whole desk (ten rows)', rowsOfDesk(desks[0]) === 10 && area.props.minHeight >= 10, `desk ${rowsOfDesk(desks[0])} rows, room ${area.props.minHeight}`)
+  check('the lanes area never clips a lane: no fixed height, nothing hidden', area.props.height === undefined && area.props.overflow !== 'hidden', JSON.stringify({ height: area.props.height, overflow: area.props.overflow }))
+  check('...and it keeps room for its lanes (two rows each, and its frame)', area.props.minHeight >= 2 * 2 + 2, `room ${area.props.minHeight}`)
   const main = desks.find(d => text(d).includes('Claude'))
-  check("the main desk says what came before", /before: .*(token|client|useAuth|guide)/.test(text(main)), text(main))
+  check("the main lane leads with your message and says what it just did", /Fix the login flow/.test(text(main)) && /just did: .*(token|client|useAuth|guide|notes)/.test(text(main)), text(main))
 }
 {
   const cards = kids(byKey(tree, 'cards'))
@@ -94,9 +94,9 @@ await call('Bash', { command: 'rm -rf build' }, async () => {
   tree = await render()
 })
 {
-  const main = kids(byKey(tree, 'desks')).find(d => text(d).includes('waiting on you'))
-  check('a Claude waiting on you: its desk turns amber and says what for', !!main && main.props.borderColor === '#E3B341' && /Clear the old build folder/.test(text(main)), main && text(main))
-  check('...and its sprite shows a "!"', !!main && /fill="#E3B341"\/><text[^>]*>!<\/text>/.test(find(main, x => x.type === 'Svg')[0].props.source))
+  const main = kids(byKey(tree, 'desks')).find(d => text(d).includes('needs you'))
+  check('a Claude waiting on you: its lane turns amber and says what for', !!main && /227,179,65/.test(String(main.props.backgroundColor)) && /needs you: .*Clear the old build folder/.test(text(main)) && find(main, x => x.type === 'Text' && x.props.color === '#E3B341' && /needs you/.test(text(x))).length === 1, main && text(main))
+  check('...and its tile shows a "!" in amber', !!main && /stroke="#E3B341"[^>]*><path d="M8 2\.2l6\.3/.test(find(main, x => x.type === 'Svg')[0].props.source))
 }
 
 // ── Many files: a card shows ten, then "+N more" opens it ──
@@ -132,7 +132,7 @@ await fire('ui.message', { surface: 'desktop', component: 'Pane', requestId: 'cr
 // ── Codex at a desk of its own while it runs ──
 codexRuns = [{ id: 'r1', task: 't', mode: 'write', root: P, cwd: P, model: 'm', effort: 'e', status: 'running', startedAt: now - 10_000, endedAt: 0, thread: 'auth', resumed: false, caller: 'main', activity: 'Running tests', focus: '', touched: [], events: [{ at: now - 4000, kind: 'cmd', text: 'bash -lc "cargo test chunk"', ok: undefined }], files: [], commands: 1, failedCommands: 0, answer: '', notesUpdated: false }]
 tree = await render()
-check('a running Codex has a desk, saying what it runs', /Codex · auth[\s\S]*cargo test/.test(text(byKey(tree, 'desks'))), text(byKey(tree, 'desks')).slice(-120))
+check('a running Codex has a lane, saying what it runs', /Codex \[auth\][\s\S]*cargo test/.test(text(byKey(tree, 'desks'))), text(byKey(tree, 'desks')).slice(-120))
 codexRuns = []
 
 // ── The tree map is one click away, and back ──

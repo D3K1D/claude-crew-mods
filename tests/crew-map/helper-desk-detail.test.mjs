@@ -1,6 +1,6 @@
-// A helper's desk says what it is truly doing: how long it has been at it, the job it was started for,
-// the task it is on (from its own plan) and the step it is taking, what it last said and did while it
-// thinks, and how far through its plan it is.
+// A helper's lane says what it is truly doing: where it is in its plan and how long it has been at it,
+// the task it is on and the step it is taking for it, what it last said and did while it thinks, and
+// (under › more) the job it was started for.
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
@@ -37,20 +37,33 @@ const render = (cols = 150) => fire('ui.render', { component: 'Pane', requestId:
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 const deskOf = (t, id) => find(t, x => x.props?.key === `desk-${id}`)[0]
-// A desk's lines, each as read across its rows: name, job, on now, detail, plan.
-const joined = xs => xs.map(x => text(x).trim()).filter(Boolean).join(' ')
-const rows = d => {
-  const [top, n0, n1, d0, d1, plan] = kids(d)
-  const [name, ...job] = kids(kids(top).find(k => k.type === 'Box'))
-  return [text(name).trim(), joined(job), joined([n0, n1]), joined([d0, d1]), text(plan).trim()]
+// A lane: its picture, then its name, headline and times on the first line, and the line under it.
+const lane = d => {
+  const row = kids(d)[0]
+  const col = kids(row)[1]
+  const [l1, l2] = kids(col)
+  const parts = kids(l1)
+  return {
+    pic: kids(row)[0]?.props?.source ?? '',
+    name: text(parts[0]).trim(),
+    head: text(parts[1]).trim(),
+    right: text(parts.at(-1)).trim(),
+    line2: l2 ? text(l2).replace(/\s*(› more|⌄ less)\s*$/, '').trim() : '',
+    more: find(d, x => x.type === 'Button' && String(x.props.key).startsWith('deskopen:'))[0],
+    opened: kids(d).slice(1).map(x => text(x).trim()).join(' '),
+  }
 }
-// Every row the desk draws, as drawn.
-const rawRows = d => { const [top, ...rest] = kids(d); return [...kids(kids(top).find(k => k.type === 'Box')).map(text), ...rest.map(text)] }
+// Every line of text the lane draws (its picture aside), as drawn.
+const rawRows = d => {
+  const col = kids(kids(d)[0])[1]
+  return [...kids(col).map(text), ...kids(d).slice(1).map(text)]
+}
 let n = 0
 const call = (tool, input, during, result = { text: 'ok' }) => fire('tool.call', { tool, tool_use_id: `c${n++}`, agentId: 'sub1', ...input }, async e => { if (during) await during(e); return result })
 let ids = 0
 const task = (subject, activeForm) => { const id = String(++ids); return call('TaskCreate', { subject, description: subject, activeForm }, null, { result: { task: { id, subject } }, text: `Task #${id} created successfully: ${subject}` }) }
 const update = (taskId, input) => call('TaskUpdate', { taskId, ...input }, null, { result: { success: true, taskId, updatedFields: Object.keys(input) }, text: 'Updated' })
+const press = async b => { b.props.onPress(); await new Promise(r => setTimeout(r, 5)) }
 
 await fire('session.start', {}, async () => ({}))
 await fire('turn.start', { text: 'Build the production UI', turnId: 'T' }, async () => ({}))
@@ -69,46 +82,59 @@ now += 212_000
 // Running a command for the task it is on.
 await call('Bash', { command: 'node --test ui/tests/ 2>&1 | grep -E "^# (pass|fail)"', description: 'Run the adapter tests' }, async () => {
   const d = deskOf(await render(), 'sub1')
-  const [name, job, onNow, detail, plan] = rows(d)
-  check('its name row says how long it has been at it', /^Helper.* · 3m32s(  › more)?$/.test(name), name)
-  check('its job is what it was started for', job === 'Production UI with adapters', job)
-  check('on now: the task it is on, in its own words', /^Applying agent request_action and run/.test(onNow), onNow)
-  check('...and under it, the command it waits on for that task', detail === '⏳ waiting on a command: Run the adapter tests', detail)
-  check('its plan: 2 of 3 tasks done, as a bar', plan === '▰▰▰▰▱▱ 2 of 3 tasks done', plan)
-  check('no $ on the desk', !/\$/.test(text(d)))
+  const l = lane(d)
+  check('its lane: its name, and on the right where it is in its plan and how long it has been at it', l.name === 'Helper' && l.right === '3 of 3 · 3m32s', `${l.name} | ${l.right}`)
+  check('its headline: the task it is on, in its own words', /^Applying agent request_action and run/.test(l.head), l.head)
+  check('...and under it, the command it waits on for that task', l.line2 === '⏳ waiting on a command: Run the adapter tests', l.line2)
+  const filled = (l.pic.match(/<circle[^>]*r="3.2"[^>]*fill="#/g) ?? []).length
+  const dots = (l.pic.match(/<circle[^>]*r="3\.2"/g) ?? []).length
+  check('its plan as a track: three tasks, two done', dots === 3 && filled === 2, `${dots} dots, ${filled} done`)
+  check('...its tile says it waits on a command (an hourglass, orange)', /stroke="#FFA657"[^>]*><path d="M4\.5 2h7/.test(l.pic))
+  check('no $ in the lane', !/\$/.test(rawRows(d).join('')))
+  // What it was started for: under › more.
+  await press(l.more)
+  const opened = lane(deskOf(await render(), 'sub1'))
+  check('› more opens what it was started for', /for: Production UI with adapters: Wire the production UI/.test(opened.opened), opened.opened.slice(0, 120))
+  await press(opened.more)
 })
 
 // Between steps, on the same task: the task, and what it just did.
-let d = deskOf(await render(), 'sub1')
-let [, , onNow, detail] = rows(d)
-check('thinking on its task: the task stays, and it says what it just did', /^Applying agent request_action and run/.test(onNow) && detail === 'just did: ▸ Run the adapter tests', `${onNow} | ${detail}`)
+let l = lane(deskOf(await render(), 'sub1'))
+check('thinking on its task: the task stays, and it says what it just did', /^Applying agent request_action and run/.test(l.head) && l.line2 === 'thinking · just did: ▸ Run the adapter tests', `${l.head} | ${l.line2}`)
 
-// Task done, thinking with no task in hand: what it last said.
+// Task done, thinking with no task in hand: what it last said; the headline is what it is for.
 await update('3', { status: 'completed' })
 await fire('session.append', { agentId: 'sub1', door: 'response', message: { role: 'assistant', content: [{ type: 'text', text: 'All 26 adapter tests pass, so I will write up the summary for the main session.' }] }, origin: {}, uuid: 'u1' }, async () => ({}))
-d = deskOf(await render(), 'sub1')
-;[, , onNow, detail] = rows(d)
-check('thinking with no task in hand: what it last said, marked ›', /^› All 26 adapter tests pass/.test(onNow), onNow)
-check('...and what it just did', /^just did: /.test(detail), detail)
-check('a finished plan reads 3 of 3', rows(d)[4] === '▰▰▰▰▰▰ 3 of 3 tasks done', rows(d)[4])
+l = lane(deskOf(await render(), 'sub1'))
+check('thinking with no task in hand: what it last said, marked ›', /^› All 26 adapter tests pass/.test(l.line2), l.line2)
+check('...under what it is for', l.head === 'Production UI with adapters', l.head)
+check('a finished plan reads 3 of 3', /^3 of 3/.test(l.right), l.right)
 
-// Editing a file: the step names the file and its folder.
+// Editing a file: the file (a button that opens it) and its folder.
 await call('Edit', { file_path: `${P}/ui/js/adapters/fixture.js`, old_string: 'a', new_string: 'b' }, async () => {
-  const [, , on2, det2] = rows(deskOf(await render(), 'sub1'))
-  check('editing a file: the file, and its folder', on2 === 'fixture.js' && /in ui\/js\/adapters$/.test(det2), `${on2} | ${det2}`)
+  const d = deskOf(await render(), 'sub1')
+  const e = lane(d)
+  const file = find(d, x => x.type === 'Button' && x.props.key === 'open-lane:sub1')[0]
+  check('editing a file: the file, and its folder', /^✎ editing fixture\.js in ui\/js\/adapters/.test(e.line2) && text(file) === 'fixture.js', e.line2)
+  check('...its tile a pencil', /<path d="M10\.5 2\.5l3 3/.test(e.pic))
 })
 
-// The main Claude's desk: your message as its job, and (its turn over) the helper it waits on.
+// The main Claude's lane: your message as its headline, and (its turn over) the helper it waits on.
 await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'T', usage: { input_tokens: 1, output_tokens: 1, model: 'claude-opus-5-5' } }, async () => ({ text: 'ok' }))
-const [, mainJob, mainOn, mainDetail] = rows(deskOf(await render(), 'main'))
-check("the main Claude's job is your message", mainJob === 'Build the production UI', mainJob)
-check('...and it says it waits on its helper, and which', /waiting on a helper/.test(mainOn) && /Helper/.test(mainDetail), `${mainOn} | ${mainDetail}`)
+await fire('tool.call', { tool: 'Read', tool_use_id: 'r-after', agentId: 'sub1', file_path: `${P}/ui/a.js` }, async () => {
+  const t = await render()
+  const m = lane(deskOf(t, 'main'))
+  check("the main Claude's headline is your message", m.head === 'Build the production UI', m.head)
+  check('...and under it, the helper it waits on', /waiting on a helper: Helper/.test(m.line2), m.line2)
+  check("...and the helper's line on the tree flows (purple dashes)", /stroke="#D2A8FF"[^>]*stroke-dasharray/.test(lane(deskOf(t, 'sub1')).pic))
+  return { text: 'ok' }
+})
 
-// Narrow (a side pane, one desk across): every line still fits.
+// Narrow (a side pane): every line still fits.
 const narrow = deskOf(await render(50), 'sub1')
-check('a narrow desk cuts its lines, never spills', rawRows(narrow).every(r => r.length <= 50 - 1 - 4), rawRows(narrow).join(' | '))
+check('a narrow lane cuts its lines, never spills', rawRows(narrow).every(r => r.length <= 50 - 1 - 4), rawRows(narrow).join(' | '))
 
-// A long job and task, in your 87-column pane: each reads whole over two rows, no words lost.
+// A long job and task, in your 87-column pane: cut on the lane, whole under › more.
 await fire('turn.start', { text: 'Go on', turnId: 'W' }, async () => ({}))
 const longJob = 'Wire the production UI to every adapter, then run the adapter tests on Windows and macOS'
 await fire('tool.call', { tool: 'Agent', tool_use_id: 'spawn2', description: longJob, prompt: longJob, subagent_type: 'general-purpose', run_in_background: true }, async e => {
@@ -120,11 +146,14 @@ await fire('tool.call', { tool: 'TaskCreate', tool_use_id: 'lt1', agentId: 'sub2
 await fire('tool.call', { tool: 'TaskUpdate', tool_use_id: 'lt2', agentId: 'sub2', taskId: '50', status: 'in_progress' }, async () => ({ result: { success: true, taskId: '50', updatedFields: ['status'] }, text: 'ok' }))
 await fire('tool.call', { tool: 'Read', tool_use_id: 'lt3', agentId: 'sub2', file_path: `${P}/ui/a.js` }, async () => {
   const d2 = deskOf(await render(87), 'sub2')
-  const [, job2, now2] = rows(d2)
-  check('87 cols: a long job reads whole over two rows', job2 === longJob, job2)
-  check('87 cols: a long task reads whole over two rows', now2 === longTask, now2)
+  const l2 = lane(d2)
+  check('87 cols: a long task is cut on its lane, with › more', !!l2.more && l2.head.length < longTask.length, l2.head)
+  await press(l2.more)
+  const o = lane(deskOf(await render(87), 'sub2'))
+  const words = o.opened.replace(/\s+/g, ' ')
+  check('87 cols: › more shows the whole job and the whole task, every word', words.includes(longJob.split(' ').slice(-6).join(' ')) && longTask.split(' ').every(w => words.includes(w)), words.slice(0, 200))
   const inner = Math.floor(87 * 0.97) - 1 - 4
-  check('87 cols: no row of the desk runs past it', rawRows(d2).every(r => r.length <= inner), rawRows(d2).map(r => r.length).join(','))
+  check('87 cols: no line of the lane runs past the pane', rawRows(deskOf(await render(87), 'sub2')).every(r => r.length <= inner), rawRows(deskOf(await render(87), 'sub2')).map(r => r.length).join(','))
   return { text: 'ok' }
 })
 console.log(`\n${fails} failing check(s)`)

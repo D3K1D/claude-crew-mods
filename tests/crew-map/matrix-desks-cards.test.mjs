@@ -68,7 +68,9 @@ const cardNames = t => kids(byKey(t, 'cards')).map(c => text(find(kids(c)[0], x 
 const chipKeys = t => find(byKey(t, 'cards'), x => x.type === 'Button' && String(x.props.key).startsWith('file:')).map(b => b.props.key.slice(5))
 const WIDTHS = [40, 60, 80, 100, 120, 150, 200, 300]
 
-// ── 1. Desks: 0, 1, 3, 6, 10 Claudes at work, every width: one desk each, all the same height ──
+// ── 1. Lanes: 0, 1, 3, 6, 10 Claudes at work, every width: one lane each, all the same height ──
+// A lane's words: its first line, and the line under it (two lines a lane, one from six lanes up).
+const linesOf = d => kids(kids(kids(d)[0])[1])
 for (const N of [0, 1, 3, 6, 10]) {
   const E = await fresh()
   if (N) await E.begin('Read', { file_path: `${P}/src/main.ts` })
@@ -79,8 +81,9 @@ for (const N of [0, 1, 3, 6, 10]) {
   for (const cols of WIDTHS) {
     const t = await E.render(cols)
     const desks = kids(byKey(t, 'desks'))
-    const ok = desks.length === Math.max(1, N) && desks.every(d => kids(d).length === 6 && d.props.borderStyle && typeof d.props.width === 'number' && d.props.width <= cols)
-    if (!ok || cols === 150) check(`${N} at work, ${cols} cols: ${Math.max(1, N)} desks, the same rows each, within the pane`, ok, desks.map(d => `${d.props.width}w/${kids(d).length}r`).join(','))
+    const rows = Math.max(1, N) >= 6 ? 1 : 2
+    const ok = desks.length === Math.max(1, N) && desks.every(d => linesOf(d).length === rows && find(d, x => x.type === 'Svg')[0]?.props.height === rows * 19 && find(d, x => x.type === 'Svg')[0].props.width <= (cols - 4) * 7.9)
+    if (!ok || cols === 150) check(`${N} at work, ${cols} cols: ${Math.max(1, N)} lanes of ${rows} line${rows === 1 ? '' : 's'}, their pictures as tall, within the pane`, ok, desks.map(d => `${linesOf(d).length}/${find(d, x => x.type === 'Svg')[0]?.props.height}`).join(','))
     const raw = text(t).match(/undefined|NaN|\[object Object\]/g)
     if (raw) check(`${N} at work, ${cols} cols: no raw internal text`, false, raw.join(','))
   }
@@ -88,17 +91,14 @@ for (const N of [0, 1, 3, 6, 10]) {
   check(`${N} at work: the terminal surface draws the desks too`, kids(byKey(tt, 'desks')).length === Math.max(1, N) && !/undefined|NaN|\[object Object\]/.test(text(tt)))
 }
 
-// ── 2. A desk and a card line up when each fills the row (narrow panes) ──
+// ── 2. A narrow pane: the lane drops its plan track and keeps its tile; wide enough, the track is back ──
 {
   const E = await fresh()
   await E.call('Read', { file_path: `${P}/src/a.ts` })
   for (const cols of [40, 60, 80]) {
     const t = await E.render(cols)
-    const dw = kids(byKey(t, 'desks'))[0].props.width
-    const cw = kids(byKey(t, 'cards'))[0].props.width
-    // Desks may sit two across where a card fills the row: their edges line up either way.
-    const across = Math.round((cw + 1) / (dw + 1))
-    check(`${cols} cols: desks line up with the folder card below (same outer edges)`, across * dw + (across - 1) === cw, `desk ${dw} ×${across}, card ${cw}`)
+    const pic = find(kids(byKey(t, 'desks'))[0], x => x.type === 'Svg')[0].props
+    check(`${cols} cols: ${cols < 60 ? 'tile only, no track' : 'tile and plan track'}`, cols < 60 ? pic.width < 60 && !/<circle cx="[^"]*" cy="32"/.test(pic.source) : pic.width > 150, `${pic.width}px`)
   }
 }
 
@@ -113,8 +113,8 @@ for (const N of [0, 1, 3, 6, 10]) {
   await tick()
   const t = await E.render(150)
   const during = deskKeys(t)
-  check('a helper waiting on you keeps its desk where it was (desks do not reorder)', JSON.stringify(before) === JSON.stringify(during), `${before} → ${during}`)
-  check('...and its desk says what it waits for, in amber', /editing s3\.ts/.test(text(byKey(t, 'desk-s3'))) && byKey(t, 'desk-s3').props.borderColor === '#E3B341')
+  check('a helper waiting on you keeps its lane where it was (lanes do not reorder)', JSON.stringify(before) === JSON.stringify(during), `${before} → ${during}`)
+  check('...and its lane says what it waits for, in amber', /needs you: .*s3\.ts/.test(text(byKey(t, 'desk-s3'))) && /227,179,65/.test(String(byKey(t, 'desk-s3').props.backgroundColor)), text(byKey(t, 'desk-s3')))
   release({ decision: 'allow' })
   await pr
 }
@@ -125,13 +125,13 @@ for (const N of [0, 1, 3, 6, 10]) {
   await E.call('Read', { file_path: `${P}/src/a.ts` })
   const end = await E.begin('Bash', { command: 'npm run build', description: 'Build the app' })
   const main = byKey(await E.render(150), 'desk-main')
-  check('a desk running a command does not describe it in the past tense', !/\bran\b/.test(text(kids(main)[1])), text(main))
+  check('a lane running a command does not describe it in the past tense', !/\bran\b/.test(text(linesOf(main)[1])) && /Build the app/.test(text(linesOf(main)[1])), text(main))
   await end()
   let release
   const comp = E.fire('session.compact', { trigger: 'auto', messages: [1, 2, 3] }, () => new Promise(r => (release = r)))
   await tick()
   const desk = byKey(await E.render(150), 'desk-main')
-  check('a compacting desk says so and names no folder it is not in', /compacting/.test(text(kids(desk)[1])) && /^freeing up room$/.test(text(kids(desk)[3]).trim()) && !/ in |project top|outside the project/.test(kids(desk).slice(1).map(text).join(' ')), kids(desk).slice(1).map(text).join(' / '))
+  check('a compacting lane says so and names no folder it is not in', /compacting · freeing up room/.test(text(linesOf(desk)[1])) && !/ in |project top|outside the project/.test(text(linesOf(desk)[1])), linesOf(desk).map(text).join(' / '))
   release({ messages: [1] })
   await comp
 }
@@ -143,9 +143,9 @@ for (const N of [0, 1, 3, 6, 10]) {
   E.codexRuns.push(run('cx1'), run('cx2'), run('cx3'), run('cx4'))
   const t = await E.render(150)
   const cx = deskKeys(t).filter(k => k.startsWith('desk-cx-'))
-  check('four Codex runs at work: four desks, or the ones not shown counted', cx.length === 4 || /\+\d+ more Codex/.test(text(byKey(t, 'desks'))), cx.join(','))
+  check('four Codex runs at work: four lanes, or the ones not shown counted', cx.length === 4 || /\+\d+ more Codex/.test(text(byKey(t, 'desks'))), cx.join(','))
   const d = byKey(t, 'desk-cx-cx1')
-  check('a Codex desk does not say the same thing twice', text(kids(d)[1]) !== text(kids(d)[3]), kids(d).slice(1).map(text).join(' / '))
+  check('a Codex lane does not say the same thing twice', text(kids(linesOf(d)[0])[1]).trim() !== text(linesOf(d)[1]).trim(), linesOf(d).map(text).join(' / '))
 }
 
 // ── 6. Folder order stays as first reached, past MAX_NODES ──

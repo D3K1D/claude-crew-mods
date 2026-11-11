@@ -64,7 +64,7 @@ await call('Bash', { command: 'rm -rf build', description: 'Clear the old build'
   await fire('classic.PermissionRequest', { tool_name: 'Bash', tool_input: { command: 'rm -rf build', description: 'Clear the old build' } }, async () => ({}))
   t = await render()
 })
-check('a permission: waiting on you, in amber, before anything else', /waiting on you[\s\S]*Clear the old build/.test(text(mainDesk(t))) && /⏸ waiting on you/.test(title(t)), text(mainDesk(t)))
+check('a permission: waiting on you, in amber, before anything else', /needs you: [\s\S]*Clear the old build/.test(text(mainDesk(t))) && /⏸ waiting on you/.test(title(t)), text(mainDesk(t)))
 
 // ── Thinking is not waiting ──
 t = await render()
