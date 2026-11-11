@@ -22,7 +22,7 @@ const $ = {
   },
   fs: { read: async () => '', exists: async () => false, write: async (p, t) => written.push([p, t.length]) },
   model: { complete: async () => ({ isAnswered: false }) },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async k => (k === 'intro' ? 'off' : k === 'theme' ? 'dark' : undefined), set: async () => {} },
   session: { cwd: async () => 'C:/proj' },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : n === 'TEMP' ? 'C:/Users/me/Temp' : undefined) },
   state: { get: async () => ({ value: [], version: 0 }) },

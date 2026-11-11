@@ -20,7 +20,7 @@ const $ = {
   clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
   fs: { read: async () => '', exists: async () => false, write: async () => {} },
   model: { complete: async () => { throw new Error('the map must not call a model') } },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async k => (k === 'intro' ? 'off' : k === 'theme' ? 'dark' : undefined), set: async () => {} },
   session: { cwd: async () => P },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => { throw new Error('no codex-bridge here') } },

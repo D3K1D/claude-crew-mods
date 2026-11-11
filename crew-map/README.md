@@ -68,6 +68,8 @@ A line that's cut short has a **›** before it: click it to open the line over 
 
 **The intro.** When the mod starts and when you open `/crew`, a six-second intro plays: the title rises a letter at a time, and four little Claudes drop onto it and hop across the letters before the pane takes over. **skip ▸** jumps past it, **don't show again** turns it off, and **⏻ intro** in the header plays it again (and turns it back on).
 
+**Light and dark.** The pane follows the app's theme. Its text uses Claude Code's own theme colours, so it reads on a light or a dark theme alike, and the pictures (the little Claudes and the tree map) switch to light colours when the app is light. If it guesses wrong, the **◐ auto** button in the toolbar switches to **☀ light** or **☾ dark**, and the choice is kept for new sessions. Codex Bridge's pane follows the same choice.
+
 ## Controls
 
 - `⏻ intro` plays the start-up intro again.
@@ -75,6 +77,7 @@ A line that's cut short has a **›** before it: click it to open the line over 
 - `Search files...` keeps only the matching files.
 - `⏪ replay` steps back through the session.
 - `▸ files N` lists every file touched this session.
+- `◐ auto` / `☀ light` / `☾ dark` picks the theme (auto follows the app).
 - `⊞ tree map` / `▤ desks` switches between the two views. On the tree map, `◀ ▲ ▼ ▶` moves it and `− / +` and `⤢ fit` zoom.
 - `code in` picks where code and text files open. Other files always open in their own app.
 - `budget $` sets the spending budget.

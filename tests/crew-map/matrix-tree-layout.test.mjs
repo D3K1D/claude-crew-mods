@@ -22,7 +22,7 @@ const $ = {
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {}, copy: async () => ({ isCopied: true }) },
   clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
   fs: { read: async p => { if (p in files) return files[p]; throw new Error('ENOENT') }, exists: async p => p in files, write: async () => {} },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async k => (k === 'intro' ? 'off' : k === 'theme' ? 'dark' : undefined), set: async () => {} },
   session: { cwd: async () => P },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [] }) },

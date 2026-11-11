@@ -182,6 +182,8 @@ export type Crew = {
   unfolded?: Record<string, boolean>
   /** Where the person scrolled the log to (absent: it follows the newest line), and the lines they opened. */
   logView?: { anchor?: number; open?: string[] }
+  /** The theme the pane paints for: auto (follows the app), or light or dark as the person chose. */
+  theme?: 'auto' | 'light' | 'dark'
   /** Desks the person opened to read every line whole, by agent. */
   deskOpen?: Record<string, boolean>
   /** Which picture of the work the pane shows: desks and folder cards (absent: desks), or the tree map. */

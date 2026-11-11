@@ -94,7 +94,7 @@ const registry = {
   let tree = await t.render()
   const all = text(tree)
   check('pane shows plan and both limits', all.includes('Codex plan: Pro Lite') && all.includes('5-hour limit') && all.includes('92% used') && all.includes('weekly limit') && all.includes('34% used'), all.slice(0, 300))
-  check('5-hour limit near full is red', find(tree, x => x.type === 'Text' && x.props.color === '#F85149' && /92% used/.test(text(x))).length === 1)
+  check("5-hour limit near full is red (the theme's error colour)", find(tree, x => x.type === 'Text' && x.props.color === 'error' && /92% used/.test(text(x))).length === 1)
   check('reset times shown', all.includes('resets in 1h 30m'), all.match(/resets[^·]*/g)?.join(' | '))
   const r = await t.tool({ action: 'usage' })
   check('usage action for Claude', /weekly limit 34% used/.test(r.result) && /5-hour limit 92% used/.test(r.result), r.result)

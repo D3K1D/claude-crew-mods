@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.3.13'
+const VERSION = '1.3.14'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -566,7 +566,9 @@ let demo: { cancel: () => void } | undefined
 
 // ─── Vocabulary ─────────────────────────────────────────────────────────────
 
-const PALETTE = ['#D97757', '#6CB6FF', '#7EE787', '#D2A8FF', '#FFA657', '#56D4DD', '#FF7B72', '#E3B341']
+// One hue per theme colour of its own, so each stays apart in light and dark (no red or amber: those mean
+// an error and waiting on you).
+const PALETTE = ['#D97757', '#6CB6FF', '#7EE787', '#D2A8FF', '#56D4DD', '#F778BA']
 const NAMES: Record<string, string> = { Explore: 'Scout', Plan: 'Architect', 'general-purpose': 'Helper', fork: 'Twin' }
 const VERB: Record<string, string> = {
   Read: 'reading',
@@ -893,6 +895,155 @@ const DESK_ROOM_MS = 60_000
 
 /** The pane fitted to its columns, a little spare for the desktop's proportional font. */
 const fitPane = <T,>(tree: T, cols: number): T => fitNode(tree as unknown as FitNode, Math.floor(cols * 0.97) - 1) as unknown as T
+
+// ─── Light and dark ─────────────────────────────────────────────────────────
+// The pane is drawn with dark-tuned colours, then painted for the theme in one pass at the end:
+//  - auto (the default): each colour of a Text or a border becomes the engine's theme colour of the
+//    same meaning or hue ('claude', 'warning', 'autoAccept'…), which Claude Code itself tunes for a
+//    light or a dark theme; a colour with no such key is moved to a middle shade that reads on both.
+//    Each picture (Svg) keeps its dark colours and carries light ones for when the app is light
+//    (prefers-color-scheme), since an Svg draws its own colours.
+//  - light / dark: chosen in the toolbar when auto guesses wrong; light swaps every colour for its
+//    light-theme twin, dark draws as tuned.
+type ThemeMode = 'auto' | 'light' | 'dark'
+const THEMES: ThemeMode[] = ['auto', 'light', 'dark']
+const THEME_LABEL: Record<ThemeMode, string> = { auto: '◐ auto', light: '☀ light', dark: '☾ dark' }
+const hex6 = (h: string) => {
+  const x = h.replace('#', '').toUpperCase()
+  return x.length === 3 ? `#${x[0]}${x[0]}${x[1]}${x[1]}${x[2]}${x[2]}` : `#${x.slice(0, 6)}`
+}
+/** A theme colour of the same meaning, for a Text's or a border's colour (auto). */
+const THEME_KEY: Record<string, string> = {
+  '#E6EDF3': 'text', '#E5E7EB': 'text', '#FFFFFF': 'text', '#E6E0D4': 'text', '#E6FFF6': 'text', '#BFF3E2': 'text',
+  '#8B949E': 'inactive', '#9CA3AF': 'inactive', '#6B7280': 'inactive', '#B8C1CC': 'inactive',
+  '#30363D': 'subtle', '#4B5563': 'subtle', '#161B22': 'subtle',
+  '#D97757': 'claude',
+  '#6CB6FF': 'suggestion', '#79C0FF': 'suggestion',
+  '#7EE787': 'success', '#3FB950': 'success', '#2EA043': 'success',
+  '#D2A8FF': 'autoAccept',
+  '#56D4DD': 'planMode', '#10A37F': 'planMode',
+  '#F778BA': 'bashBorder',
+  '#E3B341': 'warning', '#E3B95C': 'warning', '#F0BC55': 'warning', '#F0D58C': 'warning', '#E0AF68': 'warning',
+  '#F85149': 'error', '#FF7B72': 'error',
+}
+/** Each dark-tuned colour's twin on a light background. */
+const LIGHT_OF: Record<string, string> = {
+  '#E6EDF3': '#1F2328', '#E5E7EB': '#1F2328', '#FFFFFF': '#1F2328', '#E6E0D4': '#2D2A24', '#E6FFF6': '#0B3D2E', '#BFF3E2': '#0B5A43',
+  '#8B949E': '#59636E', '#9CA3AF': '#59636E', '#B8C1CC': '#4B535C', '#6B7280': '#6E7781',
+  '#30363D': '#D0D7DE', '#4B5563': '#AFB8C1', '#161B22': '#F6F8FA', '#0D1117': '#FFFFFF', '#07080B': '#FFFFFF',
+  '#D97757': '#BC5A34', '#6CB6FF': '#0969DA', '#79C0FF': '#0969DA', '#7EE787': '#1A7F37', '#3FB950': '#1A7F37', '#2EA043': '#1A7F37',
+  '#D2A8FF': '#8250DF', '#56D4DD': '#0A7B83', '#10A37F': '#0B7A5F', '#F778BA': '#BF3989',
+  '#E3B341': '#9A6700', '#E3B95C': '#9A6700', '#F0BC55': '#9A6700', '#F0D58C': '#7D5A00', '#E0AF68': '#9A6700',
+  '#F85149': '#CF222E', '#FF7B72': '#CF222E', '#FFA657': '#BC4C00',
+}
+const rgbOf = (h: string) => { const x = hex6(h); return [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16) / 255) as [number, number, number] }
+const hexOf = (c: number[]) => `#${c.map(v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('').toUpperCase()}`
+const lum = (c: number[]) => { const [r, g, b] = c.map(v => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * r + 0.7152 * g + 0.0722 * b }
+const toHsl = ([r, g, b]: number[]) => {
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn
+  if (!d) return [0, 0, l]
+  const s = d / (1 - Math.abs(2 * l - 1))
+  const h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4
+  return [h * 60, s, l]
+}
+const fromHsl = ([h, s, l]: number[]) => {
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
+  return [r + m, g + m, b + m]
+}
+/** The shade of a colour whose light-relative luminance falls in [lo, hi], its hue kept. */
+const shadeTo = (h: string, lo: number, hi: number) => {
+  const [hu, s, l0] = toHsl(rgbOf(h))
+  const at = (l: number) => lum(fromHsl([hu, s, l]))
+  if (at(l0) >= lo && at(l0) <= hi) return hex6(h)
+  let a = 0, b = 1
+  const want = at(l0) > hi ? hi : lo
+  for (let i = 0; i < 24; i++) { const m = (a + b) / 2; if (at(m) < want) a = m; else b = m }
+  return hexOf(fromHsl([hu, s, (a + b) / 2]))
+}
+/** A colour's twin on a light background: dark grounds turn light, bright marks turn deep. */
+const lightOf = (h: string) => {
+  const k = hex6(h)
+  if (LIGHT_OF[k]) return LIGHT_OF[k]
+  const c = rgbOf(k), L = lum(c), [hu, s] = toHsl(c)
+  if (L < 0.03) return hexOf(fromHsl([hu, s * 0.5, 0.97]))
+  if (L < 0.08) return hexOf(fromHsl([hu, s * 0.6, 0.9]))
+  return shadeTo(k, 0.05, 0.16)
+}
+/** For a Text or a border in auto: the theme's colour of that meaning, else a shade that reads on both. */
+const autoOf = (h: string) => {
+  const k = hex6(h)
+  if (THEME_KEY[k]) return THEME_KEY[k]
+  const c = rgbOf(k), [, s] = toHsl(c), L = lum(c)
+  if (s < 0.15) return L > 0.5 ? 'text' : L > 0.12 ? 'inactive' : 'subtle'
+  return shadeTo(k, 0.15, 0.3)
+}
+const svgCache = new Map<string, string>()
+/**
+ * A picture painted for the theme: one style block, at its end, that gives each colour it draws with
+ * its light twin, matched by the colour itself (`[fill="#0D1117"]{fill:#FFFFFF}`): a style rule wins
+ * over a shape's own colour, so no shape changes and the picture grows by a few rules. Applied when
+ * the app is light (auto) or always (light). A picture marked data-keep-darks (a sprite: no ground
+ * of its own) keeps its darkest and whitest marks, its eyes and shine, as they are.
+ */
+const themeSvg = (svg: string, mode: ThemeMode) => {
+  if (mode === 'dark') return svg
+  const key = `${mode}|${svg}`
+  const hit = svgCache.get(key)
+  if (hit !== undefined) return hit
+  const keep = svg.includes('data-keep-darks')
+  const seen = new Set<string>()
+  let css = ''
+  for (const m of svg.matchAll(/\s(fill|stroke|stop-color)="(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})"/g)) {
+    const [, prop, h] = m
+    if (seen.has(`${prop}${h}`)) continue
+    seen.add(`${prop}${h}`)
+    const from = hex6(h)
+    if (keep) {
+      const L = lum(rgbOf(from))
+      if (L < 0.08 || L > 0.85) continue
+    }
+    const to = lightOf(from)
+    if (to === from) continue
+    // A filled shape (a folder, a body) keeps a brighter shade than lettering needs: it reads by its
+    // area. Words drawn in that colour still take the deeper one.
+    const c = rgbOf(from)
+    if (prop === 'fill' && toHsl(c)[1] > 0.25 && lum(c) > 0.34) {
+      css += `[fill="${h}"]{fill:${shadeTo(from, 0.2, 0.34)}}text[fill="${h}"],tspan[fill="${h}"]{fill:${to}}`
+      continue
+    }
+    css += `[${prop}="${h}"]{${prop}:${to}}`
+  }
+  const end = svg.lastIndexOf('</svg>')
+  const out = css && end >= 0 ? `${svg.slice(0, end)}<style>${mode === 'auto' ? `@media (prefers-color-scheme: light){${css}}` : css}</style>${svg.slice(end)}` : svg
+  if (svgCache.size > 400) svgCache.clear()
+  svgCache.set(key, out)
+  return out
+}
+/** The pane painted for the theme: Text and border colours, and the pictures. */
+const paintPane = <T,>(tree: T, mode: ThemeMode): T => (mode === 'dark' ? tree : (paintNode(tree as unknown as FitNode, mode) as unknown as T))
+const paintNode = (x: FitNode, mode: ThemeMode): FitNode => {
+  if (!x || typeof x !== 'object') return x
+  const p = x.props ?? {}
+  let np: Record<string, unknown> = p
+  for (const k of ['color', 'borderColor', 'backgroundColor']) {
+    const v = p[k]
+    if (typeof v !== 'string' || !/^#[0-9a-fA-F]{3,8}$/.test(v)) continue
+    const to = mode === 'auto' ? autoOf(v) : lightOf(v)
+    if (to === v) continue
+    if (np === p) np = { ...p }
+    np[k] = to
+  }
+  if (x.type === 'Svg' && typeof p.source === 'string') {
+    const s = themeSvg(p.source, mode)
+    if (s !== p.source) {
+      if (np === p) np = { ...p }
+      np.source = s
+    }
+  }
+  const y = np === p ? x : { ...x, props: np }
+  return withKids(y, kidsOf(y).map(k => paintNode(k, mode)))
+}
 
 /** A text in two lines of `w` characters, broken between words; the second line cut short if need be. */
 const twoLines = (s: string, w: number): [string, string] => {
@@ -2034,7 +2185,7 @@ const deskSprite = (color: string, mood: 'busy' | 'thinking' | 'idle' | 'needs' 
         : mood === 'thinking'
           ? [0, 1, 2].map(i => `<circle cx="${38 + i * 4}" cy="7" r="1.4" fill="#9CA3AF" style="${anim('dot', 1.2, i * 0.2)}"/>`).join('')
           : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="52" height="34" viewBox="0 0 52 34" style="--clk:${clockNow()}"><style>@keyframes bob{50%{transform:translateY(-2px)}}@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}@keyframes dot{50%{opacity:.2}}</style><g transform="translate(2,10)"><g style="${bob}">${body}${eyes}</g></g>${badge}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" data-keep-darks="1" width="52" height="34" viewBox="0 0 52 34" style="--clk:${clockNow()}"><style>@keyframes bob{50%{transform:translateY(-2px)}}@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}@keyframes dot{50%{opacity:.2}}</style><g transform="translate(2,10)"><g style="${bob}">${body}${eyes}</g></g>${badge}</svg>`
 }
 
 /**
@@ -3552,6 +3703,8 @@ export const register: Register = on => {
     deskMax = 0
     deskLowSince = 0
     void readChatCost($)
+    const savedTheme = await $.store.get('theme').catch(() => undefined)
+    if (savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'auto') await write?.(d => (d.theme === savedTheme ? d : { ...d, theme: savedTheme }))
     // Once per session: a reload or a worker restart starts the module again, not the session.
     if ((await $.store.get('intro').catch(() => undefined)) !== 'off' && !(await read($, intro)).played) await playIntro()
     void $.ui.open({ id: PANE, title: 'Claude Crew' })
@@ -4169,6 +4322,7 @@ export const register: Register = on => {
       return [...out].filter(x => c.nodes[x])
     }
     const mapProps = !isTerminal ? { rows: 0, nodes: [], edges: [], agents: [] } : {
+      theme: c.theme ?? 'auto',
       rows: isTerminal ? 12 : 15,
       nodes: nodes.map(n => {
         const here = onMap.filter(a => a.node === n.id)
@@ -5210,6 +5364,21 @@ export const register: Register = on => {
           ) : null}
           {!isTerminal ? <Text>{'  '}</Text> : null}
           {!isTerminal ? (
+            <Button
+              key="theme"
+              plain
+              dimColor
+              onPress={() => {
+                const next = THEMES[(THEMES.indexOf(c.theme ?? 'auto') + 1) % THEMES.length]
+                void $.store.set('theme', next).catch(() => undefined)
+                void write?.(d => ({ ...d, theme: next }))
+              }}
+            >
+              {THEME_LABEL[c.theme ?? 'auto']}
+            </Button>
+          ) : null}
+          {!isTerminal ? <Text>{'  '}</Text> : null}
+          {!isTerminal ? (
             <Button key="demo" plain dimColor={demoOn} onPress={() => startDemo()}>
               {demoOn ? 'demo…' : '▶ demo'}
             </Button>
@@ -5442,6 +5611,7 @@ export const register: Register = on => {
       </Box>
     )
     // The desktop draws long lines whole and lets the box clip them: cut them to fit first.
-    return isTerminal ? pane : fitPane(pane, cols)
+    const painted = paintPane(pane, c.theme ?? 'auto')
+    return isTerminal ? painted : fitPane(painted, cols)
   })
 }

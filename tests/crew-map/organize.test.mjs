@@ -21,7 +21,7 @@ const $ = {
   ui: { open: async () => {}, resolve: () => elements, toast: async t => toasts.push(t), copy: async () => ({ isCopied: true }) },
   clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
   fs: { read: async () => '', exists: async () => false, write: async () => {} },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async k => (k === 'intro' ? 'off' : k === 'theme' ? 'dark' : undefined), set: async () => {} },
   session: { cwd: async () => P },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [] }) },

@@ -14,7 +14,23 @@ type MapNodeProp = {
 }
 type MapEdgeProp = { a: string; b: string; k: 'import' | 'trail' }
 type MapAgentProp = { id: string; initial: string; color: string; node: string; next?: string; busy: boolean }
-type MapProps = { nodes: MapNodeProp[]; edges: MapEdgeProp[]; agents: MapAgentProp[]; rows: number }
+type MapProps = { nodes: MapNodeProp[]; edges: MapEdgeProp[]; agents: MapAgentProp[]; rows: number; theme?: 'auto' | 'light' | 'dark' }
+
+// Light and dark, as the pane: in auto each colour becomes the terminal theme's own colour of that
+// meaning ('claude', 'warning'…), tuned for a light or a dark theme; in light, a twin that reads on a
+// light background; in dark, as drawn.
+const THEME_KEY: Record<string, string> = {
+  '#3B4C6B': 'subtle', '#4B5363': 'subtle', '#C9D1D9': 'text', '#6E7681': 'inactive',
+  '#FFA657': 'claude', '#D97757': 'claude', '#56D4DD': 'planMode', '#E3B341': 'warning', '#79C0FF': 'suggestion',
+  '#6CB6FF': 'suggestion', '#7EE787': 'success', '#D2A8FF': 'autoAccept', '#F778BA': 'bashBorder',
+}
+const LIGHT_OF: Record<string, string> = {
+  '#3B4C6B': '#AFB8C1', '#4B5363': '#AFB8C1', '#C9D1D9': '#1F2328', '#6E7681': '#6E7781',
+  '#FFA657': '#BC4C00', '#D97757': '#BC5A34', '#56D4DD': '#0A7B83', '#E3B341': '#9A6700', '#79C0FF': '#0969DA',
+  '#6CB6FF': '#0969DA', '#7EE787': '#1A7F37', '#D2A8FF': '#8250DF', '#F778BA': '#BF3989',
+}
+const tone = (fg: string | undefined, theme: MapProps['theme']) =>
+  !fg || theme === 'dark' ? fg : ((theme === 'light' ? LIGHT_OF : THEME_KEY)[fg.toUpperCase()] ?? fg)
 
 type Zip = { node: string; from: string; start: number }
 type State = { t: number; zips: Record<string, Zip> }
@@ -236,7 +252,7 @@ export default function CrewMap(p: MapProps, s: any) {
         return (
           <Box flexDirection="row">
             {runs.map(r => (
-              <Text color={r.c.fg} bold={r.c.bold} dimColor={r.c.dim}>
+              <Text color={tone(r.c.fg, p.theme)} bold={r.c.bold} dimColor={r.c.dim}>
                 {r.text.replace(/ /g, NBSP)}
               </Text>
             ))}

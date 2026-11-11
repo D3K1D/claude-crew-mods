@@ -7,7 +7,7 @@ import type { Limit, PaneUi, Registry, Run, RunEvent, Touch, Usage } from '../ty
 
 const PANE = 'codex-bridge'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.2.3'
+const VERSION = '1.2.4'
 const TOOL = 'codex'
 const MAX_RUNS = 16
 const MAX_EVENTS = 60
@@ -1078,6 +1078,39 @@ export const register: Register = on => {
     }
   })
 
+  // Light and dark, as Claude Crew paints its pane (its theme switch counts here too): in auto each colour
+  // becomes the theme's own colour of that meaning, which Claude Code tunes for a light or dark theme; in
+  // light, a twin that reads on white; in dark, as drawn.
+  const THEME_KEY: Record<string, string> = {
+    '#E6EDF3': 'text', '#8B949E': 'inactive', '#30363D': 'subtle', '#10A37F': 'planMode', '#56D4DD': 'planMode',
+    '#79C0FF': 'suggestion', '#7EE787': 'success', '#3FB950': 'success', '#D2A8FF': 'autoAccept',
+    '#E3B341': 'warning', '#F85149': 'error', '#FF7B72': 'error', '#FFA657': 'claude',
+  }
+  const LIGHT_OF: Record<string, string> = {
+    '#E6EDF3': '#1F2328', '#8B949E': '#59636E', '#30363D': '#D0D7DE', '#10A37F': '#0B7A5F', '#56D4DD': '#0A7B83',
+    '#79C0FF': '#0969DA', '#7EE787': '#1A7F37', '#3FB950': '#1A7F37', '#D2A8FF': '#8250DF',
+    '#E3B341': '#9A6700', '#F85149': '#CF222E', '#FF7B72': '#CF222E', '#FFA657': '#BC4C00',
+  }
+  type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] } | unknown
+  const paint = (x: Node, mode: string): Node => {
+    if (mode === 'dark' || !x || typeof x !== 'object') return x
+    const el = x as { props?: Record<string, unknown>; children?: unknown[] }
+    const p = el.props ?? {}
+    let np = p
+    for (const k of ['color', 'borderColor']) {
+      const v = p[k]
+      if (typeof v !== 'string') continue
+      const to = (mode === 'light' ? LIGHT_OF : THEME_KEY)[v.toUpperCase()]
+      if (!to) continue
+      if (np === p) np = { ...p }
+      np[k] = to
+    }
+    // Children stay where the element keeps them (the engine refuses a "children" prop).
+    if (Array.isArray(el.children)) return { ...el, props: np, children: el.children.map(k => paint(k, mode)) }
+    if (Array.isArray(p.children)) return { ...el, props: { ...np, children: (p.children as unknown[]).map(k => paint(k, mode)) } }
+    return np === p ? el : { ...el, props: np }
+  }
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Input } = $.ui.resolve(e) as unknown as Record<string, (props: unknown) => unknown>
     const list = await read($, runs)
@@ -1217,7 +1250,8 @@ export const register: Register = on => {
       </Box>
     )
     // The editor choice is the crew-map mod's setting, when it is installed (another plugin's value: read only).
-    const crewState = ((await $.state.get({ plugin: 'crew-map', key: 'crew' } as never).catch(() => ({}))) as { value?: { editor?: string } }).value
+    const crewState = ((await $.state.get({ plugin: 'crew-map', key: 'crew' } as never).catch(() => ({}))) as { value?: { editor?: string; theme?: string } }).value
+    const theme = crewState?.theme === 'light' || crewState?.theme === 'dark' ? crewState.theme : 'auto'
     editor = crewState?.editor || 'code'
     const glyph: Record<RunEvent['kind'], string> = { say: '›', think: '·', cmd: '▸', file: '✎', plan: '☐', info: '•', error: '!' }
     const tint: Record<RunEvent['kind'], string | undefined> = {
@@ -1232,7 +1266,7 @@ export const register: Register = on => {
     const statusTint = { running: '#56D4DD', done: '#7EE787', failed: '#FF7B72', stopped: '#E3B341' } as const
     const statusMark = { running: '●', done: '✓', failed: '✗', stopped: '■' } as const
 
-    return (
+    const pane = (
       <Box flexDirection="column">
         <Box flexDirection="row">
           <Text bold color="#10A37F">
@@ -1306,5 +1340,6 @@ export const register: Register = on => {
         {threadsBox}
       </Box>
     )
+    return paint(pane, theme) as typeof pane
   })
 }

@@ -19,7 +19,7 @@ const $ = {
   clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
   fs: { read: async () => 'old line\n', exists: async () => false },
   model: { complete: async () => ({ isAnswered: true, text: '55' }) },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async k => (k === 'intro' ? 'off' : k === 'theme' ? 'dark' : undefined), set: async () => {} },
   session: { cwd: async () => 'C:/proj' },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : n === 'TEMP' ? 'C:/Users/me/Temp' : undefined) },
   state: { get: async ref => ({ value: globalThis.__codexRuns, version: 0 }) },
