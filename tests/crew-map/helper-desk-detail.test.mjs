@@ -39,7 +39,7 @@ const deskOf = (t, id) => find(t, x => x.props?.key === `desk-${id}`)[0]
 const pic = d => find(d, x => x.type === 'Svg')[0]?.props ?? {}
 // A row's words, in order, as its picture draws them.
 const words = d => [...String(pic(d).source ?? '').matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"'))
-const opened = d => kids(d).slice(1).map(x => text(x).trim()).join(' | ')
+const opened = d => [...String(pic(d).source ?? '').matchAll(/<text[^>]*>(.*?)<\/text>/g)].map(m => m[1].replace(/<[^>]+>/g, '')).join(' | ')
 let n = 0
 const call = (tool, input, during, result = { text: 'ok' }) => fire('tool.call', { tool, tool_use_id: `c${n++}`, agentId: 'sub1', ...input }, async e => { if (during) await during(e); return result })
 let ids = 0

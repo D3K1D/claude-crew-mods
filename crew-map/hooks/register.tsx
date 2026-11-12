@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.5.1'
+const VERSION = '1.5.2'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -2251,12 +2251,16 @@ type GlanceRow = {
   depth: number
   request: string[]
   where: string
+  /** Opened: its model and cost, what it was asked (wrapped), its steps, its recent kinds of action. */
+  detail?: { model: string; info: string; asked: string[]; steps: { mark: 'done' | 'now' | 'todo'; lines: string[] }[]; lately: { k: string; n: number }[] }
 }
 /** The colour of a state: working, waiting (and idle), needs you, done. */
 const STATE_COLOR: Record<GlanceRow['state'], string> = { work: '#3FB950', wait: '#8B949E', idle: '#8B949E', you: '#E3B341', done: '#8B949E' }
-const GLANCE_FONT = 'font-family="Cascadia Code, Consolas, ui-monospace, Menlo, monospace"'
-/** Rows of text a row takes: done one; at work two; needing you, its request and who it helps. */
-const glanceRows = (r: GlanceRow) => (r.state === 'done' ? 1 : r.state === 'you' ? 1 + r.request.length + (r.where ? 1 : 0) : 2)
+const GLANCE_FONT = 'font-family="Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif"'
+/** Rows of text a row takes: done one; at work two; needing you, its request and who it helps; and its Details, opened. */
+const glanceBase = (r: GlanceRow) => (r.state === 'done' ? 1 : r.state === 'you' ? 1 + r.request.length + (r.where ? 1 : 0) : 2)
+const glanceDetailRows = (d: GlanceRow['detail']) => (d ? 1 + d.asked.length + d.steps.reduce((n, st) => n + st.lines.length, 0) + (d.lately.length ? 1 : 0) : 0)
+const glanceRows = (r: GlanceRow) => glanceBase(r) + glanceDetailRows(r.detail)
 /**
  * A row's picture: a card (amber when it needs you, none when done), the little Claude, its name, the
  * state's icon and words in the state's colour, what on, its time; under them its step pips and progress,
@@ -2265,7 +2269,7 @@ const glanceRows = (r: GlanceRow) => (r.state === 'done' ? 1 : r.state === 'you'
 const glanceSvg = (r: GlanceRow, W: number, showModel: boolean) => {
   const H = glanceRows(r) * CELL_H
   const sc = STATE_COLOR[r.state]
-  const cw = (px: number) => px * 0.62
+  const cw = (px: number) => px * 0.6
   const fit = (t: string, px: number, size: number) => cutTo(t, Math.max(0, Math.floor(px / cw(size))))
   const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * 14
   const x0 = indent + 8
@@ -2281,23 +2285,23 @@ const glanceSvg = (r: GlanceRow, W: number, showModel: boolean) => {
     s += R(1, 0, 14, 8) + R(0, 2.5, 1.2, 2) + R(14.8, 2.5, 1.2, 2) + R(4, 2, 2, 2.6, 'eye') + R(10, 2, 2, 2.6, 'eye') + [2.5, 5.7, 8.7, 11.9].map(x => R(x, 8, 1.6, 2.6)).join('')
   }
   let x = x0 + 22
-  const time = r.time ? `<text x="${W - 8}" y="${y1}" text-anchor="end" font-size="11.5" fill="${r.state === 'you' ? '#E3B341' : '#8B949E'}" ${GLANCE_FONT}>${xmlEsc(r.time)}</text>` : ''
-  const right = W - 8 - (r.time ? cw(11.5) * textW(r.time) + 10 : 0)
-  const name = fit(r.name, Math.min(120, Math.max(0, right - x - 60)), 12.5)
-  s += `<text x="${x}" y="${y1}" font-size="12.5" fill="${r.state === 'done' ? '#8B949E' : '#E6EDF3'}" ${GLANCE_FONT}>${xmlEsc(name)}</text>`
-  x += cw(12.5) * textW(name) + 8
+  const time = r.time ? `<text x="${W - 8}" y="${y1}" text-anchor="end" font-size="12.5" fill="${r.state === 'you' ? '#E3B341' : '#8B949E'}" ${GLANCE_FONT}>${xmlEsc(r.time)}</text>` : ''
+  const right = W - 8 - (r.time ? cw(12.5) * textW(r.time) + 10 : 0)
+  const name = fit(r.name, Math.min(130, Math.max(0, right - x - 60)), 13.5)
+  s += `<text x="${x}" y="${y1}" font-size="13.5" fill="${r.state === 'done' ? '#8B949E' : '#E6EDF3'}" ${GLANCE_FONT}>${xmlEsc(name)}</text>`
+  x += cw(13.5) * textW(name) + 8
   s += `<g transform="translate(${x.toFixed(1)},${y1 - 11}) scale(0.8125)" fill="none" stroke="${sc}" stroke-width="${r.kind === 'think' ? 2.8 : 1.9}" stroke-linecap="round" stroke-linejoin="round"><path d="${KIND_ICON[r.kind] ?? KIND_ICON.tool}"/></g>`
   x += 19
-  const size = r.state === 'done' ? 12.5 : 13.5
+  const size = r.state === 'done' ? 13.5 : 14
   const status = fit(r.status, right - x, size)
   s += `<text x="${x.toFixed(1)}" y="${y1}" font-size="${size}" font-weight="700" fill="${sc}" ${GLANCE_FONT}>${xmlEsc(status)}</text>`
   x += cw(size) * textW(status) + 6
-  if (r.object && right - x > cw(12.5) * 4) s += `<text x="${x.toFixed(1)}" y="${y1}" font-size="12.5" fill="${r.state === 'done' ? '#8B949E' : '#E6EDF3'}" ${GLANCE_FONT}>${xmlEsc(fit(`· ${r.object}`, right - x, 12.5))}</text>`
+  if (r.object && right - x > cw(13.5) * 4) s += `<text x="${x.toFixed(1)}" y="${y1}" font-size="13.5" fill="${r.state === 'done' ? '#8B949E' : '#E6EDF3'}" ${GLANCE_FONT}>${xmlEsc(fit(`· ${r.object}`, right - x, 13.5))}</text>`
   s += time
   if (r.state === 'you') {
     // The whole request, a line each, then who it helps.
-    r.request.forEach((l, i) => (s += `<text x="${x0 + 22}" y="${y1 + CELL_H * (i + 1)}" font-size="12.5" fill="#E6EDF3" ${GLANCE_FONT}>${xmlEsc(l)}</text>`))
-    if (r.where) s += `<text x="${x0 + 22}" y="${y1 + CELL_H * (r.request.length + 1)}" font-size="11.5" fill="#8B949E" ${GLANCE_FONT}>${xmlEsc(fit(r.where, W - x0 - 30, 11.5))}</text>`
+    r.request.forEach((l, i) => (s += `<text x="${x0 + 22}" y="${y1 + CELL_H * (i + 1)}" font-size="13.5" fill="#E6EDF3" ${GLANCE_FONT}>${xmlEsc(l)}</text>`))
+    if (r.where) s += `<text x="${x0 + 22}" y="${y1 + CELL_H * (r.request.length + 1)}" font-size="12.5" fill="#8B949E" ${GLANCE_FONT}>${xmlEsc(fit(r.where, W - x0 - 30, 12.5))}</text>`
   } else if (r.state !== 'done') {
     // How far along: a pip per step (five at most), then in words; its model at the right.
     const y2 = y1 + CELL_H
@@ -2307,9 +2311,44 @@ const glanceSvg = (r: GlanceRow, W: number, showModel: boolean) => {
     for (let k = 0; k < n; k++) s += `<circle cx="${(px + 4 + k * 11).toFixed(1)}" cy="${y2 - 4}" r="3.6" fill="${k < filled ? sc : 'none'}" stroke="${k <= filled ? sc : '#484F58'}" stroke-width="1.5"/>`
     if (n) px += n * 11 + 6
     const model = showModel && r.model ? r.model : ''
-    const end = W - 8 - (model ? cw(11) * textW(model) + 12 : 0)
-    s += `<text x="${px.toFixed(1)}" y="${y2}" font-size="11.5" fill="#8B949E" ${GLANCE_FONT}>${xmlEsc(fit(r.progress, end - px, 11.5))}</text>`
-    if (model) s += `<text x="${W - 8}" y="${y2}" text-anchor="end" font-size="11" fill="#6E7681" ${GLANCE_FONT}>${xmlEsc(model)}</text>`
+    const end = W - 8 - (model ? cw(12) * textW(model) + 12 : 0)
+    s += `<text x="${px.toFixed(1)}" y="${y2}" font-size="12.5" fill="#8B949E" ${GLANCE_FONT}>${xmlEsc(fit(r.progress, end - px, 12.5))}</text>`
+    if (model) s += `<text x="${W - 8}" y="${y2}" text-anchor="end" font-size="12" fill="#6E7681" ${GLANCE_FONT}>${xmlEsc(model)}</text>`
+  }
+  if (r.detail) {
+    // Details: a darker panel in the card, a line each: its model and cost; what it was asked; its steps
+    // (✓ done, ▸ on it, ○ to come); and lately, its recent kinds of action as icons with words.
+    const d = r.detail
+    const top = glanceBase(r) * CELL_H
+    const wx = x0 + 18
+    s += `<rect x="${wx}" y="${top}" width="${W - wx - 8}" height="${glanceDetailRows(d) * CELL_H - 5}" rx="6" fill="#0D1117" fill-opacity="0.55"/>`
+    const tx = wx + 10
+    const room = W - 8 - tx - 8
+    let y = top + 14
+    const info = fit(d.info ? ` · ${d.info}` : '', Math.max(0, room - cw(12.5) * textW(d.model)), 12.5)
+    s += `<text x="${tx}" y="${y}" font-size="12.5" fill="#8B949E" ${GLANCE_FONT}><tspan fill="#E6EDF3">${xmlEsc(fit(d.model, room, 12.5))}</tspan>${xmlEsc(info)}</text>`
+    for (const l of d.asked) s += `<text x="${tx}" y="${(y += CELL_H)}" font-size="12.5" fill="#8B949E" ${GLANCE_FONT}>${xmlEsc(l)}</text>`
+    for (const st of d.steps) {
+      const [mark, mc, tc] = st.mark === 'done' ? ['✓', '#3FB950', '#8B949E'] : st.mark === 'now' ? ['▸', '#E6EDF3', '#E6EDF3'] : ['○', '#6E7681', '#8B949E']
+      // A step whole: its mark on its first line, the rest under its words.
+      st.lines.forEach((l, i) => (s += i ? `<text x="${tx + 16}" y="${(y += CELL_H)}" font-size="12.5" fill="${tc}" ${GLANCE_FONT}>${xmlEsc(l)}</text>` : `<text x="${tx}" y="${(y += CELL_H)}" font-size="12.5" fill="${tc}" ${GLANCE_FONT}><tspan fill="${mc}">${mark}</tspan> ${xmlEsc(l)}</text>`))
+    }
+    if (d.lately.length) {
+      y += CELL_H
+      s += `<text x="${tx}" y="${y}" font-size="12.5" fill="#8B949E" ${GLANCE_FONT}>lately:</text>`
+      let lx = tx + cw(12.5) * 7 + 8
+      for (const { k, n } of d.lately) {
+        const word = `${(KIND_WORDS[k] ?? k).toLowerCase()}${n > 1 ? ` ×${n}` : ''}`
+        const w = 15 + cw(12.5) * textW(word) + 10
+        if (lx + w > W - 16) {
+          s += `<text x="${lx.toFixed(1)}" y="${y}" font-size="12.5" fill="#8B949E" ${GLANCE_FONT}>…</text>`
+          break
+        }
+        s += `<g transform="translate(${lx.toFixed(1)},${y - 10}) scale(0.72)" fill="none" stroke="#E6EDF3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${KIND_ICON[k] ?? KIND_ICON.tool}"/></g>`
+        s += `<text x="${(lx + 15).toFixed(1)}" y="${y}" font-size="12.5" fill="#E6EDF3" ${GLANCE_FONT}>${xmlEsc(word)}</text>`
+        lx += w
+      }
+    }
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>.eye{fill:#0D1117 !important}</style>${s}</svg>`
 }
@@ -5193,7 +5232,8 @@ export const register: Register = on => {
     const deskCount = deskAgents.length + Math.min(CODEX_DESKS, codexAtDesks.length) + (codexAtDesks.length > CODEX_DESKS ? 1 : 0)
     // It keeps room for the most there have been, so the cards below hold still as helpers come and go,
     // and gives the room back once there have been fewer for a minute.
-    if (deskCount >= deskMax) {
+    const anyAtWork = src.agents.some(a => a.state === 'busy' || a.state === 'thinking') || codexAtDesks.some(r => r.status === 'running')
+    if (deskCount >= deskMax || !anyAtWork) {
       deskMax = deskCount
       deskLowSince = 0
     } else if (!deskLowSince) deskLowSince = Date.now()
@@ -5201,8 +5241,6 @@ export const register: Register = on => {
       deskMax = deskCount
       deskLowSince = 0
     }
-    // Two rows of text a Claude, and the area's frame.
-    const desksH = Math.max(1, deskMax) * 2 + 2
     // The picture's width: the pane inside the area's frame, less the Details button beside it.
     const glanceW = Math.max(200, Math.floor(((isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9) * CELL_W))
     const showModel = cols >= 70
@@ -5269,7 +5307,7 @@ export const register: Register = on => {
         progress,
         model: shortModel(agentModel.get(a.id) ?? (a.id === 'main' ? mainModel : '')),
         depth: depthOf(a),
-        request: ask ? wrapRows(ask, Math.max(20, Math.floor((glanceW - 30 - 10) / (12.5 * 0.62))), 2) : [],
+        request: ask ? wrapRows(ask, Math.max(20, Math.floor((glanceW - 30 - 10) / (13.5 * 0.6))), 2) : [],
         where: a.needs && a.id !== 'main' && parent ? `helping ${parent.name}` : '',
       }
     }
@@ -5307,23 +5345,44 @@ export const register: Register = on => {
     deskAgents.filter(a => a.id === 'main' || !deskAgents.some(p => p.id === (a.parent ?? 'main'))).forEach(walk)
     const glance = [...ordered.map(rowOfAgent), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
     const glanceList = [...glance.filter(r => r.state === 'you'), ...glance.filter(r => r.state !== 'you')]
-    const glanceRow = (r: GlanceRow) => {
-      const open = !!c.deskOpen?.[r.id]
-      const rows = glanceRows(r)
-      const a = src.agents.find(x => x.id === r.id)
+    // Room: the rows shown, at least; while anyone works, two lines for each of the most Claudes lately.
+    const desksH = Math.max(glanceList.reduce((n, r) => n + glanceBase(r), 0), anyAtWork ? Math.max(1, deskMax) * 2 : 0)
+    const glanceRow = (base: GlanceRow) => {
+      const open = !!c.deskOpen?.[base.id]
+      const a = src.agents.find(x => x.id === base.id)
+      const run = base.id.startsWith('cx-') ? codexAtDesks.find(x => `cx-${x.id}` === base.id) : undefined
       const tasks = a ? tasksOf(a, src) : []
+      // What a helper was asked: all of it (its goal holds its description and its brief); a Codex run's task.
+      const asked = run ? oneLine(run.task) : a && a.id !== 'main' ? [a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : '', a.job ?? ''].sort((x, y) => y.length - x.length)[0] : ''
+      const indentPx = base.state === 'you' ? 0 : Math.min(3, base.depth) * 14
+      const wrapW = Math.max(20, Math.floor((glanceW - indentPx - 52) / (12.5 * 0.6)))
+      const r: GlanceRow = open
+        ? {
+            ...base,
+            detail: {
+              model: base.model || 'model unknown',
+              info: [a?.cost ? fmtUsd(a.cost) : '', a?.since ? `started ${shortTime(Date.now() - a.since)} ago` : ''].filter(Boolean).join(' · '),
+              asked: asked ? wrapRows(`for: ${asked}`, wrapW, 4) : [],
+              steps: tasks.slice(0, 8).map(t => ({ mark: t.status === 'completed' ? ('done' as const) : t.status === 'in_progress' ? ('now' as const) : ('todo' as const), lines: wrapRows(t.active && t.status === 'in_progress' ? t.active : t.subject, wrapW - 3, 3) })),
+              lately: (a?.kinds ?? []).slice().reverse().reduce<{ k: string; n: number }[]>((out, k) => {
+                const last = out[out.length - 1]
+                if (last?.k === k) last.n++
+                else out.push({ k, n: 1 })
+                return out
+              }, []),
+            },
+          }
+        : base
+      const rows = glanceRows(r)
       const pad = ' '.repeat(Math.min(3, r.depth) * 2 + 2)
-      // Opened, everything whole: each line wraps over as many rows as it needs (a few at most).
-      const detailW = Math.max(20, Math.floor(glanceW / CELL_W) + 8 - pad.length)
-      // What a helper was asked: all of it (its goal holds its description and its brief).
-      const asked = a && a.id !== 'main' ? [a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : '', a.job ?? ''].sort((x, y) => y.length - x.length)[0] : ''
-      const details = open
+      // The terminal draws no picture: its Details as lines of text.
+      const details = isTerminal && r.detail
         ? [
-            `${r.model || 'model unknown'}${a?.cost ? ` · ${fmtUsd(a.cost)}` : ''}${a?.since ? ` · started ${shortTime(Date.now() - a.since)} ago` : ''}`,
-            ...(asked ? [`for: ${asked}`] : []),
-            ...tasks.slice(0, 8).map(t => `${t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○'} ${t.active && t.status === 'in_progress' ? t.active : t.subject}`),
-            ...(a?.kinds?.length ? [`lately: ${[...a.kinds].reverse().map(k => KIND_WORDS[k]?.toLowerCase() ?? k).join(' · ')}`] : []),
-          ].flatMap(l => wrapRows(l, detailW, 4))
+            `${r.detail.model}${r.detail.info ? ` · ${r.detail.info}` : ''}`,
+            ...r.detail.asked,
+            ...r.detail.steps.map(st => `${st.mark === 'done' ? '✓' : st.mark === 'now' ? '▸' : '○'} ${st.lines.join(' ')}`),
+            ...(r.detail.lately.length ? [`lately: ${r.detail.lately.map(({ k, n }) => `${(KIND_WORDS[k] ?? k).toLowerCase()}${n > 1 ? ` ×${n}` : ''}`).join(' · ')}`] : []),
+          ]
         : []
       return (
         <Box key={`desk-${r.id}`} flexDirection="column">

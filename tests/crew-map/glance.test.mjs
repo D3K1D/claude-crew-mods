@@ -40,6 +40,7 @@ let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 const rows = t => kids(find(t, x => x.props?.key === 'desks')[0]).filter(x => String(x.props?.key ?? '').startsWith('desk-'))
 const row = (t, id) => find(t, x => x.props?.key === `desk-${id}`)[0]
+const svgWords = d => [...String(find(d, x => x.type === 'Svg')[0]?.props.source ?? '').matchAll(/<text[^>]*>(.*?)<\/text>/g)].map(m => m[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&quot;/g, '"'))
 const pic = d => find(d, x => x.type === 'Svg')[0]?.props
 // The words of a row's picture, in order.
 const words = d => [...(pic(d)?.source ?? '').matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"'))
@@ -106,8 +107,8 @@ check('...its picture as tall as its lines', pic(s2).height === 3 * 19, String(p
 check('...flush left (pinned on top, out of the tree)', /<rect x="0\.5"[^>]*fill="#E3B341"/.test(pic(s2).source))
 await press(t, 'details:s2')
 t = await render()
-const det = kids(row(t, 's2')).slice(1).map(text).join(' | ')
-check('Details: its model, its recent kinds of action (your hook that blocked it too)', /your hook blocked it/.test(det), det)
+const det = svgWords(row(t, 's2')).join(' | ')
+check('Details, in the row: its recent kinds of action as icons and words (your hook that blocked it too)', /lately:/.test(det) && /your hook blocked it/.test(det), det)
 rel2({ decision: 'allow' })
 await perm
 
@@ -120,11 +121,18 @@ check('done: one dim line, a dot for its face', !!s3 && pic(s3).height === 19 &&
 // Details: its model, cost and steps.
 await press(t, 'details:s1')
 t = await render()
-const d1 = kids(row(t, 's1')).slice(1).map(text).join(' | ')
+const d1 = svgWords(row(t, 's1')).join(' | ')
 check('Details opens its model and its steps (✓ done, ▸ on it, ○ to come)', /Sonnet 5\.5/.test(d1) && /✓ Read the docs/.test(d1) && /▸ Wire the fixture agent/.test(d1) && /○ Test it/.test(d1), d1)
 check('...and the button says Hide', text(find(t, x => x.type === 'Button' && x.props.key === 'details:s1')[0]) === 'Hide')
 
 // The terminal: the same rows in words.
 const tt = await render(100, 'terminal')
 check('terminal: each row in words', /Helper Writing code|Helper Reading|Helper Thinking/.test(text(row(tt, 's1'))) && /Step 2 of 4/.test(text(row(tt, 's1'))), text(row(tt, 's1')))
+// On standby (nobody at work), no room kept for Claudes that left: no gap under the rows.
+for (const id of ['s1', 's2']) await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'S' + id, agentId: id, usage: { input_tokens: 1, output_tokens: 1, model: 'm' } }, async () => ({ text: 'ok' }))
+await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'T', usage: { input_tokens: 1, output_tokens: 1, model: 'claude-opus-5-5' } }, async () => ({ text: 'ok' }))
+t = await render()
+const areaBox = find(t, x => x.props?.key === 'desks')[0]
+const heightOfRows = rows(t).reduce((n, d) => n + pic(d).height / 19, 0)
+check('standby: the area keeps no extra room (no gap under the rows)', areaBox.props.minHeight <= heightOfRows + 1, 'room ' + areaBox.props.minHeight + ' for ' + heightOfRows + ' rows')
 console.log(`\n${fails} failing check(s)`)

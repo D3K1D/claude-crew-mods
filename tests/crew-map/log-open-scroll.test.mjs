@@ -129,7 +129,7 @@ check('each row has Details', !!more && text(more) === 'Details')
 const folded = kids(desk(t)).length
 await press(more)
 t = await render()
-const jobRows = kids(desk(t)).slice(1).map(x => text(x).trim()).join(' ')
+const jobRows = [...String(find(desk(t), x => x.type === 'Svg')[0]?.props.source ?? '').matchAll(/<text[^>]*>(.*?)<\/text>/g)].map(m => m[1].replace(/<[^>]+>/g, '')).join(' ')
 check('opened, Details reads all the helper was asked', jobRows.replace(/\s+/g, ' ').includes(`for: Inventory panel: ${job}`), jobRows)
 check('...and says Hide', text(find(desk(t), x => x.type === 'Button' && x.props.key === 'details:sub1')[0]) === 'Hide')
 await press(find(desk(t), x => x.type === 'Button' && x.props.key === 'details:sub1')[0])

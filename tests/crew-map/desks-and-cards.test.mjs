@@ -67,7 +67,7 @@ check('desks and folder cards are the default (no map picture, no map hands)', !
   check('rows are all two lines, their pictures two rows tall', desks.every(d => find(d, x => x.type === 'Svg')[0].props.height === 2 * 19), desks.map(d => find(d, x => x.type === 'Svg')[0]?.props.height).join(','))
   const area = byKey(tree, 'desks')
   check('the lanes area never clips a lane: no fixed height, nothing hidden', area.props.height === undefined && area.props.overflow !== 'hidden', JSON.stringify({ height: area.props.height, overflow: area.props.overflow }))
-  check('...and it keeps room for its lanes (two rows each, and its frame)', area.props.minHeight >= 2 * 2 + 2, `room ${area.props.minHeight}`)
+  check('...and it keeps room for its rows (two lines each)', area.props.minHeight >= 2 * 2, `room ${area.props.minHeight}`)
   const main = desks.find(d => say(d).startsWith('Claude'))
   check("the main row says it is thinking, how far along, and its model", /Claude[^:]*: Thinking/.test(say(main)) && /· \d+ actions so far/.test(say(main)), say(main))
 }
