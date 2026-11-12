@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.5.0'
+const VERSION = '1.5.1'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -2211,24 +2211,17 @@ const KIND_WORDS: Record<string, string> = {
 /** The text glyph for a kind, where no picture is drawn (the terminal). */
 const KIND_GLYPH: Record<string, string> = { read: '◇', edit: '✎', shell: '▸', search: '⌕', web: '◎', agent: '⇢', skill: '✦', plan: '☐', tool: '•', hook: '⚓', hookBlock: '⚓', think: '›', wait: '⏳', you: '!', done: '✓', idle: '○' }
 /** What kind of thing a tool call is. */
-const kindOf = (tool: string) =>
-  /^(Read|NotebookRead|LS)$/.test(tool)
-    ? 'read'
-    : /^(Edit|MultiEdit|Write|NotebookEdit)$/.test(tool)
-      ? 'edit'
-      : /^(Bash|PowerShell|BashOutput|KillShell|KillBash|Monitor)$/.test(tool)
-        ? 'shell'
-        : /^(Grep|Glob|ToolSearch)$/.test(tool)
-          ? 'search'
-          : /^(WebFetch|WebSearch)$/.test(tool) || /browser|chrome|Claude_Browser/i.test(tool)
-            ? 'web'
-            : /^(Agent|Task)$/.test(tool) || tool === 'mcp__codex-bridge__codex'
-              ? 'agent'
-              : /^(Skill|SlashCommand)$/.test(tool)
-                ? 'skill'
-                : /^(TodoWrite|Task(Create|Update|List|Get)|EnterPlanMode|ExitPlanMode)$/.test(tool)
-                  ? 'plan'
-                  : 'tool'
+const KINDS: [RegExp, string][] = [
+  [/^(Read|NotebookRead|LS)$/, 'read'],
+  [/^(Edit|MultiEdit|Write|NotebookEdit)$/, 'edit'],
+  [/^(Bash|PowerShell|BashOutput|KillShell|KillBash|Monitor)$/, 'shell'],
+  [/^(Grep|Glob|ToolSearch)$/, 'search'],
+  [/^(WebFetch|WebSearch)$|browser|chrome/i, 'web'],
+  [/^(Agent|Task)$|^mcp__codex-bridge__codex$/, 'agent'],
+  [/^(Skill|SlashCommand)$/, 'skill'],
+  [/^(TodoWrite|Task(Create|Update|List|Get)|EnterPlanMode|ExitPlanMode)$/, 'plan'],
+]
+const kindOf = (tool: string) => KINDS.find(([re]) => re.test(tool))?.[1] ?? 'tool'
 /** A model's id as people say it: claude-opus-5-5 → Opus 5.5. */
 const shortModel = (m: string) => {
   const x = m.replace(/^.*?claude-/, '').match(/^([a-z]+)-(\d+)(?:-(\d{1,2}))?/i)
@@ -2274,31 +2267,31 @@ const glanceSvg = (r: GlanceRow, W: number, showModel: boolean) => {
   const sc = STATE_COLOR[r.state]
   const cw = (px: number) => px * 0.62
   const fit = (t: string, px: number, size: number) => cutTo(t, Math.max(0, Math.floor(px / cw(size))))
-  const indent = Math.min(3, r.depth) * 14
+  const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * 14
   const x0 = indent + 8
   let s = ''
-  if (r.state === 'you') s += `<rect x="${indent + 0.5}" y="0.5" width="${W - indent - 1}" height="${H - 1}" rx="7" fill="#E3B341" fill-opacity="0.12" stroke="#E3B341"/>`
-  else if (r.state !== 'done') s += `<rect x="${indent + 0.5}" y="0.5" width="${W - indent - 1}" height="${H - 1}" rx="7" fill="#121821" stroke="#30363D"/>`
+  if (r.state === 'you') s += `<rect x="${indent + 0.5}" y="1.5" width="${W - indent - 1}" height="${H - 3}" rx="7" fill="#E3B341" fill-opacity="0.12" stroke="#E3B341"/>`
+  else if (r.state !== 'done') s += `<rect x="${indent + 0.5}" y="1.5" width="${W - indent - 1}" height="${H - 3}" rx="7" fill="#121821" stroke="#30363D"/>`
   const y1 = 14
   // The little Claude (still); a dot once it is done.
   if (r.state === 'done') s += `<circle cx="${x0 + 6}" cy="${y1 - 4}" r="3.5" fill="${r.hue}" fill-opacity="0.7"/>`
   else {
-    const U = 1
-    const R = (x: number, y: number, w: number, h: number, cls = '') => `<rect${cls ? ` class="${cls}"` : ''} x="${(x0 + x * U).toFixed(1)}" y="${(3 + y * U).toFixed(1)}" width="${w * U}" height="${h * U}" fill="${cls ? '#0D1117' : r.hue}"/>`
+    // Its eyes stay dark in a light theme too (the .eye rule below).
+    const R = (x: number, y: number, w: number, h: number, cls = '') => `<rect${cls ? ` class="${cls}"` : ''} x="${(x0 + x).toFixed(1)}" y="${(3 + y).toFixed(1)}" width="${w}" height="${h}" fill="${cls ? '#0D1117' : r.hue}"/>`
     s += R(1, 0, 14, 8) + R(0, 2.5, 1.2, 2) + R(14.8, 2.5, 1.2, 2) + R(4, 2, 2, 2.6, 'eye') + R(10, 2, 2, 2.6, 'eye') + [2.5, 5.7, 8.7, 11.9].map(x => R(x, 8, 1.6, 2.6)).join('')
   }
   let x = x0 + 22
   const time = r.time ? `<text x="${W - 8}" y="${y1}" text-anchor="end" font-size="11.5" fill="${r.state === 'you' ? '#E3B341' : '#8B949E'}" ${GLANCE_FONT}>${xmlEsc(r.time)}</text>` : ''
-  const right = W - 8 - (r.time ? cw(11.5) * r.time.length + 10 : 0)
-  const name = fit(r.name, 120, 12.5)
+  const right = W - 8 - (r.time ? cw(11.5) * textW(r.time) + 10 : 0)
+  const name = fit(r.name, Math.min(120, Math.max(0, right - x - 60)), 12.5)
   s += `<text x="${x}" y="${y1}" font-size="12.5" fill="${r.state === 'done' ? '#8B949E' : '#E6EDF3'}" ${GLANCE_FONT}>${xmlEsc(name)}</text>`
-  x += cw(12.5) * name.length + 8
+  x += cw(12.5) * textW(name) + 8
   s += `<g transform="translate(${x.toFixed(1)},${y1 - 11}) scale(0.8125)" fill="none" stroke="${sc}" stroke-width="${r.kind === 'think' ? 2.8 : 1.9}" stroke-linecap="round" stroke-linejoin="round"><path d="${KIND_ICON[r.kind] ?? KIND_ICON.tool}"/></g>`
   x += 19
   const size = r.state === 'done' ? 12.5 : 13.5
   const status = fit(r.status, right - x, size)
   s += `<text x="${x.toFixed(1)}" y="${y1}" font-size="${size}" font-weight="700" fill="${sc}" ${GLANCE_FONT}>${xmlEsc(status)}</text>`
-  x += cw(size) * status.length + 6
+  x += cw(size) * textW(status) + 6
   if (r.object && right - x > cw(12.5) * 4) s += `<text x="${x.toFixed(1)}" y="${y1}" font-size="12.5" fill="${r.state === 'done' ? '#8B949E' : '#E6EDF3'}" ${GLANCE_FONT}>${xmlEsc(fit(`· ${r.object}`, right - x, 12.5))}</text>`
   s += time
   if (r.state === 'you') {
@@ -2310,10 +2303,11 @@ const glanceSvg = (r: GlanceRow, W: number, showModel: boolean) => {
     const y2 = y1 + CELL_H
     let px = x0 + 22
     const n = Math.min(5, r.total)
-    for (let k = 0; k < n; k++) s += `<circle cx="${(px + 4 + k * 11).toFixed(1)}" cy="${y2 - 4}" r="3.6" fill="${k < r.done ? sc : 'none'}" stroke="${k <= r.done ? sc : '#484F58'}" stroke-width="1.5"/>`
+    const filled = r.total > 5 ? Math.round((r.done / r.total) * 5) : r.done
+    for (let k = 0; k < n; k++) s += `<circle cx="${(px + 4 + k * 11).toFixed(1)}" cy="${y2 - 4}" r="3.6" fill="${k < filled ? sc : 'none'}" stroke="${k <= filled ? sc : '#484F58'}" stroke-width="1.5"/>`
     if (n) px += n * 11 + 6
     const model = showModel && r.model ? r.model : ''
-    const end = W - 8 - (model ? cw(11) * model.length + 12 : 0)
+    const end = W - 8 - (model ? cw(11) * textW(model) + 12 : 0)
     s += `<text x="${px.toFixed(1)}" y="${y2}" font-size="11.5" fill="#8B949E" ${GLANCE_FONT}>${xmlEsc(fit(r.progress, end - px, 11.5))}</text>`
     if (model) s += `<text x="${W - 8}" y="${y2}" text-anchor="end" font-size="11" fill="#6E7681" ${GLANCE_FONT}>${xmlEsc(model)}</text>`
   }
@@ -5256,7 +5250,9 @@ export const register: Register = on => {
         ? `Step ${fmtK(Math.min(total, done + 1))} of ${fmtK(total)}${step ? ` · ${step}` : ''}`
         : state === 'idle' && a.id === 'main'
           ? 'waiting for your next message'
-          : `No step list · ${fmtK(a.calls)} action${a.calls === 1 ? '' : 's'} so far`
+          : state === 'idle'
+            ? 'idle'
+            : `${fmtK(a.calls)} action${a.calls === 1 ? '' : 's'} so far`
       const parent = src.agents.find(x => x.id === (a.parent ?? 'main'))
       const ask = a.needs ? `${a.needs.what.charAt(0).toUpperCase()}${a.needs.what.slice(1)}? Answer in the chat.` : ''
       return {
@@ -5273,7 +5269,7 @@ export const register: Register = on => {
         progress,
         model: shortModel(agentModel.get(a.id) ?? (a.id === 'main' ? mainModel : '')),
         depth: depthOf(a),
-        request: ask ? wrapRows(ask, Math.max(20, Math.floor((glanceW - 60) / (12.5 * 0.62))), 2) : [],
+        request: ask ? wrapRows(ask, Math.max(20, Math.floor((glanceW - 30 - 10) / (12.5 * 0.62))), 2) : [],
         where: a.needs && a.id !== 'main' && parent ? `helping ${parent.name}` : '',
       }
     }
@@ -5327,7 +5323,6 @@ export const register: Register = on => {
             ...(asked ? [`for: ${asked}`] : []),
             ...tasks.slice(0, 8).map(t => `${t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○'} ${t.active && t.status === 'in_progress' ? t.active : t.subject}`),
             ...(a?.kinds?.length ? [`lately: ${[...a.kinds].reverse().map(k => KIND_WORDS[k]?.toLowerCase() ?? k).join(' · ')}`] : []),
-            ...(r.object ? [`${r.status}: ${r.object}`] : []),
           ].flatMap(l => wrapRows(l, detailW, 4))
         : []
       return (

@@ -69,7 +69,7 @@ check('desks and folder cards are the default (no map picture, no map hands)', !
   check('the lanes area never clips a lane: no fixed height, nothing hidden', area.props.height === undefined && area.props.overflow !== 'hidden', JSON.stringify({ height: area.props.height, overflow: area.props.overflow }))
   check('...and it keeps room for its lanes (two rows each, and its frame)', area.props.minHeight >= 2 * 2 + 2, `room ${area.props.minHeight}`)
   const main = desks.find(d => say(d).startsWith('Claude'))
-  check("the main row says it is thinking, how far along, and its model", /Claude[^:]*: Thinking/.test(say(main)) && /No step list · \d+ actions so far/.test(say(main)), say(main))
+  check("the main row says it is thinking, how far along, and its model", /Claude[^:]*: Thinking/.test(say(main)) && /· \d+ actions so far/.test(say(main)), say(main))
 }
 {
   const cards = kids(byKey(tree, 'cards'))
