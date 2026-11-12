@@ -48,6 +48,8 @@ export type Agent = {
   recent: { sig: string; ok: boolean; at: number }[]
   /** What it was started for, in its starter's words (a helper: the Agent call's description). */
   job?: string
+  /** Its recent kinds of action, newest first (read, edit, shell, search, web, agent, skill, plan, tool, hook, hookBlock). */
+  kinds?: string[]
   /** The Claude that started it (a helper's parent), when known. */
   parent?: string
   /** What it is waiting on the person for (a permission, an answer, a plan to approve), and for which tool. */

@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.4.1'
+const VERSION = '1.5.0'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -897,6 +897,8 @@ let deskLowSince = 0
 const FOLLOW_K = 1.35
 /** Where the camera last stood on the Claude it follows (kept while that Claude is between files). */
 let lastTrack: { id: string; view: { x: number; y: number; k: number } } | undefined
+/** The model each Claude runs on, by agent, as its model steps say. */
+const agentModel = new Map<string, string>()
 /** When each Claude's current model step began, by agent: how long it has been thinking (kept here, not written). */
 const stepStart = new Map<string, number>()
 /** How long the desk area keeps room for desks that have gone, before it gives it back. */
@@ -1074,8 +1076,6 @@ const LOG_KEEP = 120
 /** Rows an opened log line may take, and an opened desk's line. */
 const LOG_OPEN_ROWS = 40
 const DESK_OPEN_ROWS = 12
-/** From this many lanes up, each lane is one line (eight still fit in about ten rows). */
-const LANE_COMPACT_AT = 6
 /** How many lines a press of ▲ or ▼ moves the log. */
 const LOG_STEP = 3
 /** Your messages in the log, and those another session sent. */
@@ -2178,96 +2178,146 @@ const clampView = (v: { x: number; y: number; k: number }, f: { vw: number; vh: 
 /** The map drawn through a window: the same picture, a new viewBox; `onMap` in map units, `onWindow` in window pixels. */
 /** Seconds on the clock the map's looping animations share (see `loop` in mindMap). */
 
-/** The icons a lane's tile shows for what its Claude is doing (16-unit stroke paths). */
-const LANE_ICON: Record<string, string> = {
-  hourglass: 'M4.5 2h7M4.5 14h7M5.5 2c0 3.5 5 3.5 5 6s-5 2.5-5 6M10.5 2c0 3.5-5 3.5-5 6s5 2.5 5 6',
-  pencil: 'M10.5 2.5l3 3L6 13H3v-3l7.5-7.5zM9 4l3 3',
-  terminal: 'M2.5 3.5h11v9h-11zM5 7l2 1.5L5 10M8.5 10.5H11',
-  alert: 'M8 2.2l6.3 11.3H1.7zM8 6.5v3M8 11.6v.2',
-  eye: 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z',
-  search: 'M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM10.3 10.3l3.2 3.2',
-  globe: 'M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12',
-  branch: 'M5 2.5v11M5 9c0-3 6-2 6-6.5M11 2.5v.01',
-  think: 'M4 8h.01M8 8h.01M12 8h.01',
-  check: 'M3 8.5l3 3 7-7',
-  robot: 'M3.5 5.5h9v7h-9zM8 5.5V3M6 9h.01M10 9h.01',
-  ring: 'M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z',
-  tool: 'M10 2.5a3.5 3.5 0 0 0-3.2 4.9L2.5 11.7l1.8 1.8 4.3-4.3A3.5 3.5 0 0 0 13.5 6l-2 2-2-2 2-2a3.5 3.5 0 0 0-1.5-1.5z',
-}
-/** The text glyph standing for a lane's icon where no picture is drawn (the terminal). */
-const LANE_GLYPH: Record<string, string> = { hourglass: '⏳', pencil: '✎', terminal: '▸', alert: '!', eye: '◇', search: '⌕', globe: '◎', branch: '⇢', think: '›', check: '✓', robot: '◎', ring: '○', tool: '•' }
+// ─── At a glance: one row per Claude ────────────────────────────────────────
+// What each Claude is doing, in plain words, for anyone glancing over: its kind of action (one icon each,
+// from one classifier of the tool it calls), how far along it is, its model. Each row is one picture
+// laid out here to the pixel (text widths counted, cut with … where it must), so nothing clips.
 
-/**
- * A lane's picture, left of its words: the thin tree it hangs on (a dot for the main Claude; for a helper,
- * the line to it, purple dashes flowing while the one that started it waits on it), a tile showing what
- * it is doing, and its plan as a track of tasks with the Claude standing on the one it is on. Exactly as
- * tall as its rows of text, so lanes stack into one tree.
- */
-const laneSvg = (o: {
-  h: number
-  compact: boolean
-  track: boolean
-  depth: 'root' | 'child' | 'last' | 'none'
-  below: boolean
-  waited: boolean
+/** The kinds of thing a Claude does: every tool call, hook and pause is one of these. 16-unit stroke icons. */
+const KIND_ICON: Record<string, string> = {
+  read: 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z',
+  edit: 'M10.5 2.5l3 3L6 13H3v-3l7.5-7.5zM9 4l3 3',
+  shell: 'M2.5 3.5h11v9h-11zM5 7l2 1.5L5 10M8.5 10.5H11',
+  search: 'M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM10.3 10.3l3.2 3.2',
+  web: 'M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12',
+  agent: 'M5 2.5v11M5 9c0-3 6-2 6-6.5M11 2.5v.01',
+  skill: 'M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z',
+  plan: 'M3 4h10M3 8h10M3 12h6',
+  tool: 'M10 2.5a3.5 3.5 0 0 0-3.2 4.9L2.5 11.7l1.8 1.8 4.3-4.3A3.5 3.5 0 0 0 13.5 6l-2 2-2-2 2-2a3.5 3.5 0 0 0-1.5-1.5z',
+  hook: 'M11 2v6.5a3.5 3.5 0 1 1-7 0V7M4 7l-1.6 1.6M4 7l1.6 1.6',
+  hookBlock: 'M11 2v6.5a3.5 3.5 0 1 1-7 0V7M4 7l-1.6 1.6M4 7l1.6 1.6',
+  think: 'M4 8h.01M8 8h.01M12 8h.01',
+  wait: 'M4.5 2h7M4.5 14h7M5.5 2c0 3.5 5 3.5 5 6s-5 2.5-5 6M10.5 2c0 3.5-5 3.5-5 6s5 2.5 5 6',
+  you: 'M8 2.2l6.3 11.3H1.7zM8 6.5v3M8 11.6v.2',
+  done: 'M3 8.5l3 3 7-7',
+  idle: 'M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z',
+}
+/** Each kind as plain words: what a Claude doing it is doing. */
+const KIND_WORDS: Record<string, string> = {
+  read: 'Reading', edit: 'Writing code', shell: 'Running a command', search: 'Searching the code', web: 'Reading online',
+  agent: 'Starting a helper', skill: 'Using a skill', plan: 'Planning', tool: 'Working', think: 'Thinking',
+  hook: 'Your hook ran', hookBlock: 'Your hook blocked it',
+}
+/** The text glyph for a kind, where no picture is drawn (the terminal). */
+const KIND_GLYPH: Record<string, string> = { read: '◇', edit: '✎', shell: '▸', search: '⌕', web: '◎', agent: '⇢', skill: '✦', plan: '☐', tool: '•', hook: '⚓', hookBlock: '⚓', think: '›', wait: '⏳', you: '!', done: '✓', idle: '○' }
+/** What kind of thing a tool call is. */
+const kindOf = (tool: string) =>
+  /^(Read|NotebookRead|LS)$/.test(tool)
+    ? 'read'
+    : /^(Edit|MultiEdit|Write|NotebookEdit)$/.test(tool)
+      ? 'edit'
+      : /^(Bash|PowerShell|BashOutput|KillShell|KillBash|Monitor)$/.test(tool)
+        ? 'shell'
+        : /^(Grep|Glob|ToolSearch)$/.test(tool)
+          ? 'search'
+          : /^(WebFetch|WebSearch)$/.test(tool) || /browser|chrome|Claude_Browser/i.test(tool)
+            ? 'web'
+            : /^(Agent|Task)$/.test(tool) || tool === 'mcp__codex-bridge__codex'
+              ? 'agent'
+              : /^(Skill|SlashCommand)$/.test(tool)
+                ? 'skill'
+                : /^(TodoWrite|Task(Create|Update|List|Get)|EnterPlanMode|ExitPlanMode)$/.test(tool)
+                  ? 'plan'
+                  : 'tool'
+/** A model's id as people say it: claude-opus-5-5 → Opus 5.5. */
+const shortModel = (m: string) => {
+  const x = m.replace(/^.*?claude-/, '').match(/^([a-z]+)-(\d+)(?:-(\d{1,2}))?/i)
+  return x ? `${x[1][0].toUpperCase()}${x[1].slice(1)} ${x[2]}${x[3] ? `.${x[3]}` : ''}` : trunc(m, 14)
+}
+/** A short clock for a row: 48s, 14m, 1h05. */
+const shortTime = (ms: number) => {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, '0')}`
+}
+const xmlEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/** One Claude's row as the picture draws it. */
+type GlanceRow = {
+  id: string
+  name: string
   hue: string
-  icon: string
-  iconHue: string
+  state: 'work' | 'wait' | 'you' | 'done' | 'idle'
+  kind: string
+  status: string
+  object: string
+  time: string
   total: number
   done: number
-  cur: number
-  frac: number
-  mood: 'busy' | 'thinking' | 'idle' | 'needs' | 'done'
-  seed: number
-}) => {
-  const H = o.h
-  const mid = H / 2
-  const tile = o.compact ? 15 : 30
-  const tx = 20
-  const ty = (H - tile) / 2
-  const x0 = tx + tile + (o.compact ? 14 : 22)
-  const x1 = x0 + (o.compact ? 84 : 104)
-  // Room either side of the track for half the Claude standing on its ends, and a gap from the tile.
-  const W = o.track ? x1 + (o.compact ? 10 : 16) : tx + tile + 4
-  const line = '#30363D'
+  progress: string
+  model: string
+  depth: number
+  request: string[]
+  where: string
+}
+/** The colour of a state: working, waiting (and idle), needs you, done. */
+const STATE_COLOR: Record<GlanceRow['state'], string> = { work: '#3FB950', wait: '#8B949E', idle: '#8B949E', you: '#E3B341', done: '#8B949E' }
+const GLANCE_FONT = 'font-family="Cascadia Code, Consolas, ui-monospace, Menlo, monospace"'
+/** Rows of text a row takes: done one; at work two; needing you, its request and who it helps. */
+const glanceRows = (r: GlanceRow) => (r.state === 'done' ? 1 : r.state === 'you' ? 1 + r.request.length + (r.where ? 1 : 0) : 2)
+/**
+ * A row's picture: a card (amber when it needs you, none when done), the little Claude, its name, the
+ * state's icon and words in the state's colour, what on, its time; under them its step pips and progress,
+ * and its model. Every text is cut to the room left for it, counted in characters of the fixed font.
+ */
+const glanceSvg = (r: GlanceRow, W: number, showModel: boolean) => {
+  const H = glanceRows(r) * CELL_H
+  const sc = STATE_COLOR[r.state]
+  const cw = (px: number) => px * 0.62
+  const fit = (t: string, px: number, size: number) => cutTo(t, Math.max(0, Math.floor(px / cw(size))))
+  const indent = Math.min(3, r.depth) * 14
+  const x0 = indent + 8
   let s = ''
-  if (o.depth === 'root') s += `<circle cx="7" cy="${mid}" r="3.2" fill="${o.hue}"/>${o.below ? `<path d="M7 ${mid}V${H}" stroke="${line}" stroke-width="1.2"/>` : ''}`
-  if (o.depth === 'child' || o.depth === 'last') {
-    s += `<path d="M7 0V${o.depth === 'child' ? H : mid}" stroke="${line}" stroke-width="1.2"/>`
-    s += o.waited
-      ? `<path d="M7 ${mid}H${tx - 2}" stroke="#D2A8FF" stroke-width="1.4" stroke-dasharray="2 3"><animate attributeName="stroke-dashoffset" from="10" to="0" dur="0.9s" repeatCount="indefinite"/></path>`
-      : `<path d="M7 ${mid}H${tx - 2}" stroke="${line}" stroke-width="1.2"/>`
+  if (r.state === 'you') s += `<rect x="${indent + 0.5}" y="0.5" width="${W - indent - 1}" height="${H - 1}" rx="7" fill="#E3B341" fill-opacity="0.12" stroke="#E3B341"/>`
+  else if (r.state !== 'done') s += `<rect x="${indent + 0.5}" y="0.5" width="${W - indent - 1}" height="${H - 1}" rx="7" fill="#121821" stroke="#30363D"/>`
+  const y1 = 14
+  // The little Claude (still); a dot once it is done.
+  if (r.state === 'done') s += `<circle cx="${x0 + 6}" cy="${y1 - 4}" r="3.5" fill="${r.hue}" fill-opacity="0.7"/>`
+  else {
+    const U = 1
+    const R = (x: number, y: number, w: number, h: number, cls = '') => `<rect${cls ? ` class="${cls}"` : ''} x="${(x0 + x * U).toFixed(1)}" y="${(3 + y * U).toFixed(1)}" width="${w * U}" height="${h * U}" fill="${cls ? '#0D1117' : r.hue}"/>`
+    s += R(1, 0, 14, 8) + R(0, 2.5, 1.2, 2) + R(14.8, 2.5, 1.2, 2) + R(4, 2, 2, 2.6, 'eye') + R(10, 2, 2, 2.6, 'eye') + [2.5, 5.7, 8.7, 11.9].map(x => R(x, 8, 1.6, 2.6)).join('')
   }
-  s += `<rect x="${tx}" y="${ty}" width="${tile}" height="${tile}" rx="${o.compact ? 4 : 7}" fill="${o.iconHue}" fill-opacity="0.13" stroke="${o.iconHue}" stroke-width="1.4"/>`
-  const isz = o.compact ? 11 : 16
-  s += `<g transform="translate(${(tx + (tile - isz) / 2).toFixed(1)},${(ty + (tile - isz) / 2).toFixed(1)}) scale(${(isz / 16).toFixed(3)})" fill="none" stroke="${o.iconHue}" stroke-width="${o.icon === 'think' ? 2.8 : 1.7}" stroke-linecap="round" stroke-linejoin="round"><path d="${LANE_ICON[o.icon] ?? LANE_ICON.ring}"/></g>`
-  if (o.track) {
-    const base = H - (o.compact ? 4 : 6)
-    const n = o.total
-    const xs = n > 1 ? Array.from({ length: n }, (_, k) => x0 + (k * (x1 - x0)) / (n - 1)) : n === 1 ? [(x0 + x1) / 2] : []
-    const at = n ? (o.cur >= 0 && o.cur < n ? xs[o.cur] : o.done >= n ? x1 : x0) : x0 + (x1 - x0) * Math.min(1, Math.max(0, o.frac))
-    // No plan: a dotted path, the Claude on it as far as the work is known to have come.
-    s += n
-      ? `<path d="M${x0} ${base}H${x1}" stroke="${line}" stroke-width="2" stroke-linecap="round"/>`
-      : `<path d="M${x0} ${base}H${x1}" stroke="#484F58" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="0.1 6"/>`
-    if (n && at > x0) s += `<path d="M${x0} ${base}H${at.toFixed(1)}" stroke="${o.hue}" stroke-width="2" stroke-linecap="round"/>`
-    const r = o.compact ? 2.4 : 3.2
-    for (const [k, x] of xs.entries())
-      s += `<circle cx="${x.toFixed(1)}" cy="${base}" r="${r}" fill="${k < o.done ? o.hue : 'none'}" stroke="${k < o.done || k === o.cur ? o.hue : '#484F58'}" stroke-width="1.6"/>`
-    // The Claude, standing where it is on its plan: bobbing while it works, slowly while it thinks or waits.
-    const U = o.compact ? 0.85 : 1.5
-    const R = (x: number, y: number, w: number, hh: number, fill: string) => `<rect x="${(x * U).toFixed(1)}" y="${(y * U).toFixed(1)}" width="${(w * U).toFixed(1)}" height="${(hh * U).toFixed(1)}" fill="${fill}"/>`
-    const off = (o.seed % 10) / 10
-    const anim = (name: string, dur: number) => `animation:${name} ${dur}s ease-in-out infinite;animation-delay:calc(-1s * var(--clk, 0) - ${off.toFixed(2)}s)`
-    const body = R(2, 0, 12, 7, o.hue) + R(0, 3, 2, 2, o.hue) + R(14, 3, 2, 2, o.hue) + [3, 5, 10, 12].map(x => R(x, 7, 1, 2, o.hue)).join('')
-    const eyes = `<g style="transform-origin:center;transform-box:fill-box;${anim('blink', 4.2)}">${R(4, 2, 1, 2, '#0D1117')}${R(11, 2, 1, 2, '#0D1117')}</g>`
-    const bob = o.mood === 'busy' ? anim('bob', 0.7) : o.mood === 'thinking' || o.mood === 'needs' ? anim('bob', 1.8) : ''
-    s += `<g transform="translate(${(at - 8 * U).toFixed(1)},${(base - r - 1 - 9 * U).toFixed(1)})"><g style="${bob}">${body}${eyes}</g></g>`
+  let x = x0 + 22
+  const time = r.time ? `<text x="${W - 8}" y="${y1}" text-anchor="end" font-size="11.5" fill="${r.state === 'you' ? '#E3B341' : '#8B949E'}" ${GLANCE_FONT}>${xmlEsc(r.time)}</text>` : ''
+  const right = W - 8 - (r.time ? cw(11.5) * r.time.length + 10 : 0)
+  const name = fit(r.name, 120, 12.5)
+  s += `<text x="${x}" y="${y1}" font-size="12.5" fill="${r.state === 'done' ? '#8B949E' : '#E6EDF3'}" ${GLANCE_FONT}>${xmlEsc(name)}</text>`
+  x += cw(12.5) * name.length + 8
+  s += `<g transform="translate(${x.toFixed(1)},${y1 - 11}) scale(0.8125)" fill="none" stroke="${sc}" stroke-width="${r.kind === 'think' ? 2.8 : 1.9}" stroke-linecap="round" stroke-linejoin="round"><path d="${KIND_ICON[r.kind] ?? KIND_ICON.tool}"/></g>`
+  x += 19
+  const size = r.state === 'done' ? 12.5 : 13.5
+  const status = fit(r.status, right - x, size)
+  s += `<text x="${x.toFixed(1)}" y="${y1}" font-size="${size}" font-weight="700" fill="${sc}" ${GLANCE_FONT}>${xmlEsc(status)}</text>`
+  x += cw(size) * status.length + 6
+  if (r.object && right - x > cw(12.5) * 4) s += `<text x="${x.toFixed(1)}" y="${y1}" font-size="12.5" fill="${r.state === 'done' ? '#8B949E' : '#E6EDF3'}" ${GLANCE_FONT}>${xmlEsc(fit(`· ${r.object}`, right - x, 12.5))}</text>`
+  s += time
+  if (r.state === 'you') {
+    // The whole request, a line each, then who it helps.
+    r.request.forEach((l, i) => (s += `<text x="${x0 + 22}" y="${y1 + CELL_H * (i + 1)}" font-size="12.5" fill="#E6EDF3" ${GLANCE_FONT}>${xmlEsc(l)}</text>`))
+    if (r.where) s += `<text x="${x0 + 22}" y="${y1 + CELL_H * (r.request.length + 1)}" font-size="11.5" fill="#8B949E" ${GLANCE_FONT}>${xmlEsc(fit(r.where, W - x0 - 30, 11.5))}</text>`
+  } else if (r.state !== 'done') {
+    // How far along: a pip per step (five at most), then in words; its model at the right.
+    const y2 = y1 + CELL_H
+    let px = x0 + 22
+    const n = Math.min(5, r.total)
+    for (let k = 0; k < n; k++) s += `<circle cx="${(px + 4 + k * 11).toFixed(1)}" cy="${y2 - 4}" r="3.6" fill="${k < r.done ? sc : 'none'}" stroke="${k <= r.done ? sc : '#484F58'}" stroke-width="1.5"/>`
+    if (n) px += n * 11 + 6
+    const model = showModel && r.model ? r.model : ''
+    const end = W - 8 - (model ? cw(11) * model.length + 12 : 0)
+    s += `<text x="${px.toFixed(1)}" y="${y2}" font-size="11.5" fill="#8B949E" ${GLANCE_FONT}>${xmlEsc(fit(r.progress, end - px, 11.5))}</text>`
+    if (model) s += `<text x="${W - 8}" y="${y2}" text-anchor="end" font-size="11" fill="#6E7681" ${GLANCE_FONT}>${xmlEsc(model)}</text>`
   }
-  return {
-    w: W,
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" data-keep-darks="1" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="--clk:${clockNow()}"><style>@keyframes bob{50%{transform:translateY(-${o.compact ? 1 : 2}px)}}@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}</style>${s}</svg>`,
-  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>.eye{fill:#0D1117 !important}</style>${s}</svg>`
 }
 
 /**
@@ -3939,9 +3989,21 @@ export const register: Register = on => {
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => (await asking(e, () => next(e))) as Awaited<ReturnType<typeof next>>)
   on('tool.call', { tool: 'ExitPlanMode' }, async ($, e, next) => (await asking(e, () => next(e))) as Awaited<ReturnType<typeof next>>)
   // Each model request: how much of its context window the Claude is using now.
+  on('classic.PreToolUse', async ($, e, next) => {
+    const t0 = Date.now()
+    const decided = await next(e)
+    const r = decided as { deny?: unknown; ask?: unknown } | undefined
+    const kind = r?.deny !== undefined ? 'hookBlock' : r?.ask !== undefined || Date.now() - t0 >= 400 ? 'hook' : ''
+    if (kind) {
+      const id = agentOf(e)
+      void write?.(c => (c.agents.some(a => a.id === id) ? upsert(c, id, a => ({ ...a, kinds: [kind, ...(a.kinds ?? [])].slice(0, 8) })) : c))
+    }
+    return decided
+  })
   on('turn.step', async function* ($, e, next) {
     // When this model step began, kept here (no write per step): how long "thinking" has run.
     stepStart.set(e.agentId ?? 'main', Date.now())
+    if (e.model) agentModel.set(e.agentId ?? 'main', e.model)
     const r = yield* next(e)
     const u = (r as { usage?: Usage | null } | undefined)?.usage
     if (u && fin(u.input_tokens) + fin(u.cache_read_input_tokens) + fin(u.cache_creation_input_tokens) > 0) {
@@ -4146,6 +4208,7 @@ export const register: Register = on => {
           state: 'busy',
           calls: x.calls + 1,
           actions: [line, ...x.actions].slice(0, 5),
+          kinds: [kindOf(e.tool), ...(x.kinds ?? [])].slice(0, 8),
         }
         if (todos) {
           const doing = todos.find(t => t.status === 'in_progress')
@@ -5111,10 +5174,10 @@ export const register: Register = on => {
     }
     renderDone?.()
     renderDone = null
-    // ── Desks, as lanes: one per Claude at work (and each Codex run), hung on a thin tree from the main ──
-    // Claude. Left, a picture: the tree, a tile for what it is doing, its plan as a track with the Claude
-    // standing on the task it is on. Right, two lines: its name, what it is for and its times; then what
-    // it is doing now (the file as a button), or what it waits on. Six or more: one line each.
+    // ── Desks, at a glance: one row per Claude at work (and each Codex run) ──
+    // Line one: its little Claude, name, and what it is doing in plain words (the biggest text), its time.
+    // Line two: how far along (a pip per step, "Step 2 of 3 · …") and its model. Colour says its state
+    // only. One needing you is pinned on top, amber, with its whole request; one done is a dim line.
     const src = replaying ? crewAt(c, rpAt, replayShown.stamp) : c
     const deskAgents = replaying ? src.agents.filter(a => a.id === 'main' || a.state === 'busy' || a.state === 'thinking') : shown
     const nowOf = (a: Agent): [string, string] => {
@@ -5130,7 +5193,7 @@ export const register: Register = on => {
       if (a.state === 'done') return ['done', a.cost ? fmtUsd(a.cost) : 'finished']
       return ['—', a.id === 'main' ? 'waiting for a prompt' : 'idle']
     }
-    // Codex in a lane while it runs, and a little after (as a helper's lingers); the rest counted.
+    // Codex in a row while it runs, and a little after (as a helper's lingers); the rest counted.
     const codexAtDesks = replaying ? [] : codexRuns.filter(r => r.status === 'running' || Date.now() - (r.endedAt || 0) < WINDOW_LINGER_MS)
     const CODEX_DESKS = 3
     const deskCount = deskAgents.length + Math.min(CODEX_DESKS, codexAtDesks.length) + (codexAtDesks.length > CODEX_DESKS ? 1 : 0)
@@ -5144,208 +5207,158 @@ export const register: Register = on => {
       deskMax = deskCount
       deskLowSince = 0
     }
-    // Two rows a lane, one each from six lanes up; the area keeps room for the most lanes lately, plus its border.
-    const compactLanes = deskCount >= LANE_COMPACT_AT
-    const laneRows = compactLanes ? 1 : 2
-    const rowsFor = (n: number) => (n >= LANE_COMPACT_AT ? n : n * 2)
-    const desksH = rowsFor(Math.max(1, deskMax)) + 2
-    // The plan track needs room: in a narrow pane a lane shows its tile only.
-    const laneTrack = cols >= 60
-    type Bit = { t: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; file?: string }
-    type LaneSpec = {
-      id: string
-      name: string
-      hue: string
-      icon: string
-      iconHue: string
-      mood: 'busy' | 'thinking' | 'idle' | 'needs' | 'done'
-      headline: string
-      urgent: boolean
-      bits: Bit[]
-      right: string
-      plan: { total: number; done: number; cur: number; frac: number }
-      waited: boolean
-      job: string
-      seed: number
+    // Two rows of text a Claude, and the area's frame.
+    const desksH = Math.max(1, deskMax) * 2 + 2
+    // The picture's width: the pane inside the area's frame, less the Details button beside it.
+    const glanceW = Math.max(200, Math.floor(((isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9) * CELL_W))
+    const showModel = cols >= 70
+    // How deep a Claude sits: the main one 0, its helpers 1, theirs 2…
+    const depthOf = (a: Agent) => {
+      if (a.id === 'main') return 0
+      let d = 1
+      for (let p = a.parent; p && p !== 'main' && d < 4; p = src.agents.find(x => x.id === p)?.parent) d++
+      return d
     }
-    /** A Claude's plan as the track draws it: how many tasks, how many done, the one it is on. */
-    const planOf = (a: Agent) => {
-      const tasks = tasksOf(a, src)
-      if (a.state === 'done') {
-        const n = tasks.length || a.todosTotal
-        return { total: n, done: n, cur: -1, frac: 1 }
-      }
-      if (tasks.length) {
-        const cur = tasks.findIndex(t => t.status === 'in_progress')
-        return { total: tasks.length, done: tasks.filter(t => t.status === 'completed').length, cur, frac: 0 }
-      }
-      if (a.todosTotal) return { total: a.todosTotal, done: a.todosDone, cur: a.todosDoing ? a.todosDone : -1, frac: 0 }
-      // No plan: the Claude walks a dotted path, further the more steps it has taken (never to its end).
-      return { total: 0, done: 0, cur: -1, frac: a.calls ? Math.min(0.85, 0.15 + a.calls / 40) : 0 }
-    }
-    const laneOfAgent = (a: Agent): LaneSpec => {
-      const color = colorOf(a)
-      const [what, how] = nowOf(a)
-      const wait = waitOf(a, src, Date.now())
+    const rowOfAgent = (a: Agent): GlanceRow => {
+      const now = Date.now()
+      const wait = waitOf(a, src, now)
       const at = a.state === 'busy' || a.state === 'thinking'
-      const mood = a.needs ? 'needs' : wait && wait.kind !== 'you' ? 'thinking' : a.state === 'busy' ? 'busy' : a.state === 'thinking' ? 'thinking' : a.state === 'done' ? 'done' : 'idle'
-      const verb = verbOf(a)
-      const onAFile = a.state === 'busy' && !a.needs && a.tool !== COMPACT && !!a.node && !!src.nodes[a.node] && !isSpecial(a.node)
-      const shell = a.state === 'busy' && (a.tool === 'Bash' || a.tool === 'PowerShell')
-      const [icon, iconHue] = a.needs
-        ? ['alert', NEEDS]
-        : wait && wait.kind === 'helpers'
-          ? ['hourglass', WAIT_TINT.helpers]
-          : wait && wait.kind === 'command'
-            ? ['hourglass', WAIT_TINT.command]
-            : wait
-              ? ['ring', '#8B949E']
-              : a.state === 'done'
-                ? ['check', '#3FB950']
-                : a.tool === COMPACT && a.state === 'busy'
-                  ? ['think', color]
-                  : shell
-                    ? ['terminal', WAIT_TINT.command]
-                    : a.state === 'busy'
-                      ? [verb === 'editing' || verb === 'writing' ? 'pencil' : verb === 'reading' ? 'eye' : verb === 'searching' || verb === 'finding' ? 'search' : verb === 'fetching' ? 'globe' : verb === 'delegating' ? 'branch' : 'tool', color]
-                      : a.state === 'thinking'
-                        ? ['think', color]
-                        : ['ring', '#8B949E']
-      const task = doingOf(a, src)
+      const state: GlanceRow['state'] = a.needs ? 'you' : a.state === 'done' ? 'done' : wait ? (wait.kind === 'you' ? 'idle' : 'wait') : at ? 'work' : 'idle'
+      const [what] = nowOf(a)
+      const kind =
+        state === 'you' || state === 'done' || state === 'wait' || state === 'idle'
+          ? state
+          : a.state === 'thinking' || a.tool === COMPACT
+            ? 'think'
+            : kindOf(a.tool)
+      const tests = kind === 'shell' && /\b(test|tests|jest|vitest|pytest|mocha|spec)\b/i.test(`${what} ${a.detail}`)
+      const status =
+        state === 'you' ? 'Needs you' : state === 'done' ? 'Done' : state === 'wait' ? 'Waiting' : state === 'idle' ? (a.id === 'main' ? 'Your turn' : 'Idle') : a.tool === COMPACT ? 'Compacting' : tests ? 'Running tests' : KIND_WORDS[kind]
       const goal = a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : ''
-      const job = a.job || goal
-      // Opened, all it was asked (a helper's goal holds its description and its brief), when that says more.
-      const fullJob = goal.length > job.length ? goal : job
-      // The headline: what it waits on you for; else the task it is on; else what it is for.
-      const headline = a.needs && wait
-        ? `⏸ needs you: ${wait.what}`
-        : (at && task) || (a.id === 'main' ? goal || 'waiting for a prompt' : job || what)
-      const where = onAFile ? groupOf(a.node) : ''
-      const folder = where ? (where === OUTSIDE ? 'outside the project' : where === '.' ? 'the project top' : where) : ''
-      const lastDid = a.actions[0] ? `just did: ${a.actions[0]}` : 'planning its next step'
-      const thinkFor = a.state === 'thinking' && stepStart.has(a.id) ? elapsed(Date.now() - (stepStart.get(a.id) ?? 0)) : ''
-      const ch = onAFile ? src.changes[a.node] : undefined
-      // The line under it: what it is doing right now, or what it waits on.
-      const bits: Bit[] = a.needs
-        ? [{ t: 'answer it in the chat' }, { t: task ? ` · task: ${task}` : '', dim: true }]
-        : wait && wait.kind !== 'you'
-          ? [{ t: `⏳ ${wait.label}: ${wait.what}`, color: WAIT_TINT[wait.kind] }]
-          : wait
-            ? [{ t: `○ ${wait.label}`, dim: true }, { t: ` · ${wait.what}`, dim: true }]
-            : a.tool === COMPACT && a.state === 'busy'
-              ? [{ t: 'compacting · freeing up room', dim: true }]
-              : onAFile
-                ? [
-                    { t: `${ICON[a.tool] ?? '•'} ${how} `, dim: true },
-                    { t: baseName(a.node), file: a.node },
-                    { t: folder ? ` in ${folder}` : '', dim: true },
-                    ...(ch?.edits ? [{ t: `  +${fmtK(ch.added)}`, color: '#3FB950' }, { t: ` −${fmtK(ch.removed)}`, color: '#F85149' }] : []),
-                  ]
-                : shell
-                  ? [{ t: `${SHELL_MARK}${what}`, color: WAIT_TINT.command }]
-                  : a.state === 'busy'
-                    ? [{ t: `${how} ${what}`, dim: true }]
-                    : a.state === 'thinking'
-                      ? a.thoughts[0]
-                        ? [{ t: `› ${oneLine(a.thoughts[0])}`, italic: true }, { t: thinkFor ? ` · thinking ${thinkFor}` : '', dim: true }]
-                        : [{ t: thinkFor ? `thinking ${thinkFor}` : 'thinking', dim: true }, { t: ` · ${lastDid}`, dim: true }]
-                      : a.state === 'done'
-                        ? [{ t: `✓ done${a.cost ? ` · ${fmtUsd(a.cost)}` : ''}`, dim: true }]
-                        : [{ t: a.id === 'main' ? 'waiting for a prompt' : 'idle', dim: true }]
-      const plan = planOf(a)
-      const planLabel = plan.total ? (plan.done >= plan.total ? `${fmtK(plan.total)} of ${fmtK(plan.total)}` : `${fmtK(Math.min(plan.total, plan.done + 1))} of ${fmtK(plan.total)}`) : ''
-      const clockOf = at && a.since ? elapsed(Date.now() - a.since) : ''
-      const right = [planLabel, a.needs && wait ? '' : clockOf, a.cost ? fmtUsd(a.cost) : ''].filter(Boolean).join(' · ')
-      // Its line on the tree flows while the Claude that started it waits on its helpers.
+      const object =
+        state === 'you'
+          ? ''
+          : state === 'done'
+            ? a.job || goal
+            : state === 'wait'
+              ? `for ${wait?.what ?? ''}`
+              : state === 'idle'
+                ? ''
+                : a.state === 'thinking'
+                  ? // How long its model step has run, and what it last said.
+                    [stepStart.has(a.id) ? elapsed(now - (stepStart.get(a.id) ?? 0)) : '', a.thoughts[0] ? oneLine(a.thoughts[0]) : ''].filter(Boolean).join(' · ')
+                  : what
+      const tasks = tasksOf(a, src)
+      const total = tasks.length || a.todosTotal
+      const done = tasks.length ? tasks.filter(t => t.status === 'completed').length : a.todosDone
+      const step = doingOf(a, src) || tasks.find(t => t.status !== 'completed')?.subject || ''
+      const progress = total
+        ? `Step ${fmtK(Math.min(total, done + 1))} of ${fmtK(total)}${step ? ` · ${step}` : ''}`
+        : state === 'idle' && a.id === 'main'
+          ? 'waiting for your next message'
+          : `No step list · ${fmtK(a.calls)} action${a.calls === 1 ? '' : 's'} so far`
       const parent = src.agents.find(x => x.id === (a.parent ?? 'main'))
-      const waited = a.id !== 'main' && at && !!parent && waitOf(parent, src, Date.now())?.kind === 'helpers'
-      return { id: a.id, name: a.name, hue: color, icon, iconHue, mood, headline, urgent: !!a.needs, bits, right, plan, waited, job: fullJob, seed: hash(a.id) }
+      const ask = a.needs ? `${a.needs.what.charAt(0).toUpperCase()}${a.needs.what.slice(1)}? Answer in the chat.` : ''
+      return {
+        id: a.id,
+        name: a.name,
+        hue: colorOf(a),
+        state,
+        kind,
+        status,
+        object,
+        time: at && a.since ? shortTime(now - a.since) : state === 'done' && a.since ? shortTime((a.doneAt || now) - a.since) : '',
+        total,
+        done,
+        progress,
+        model: shortModel(agentModel.get(a.id) ?? (a.id === 'main' ? mainModel : '')),
+        depth: depthOf(a),
+        request: ask ? wrapRows(ask, Math.max(20, Math.floor((glanceW - 60) / (12.5 * 0.62))), 2) : [],
+        where: a.needs && a.id !== 'main' && parent ? `helping ${parent.name}` : '',
+      }
     }
-    const laneOfCodex = (r: CodexRun): LaneSpec => {
-      const cmd = [...r.events].reverse().find(ev => ev.kind === 'cmd' || ev.kind === 'file')
-      const what = r.status !== 'running' ? r.status : cmd ? (cmd.kind === 'cmd' ? cmdGist(cmd.text).replace(/^ran /, '') : baseName(cmd.text)) : r.activity || 'working'
+    const rowOfCodex = (r: CodexRun): GlanceRow => {
+      const last = [...r.events].reverse().find(ev => ev.kind === 'cmd' || ev.kind === 'file')
       const running = r.status === 'running'
+      const kind = !running ? 'done' : last?.kind === 'cmd' ? 'shell' : last?.kind === 'file' ? 'edit' : 'think'
+      const caller = src.agents.find(a => a.id === r.caller)
       return {
         id: `cx-${r.id}`,
         name: 'Codex',
         hue: CX,
-        icon: running ? 'robot' : 'check',
-        iconHue: running ? CX : '#3FB950',
-        mood: running ? 'busy' : 'done',
-        headline: `${r.thread ? `[${r.thread}] ` : ''}${r.activity && r.activity !== what ? r.activity : r.task ? oneLine(r.task) : ''}`,
-        urgent: false,
-        bits: running ? [{ t: `${SHELL_MARK}${what}`, color: WAIT_TINT.command }, { t: ` · for ${nameFor(r.caller)}`, dim: true }] : [{ t: `${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'} changed · ${fmtK(r.commands)} command${r.commands === 1 ? '' : 's'}`, dim: true }],
-        right: [running && r.startedAt ? elapsed(Date.now() - r.startedAt) : '', `${fmtK(r.commands)} cmd${r.commands === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
-        plan: { total: 0, done: 0, cur: -1, frac: running ? Math.min(0.85, 0.15 + r.commands / 20) : 1 },
-        waited: false,
-        job: r.task ? oneLine(r.task) : '',
-        seed: hash(r.id),
+        state: running ? 'work' : 'done',
+        kind,
+        status: running ? KIND_WORDS[kind] : 'Done',
+        object: last ? (last.kind === 'cmd' ? cmdGist(last.text).replace(/^ran /, '') : baseName(last.text)) : r.activity || oneLine(r.task),
+        time: running && r.startedAt ? shortTime(Date.now() - r.startedAt) : '',
+        total: 0,
+        done: 0,
+        progress: `${fmtK(r.commands)} command${r.commands === 1 ? '' : 's'} · ${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'}${r.thread ? ` · ${r.thread}` : ''}`,
+        model: r.model ? trunc(r.model, 14) : '',
+        depth: caller ? depthOf(caller) + 1 : 1,
+        request: [],
+        where: '',
       }
     }
-    const laneSpecs = [...deskAgents.map(laneOfAgent), ...codexAtDesks.slice(0, CODEX_DESKS).map(laneOfCodex)]
-    // Room for words beside the picture: the pane, less the area's frame and the picture.
-    const laneTextW = Math.max(16, (isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - (isTerminal ? 2 : Math.ceil(laneSvg({ h: 38, compact: compactLanes, track: laneTrack, depth: 'none', below: false, waited: false, hue: '#fff', icon: 'ring', iconHue: '#fff', total: 0, done: 0, cur: -1, frac: 0, mood: 'idle', seed: 0 }).w / CELL_W)) - 1)
-    const lane = (o: LaneSpec, i: number) => {
-      const hasRoot = laneSpecs[0]?.id === 'main'
-      const depth = i === 0 ? (hasRoot ? 'root' : 'none') : !hasRoot ? 'none' : i === laneSpecs.length - 1 ? 'last' : 'child'
-      const pic = laneSvg({ h: laneRows * CELL_H, compact: compactLanes, track: laneTrack, depth, below: i < laneSpecs.length - 1, waited: o.waited, hue: o.hue, icon: o.icon, iconHue: o.iconHue, total: o.plan.total, done: o.plan.done, cur: o.plan.cur, frac: o.plan.frac, mood: o.mood, seed: o.seed })
-      const line2 = o.bits.map(b => b.t).join('')
-      // Opened, a lane shows whole what it is for, its headline and its line; offered only when one is cut short.
-      const open = !!c.deskOpen?.[o.id] && !compactLanes
-      const headRoom = laneTextW - textW(o.name) - 1 - (o.right ? textW(o.right) + 2 : 0)
-      const more = !compactLanes && (open || textW(o.headline) > headRoom || textW(line2) > laneTextW - 8 || (!!o.job && o.job !== o.headline))
-      const toggle = () => void write?.(d => ({ ...d, deskOpen: { ...(d.deskOpen ?? {}), [o.id]: !d.deskOpen?.[o.id] } }))
-      const openRows = open
+    // In tree order (each Claude, then the ones it started), the ones needing you pinned on top.
+    const byParent = (id: string) => deskAgents.filter(a => a.id !== 'main' && (a.parent ?? 'main') === id)
+    const ordered: Agent[] = []
+    const walk = (a: Agent) => {
+      if (ordered.includes(a)) return
+      ordered.push(a)
+      byParent(a.id).forEach(walk)
+    }
+    deskAgents.filter(a => a.id === 'main' || !deskAgents.some(p => p.id === (a.parent ?? 'main'))).forEach(walk)
+    const glance = [...ordered.map(rowOfAgent), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
+    const glanceList = [...glance.filter(r => r.state === 'you'), ...glance.filter(r => r.state !== 'you')]
+    const glanceRow = (r: GlanceRow) => {
+      const open = !!c.deskOpen?.[r.id]
+      const rows = glanceRows(r)
+      const a = src.agents.find(x => x.id === r.id)
+      const tasks = a ? tasksOf(a, src) : []
+      const pad = ' '.repeat(Math.min(3, r.depth) * 2 + 2)
+      // Opened, everything whole: each line wraps over as many rows as it needs (a few at most).
+      const detailW = Math.max(20, Math.floor(glanceW / CELL_W) + 8 - pad.length)
+      // What a helper was asked: all of it (its goal holds its description and its brief).
+      const asked = a && a.id !== 'main' ? [a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : '', a.job ?? ''].sort((x, y) => y.length - x.length)[0] : ''
+      const details = open
         ? [
-            ...(o.job && o.job !== o.headline ? wrapRows(`for: ${o.job}`, laneTextW, DESK_OPEN_ROWS) : []),
-            ...wrapRows(o.headline, laneTextW, DESK_OPEN_ROWS),
-            ...wrapRows(line2, laneTextW, DESK_OPEN_ROWS),
-          ]
+            `${r.model || 'model unknown'}${a?.cost ? ` · ${fmtUsd(a.cost)}` : ''}${a?.since ? ` · started ${shortTime(Date.now() - a.since)} ago` : ''}`,
+            ...(asked ? [`for: ${asked}`] : []),
+            ...tasks.slice(0, 8).map(t => `${t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○'} ${t.active && t.status === 'in_progress' ? t.active : t.subject}`),
+            ...(a?.kinds?.length ? [`lately: ${[...a.kinds].reverse().map(k => KIND_WORDS[k]?.toLowerCase() ?? k).join(' · ')}`] : []),
+            ...(r.object ? [`${r.status}: ${r.object}`] : []),
+          ].flatMap(l => wrapRows(l, detailW, 4))
         : []
       return (
-        <Box key={`desk-${o.id}`} flexDirection="column" backgroundColor={o.urgent && !isTerminal ? 'rgba(227,179,65,0.12)' : undefined}>
+        <Box key={`desk-${r.id}`} flexDirection="column">
           <Box flexDirection="row">
             {isTerminal ? (
-              <Text color={o.iconHue}>{`${LANE_GLYPH[o.icon] ?? '•'} `}</Text>
-            ) : (
-              <Svg source={pic.svg} alt={`${o.name}: ${o.headline}`} width={pic.w} height={laneRows * CELL_H} />
-            )}
-            <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-              <Box flexDirection="row">
-                <Text bold color={o.hue}>{o.name}</Text>
-                <Text wrap="truncate" bold={o.urgent} color={o.urgent ? NEEDS : undefined}>{` ${compactLanes && !o.urgent ? (line2 || o.headline) : o.headline}`}</Text>
-                <Box flexGrow={1} />
-                <Text color={o.urgent ? NEEDS : undefined} dimColor={!o.urgent}>{o.right ? `  ${o.right}` : ''}</Text>
-              </Box>
-              {laneRows === 2 ? (
+              <Box flexDirection="column" flexGrow={1} flexShrink={1}>
                 <Box flexDirection="row">
-                  {o.bits.map((b, k) =>
-                    b.file ? (
-                      <Box key={`lanefile:${o.id}`} flexDirection="row" flexShrink={0}>
-                        <Button key={`open-lane:${o.id}`} plain onPress={() => void openAndSay($, 'file', b.file!, baseName(b.file!), !!src.changes[b.file!]?.edits)}>
-                          {b.t}
-                        </Button>
-                      </Box>
-                    ) : (
-                      <Text key={`bit${k}`} wrap="truncate" color={b.color} dimColor={b.dim} bold={b.bold} italic={b.italic}>
-                        {b.t}
-                      </Text>
-                    ),
-                  )}
+                  <Text color={STATE_COLOR[r.state]}>{`${' '.repeat(Math.min(3, r.depth) * 2)}${KIND_GLYPH[r.kind] ?? '•'} `}</Text>
+                  <Text bold={r.state !== 'done'} dimColor={r.state === 'done'}>{r.name}</Text>
+                  <Text bold color={STATE_COLOR[r.state]}>{` ${r.status}`}</Text>
+                  <Text wrap="truncate">{r.object ? ` · ${r.object}` : ''}</Text>
                   <Box flexGrow={1} />
-                  <Box key={`moreslot:${o.id}`} flexDirection="row" flexShrink={0}>
-                    {more ? (
-                      <Button key={`deskopen:${o.id}`} plain dimColor={!open} onPress={toggle}>
-                        {open ? '  ▾ less' : '  › more'}
-                      </Button>
-                    ) : null}
-                  </Box>
+                  <Text dimColor>{r.time ? ` ${r.time}` : ''}</Text>
                 </Box>
-              ) : null}
+                {rows > 1 ? (
+                  <Text dimColor wrap="truncate">{`${pad}${r.state === 'you' ? r.request.join(' ') : `${r.total ? `${'●'.repeat(Math.min(5, r.done))}${'○'.repeat(Math.max(0, Math.min(5, r.total) - r.done))} ` : ''}${r.progress}`}`}</Text>
+                ) : null}
+              </Box>
+            ) : (
+              <Svg source={glanceSvg(r, glanceW, showModel)} alt={`${r.name}${r.model ? ` (${r.model})` : ''}: ${r.status}${r.object ? ` · ${r.object}` : ''}${r.state === 'you' ? ` · ${r.request.join(' ')}` : r.state === 'done' ? '' : ` · ${r.progress}`}${r.time ? ` · ${r.time}` : ''}`} width={glanceW} height={rows * CELL_H} />
+            )}
+            <Box flexDirection="row" flexShrink={0}>
+              <Text>{' '}</Text>
+              <Button key={`details:${r.id}`} plain dimColor={!open} onPress={() => void write?.(d => ({ ...d, deskOpen: { ...(d.deskOpen ?? {}), [r.id]: !d.deskOpen?.[r.id] } }))}>
+                {open ? 'Hide' : 'Details'}
+              </Button>
             </Box>
           </Box>
-          {openRows.map((r, k) => (
-            <Text key={`open${k}`} wrap="truncate" dimColor>{`${' '.repeat(isTerminal ? 2 : Math.ceil(pic.w / CELL_W))}${r}`}</Text>
+          {details.map((l, k) => (
+            <Text key={`detail${k}`} wrap="truncate" dimColor>{`${pad}${l}`}</Text>
           ))}
         </Box>
       )
@@ -5468,8 +5481,8 @@ export const register: Register = on => {
     const cardsShown = folders.filter(([, info]) => !q || info.files.some(matchesQ))
     const deskSection = (
       <Box flexDirection="column" rowGap={1}>
-        <Box key="desks" flexDirection="column" borderStyle="round" borderColor="#21262D" paddingX={1} minHeight={desksH}>
-          {laneSpecs.map(lane)}
+        <Box key="desks" flexDirection="column" minHeight={desksH}>
+          {glanceList.map(glanceRow)}
           {codexAtDesks.length > CODEX_DESKS ? <Text key="desk-more-codex" dimColor>{`+${fmtK(codexAtDesks.length - CODEX_DESKS)} more Codex`}</Text> : null}
         </Box>
         <Box key="cards" flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>

@@ -124,14 +124,14 @@ await fire('tool.call', { tool: 'Agent', tool_use_id: 'sp1', description: 'Inven
 })
 const desk = t => find(t, x => x.props?.key === 'desk-sub1')[0]
 t = await render()
-const more = find(desk(t), x => x.type === 'Button' && x.props.key === 'deskopen:sub1')[0]
-check('a helper asked more than its job says has › more', !!more && /› more/.test(text(more)))
+const more = find(desk(t), x => x.type === 'Button' && x.props.key === 'details:sub1')[0]
+check('each row has Details', !!more && text(more) === 'Details')
 const folded = kids(desk(t)).length
 await press(more)
 t = await render()
 const jobRows = kids(desk(t)).slice(1).map(x => text(x).trim()).join(' ')
-check('opened, the lane reads all it was asked', jobRows.includes(`for: Inventory panel: ${job}`), jobRows)
-check('...and says ▾ less', /▾ less/.test(text(find(desk(t), x => x.type === 'Button' && x.props.key === 'deskopen:sub1')[0])))
-await press(find(desk(t), x => x.type === 'Button' && x.props.key === 'deskopen:sub1')[0])
-check('▾ less folds it back to its size', kids(desk(await render())).length === folded && folded === 1)
+check('opened, Details reads all the helper was asked', jobRows.replace(/\s+/g, ' ').includes(`for: Inventory panel: ${job}`), jobRows)
+check('...and says Hide', text(find(desk(t), x => x.type === 'Button' && x.props.key === 'details:sub1')[0]) === 'Hide')
+await press(find(desk(t), x => x.type === 'Button' && x.props.key === 'details:sub1')[0])
+check('Hide folds it back to its size', kids(desk(await render())).length === folded && folded === 1)
 console.log(`\n${fails} failing check(s)`)

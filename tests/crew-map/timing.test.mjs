@@ -34,6 +34,8 @@ const fire = (ev, e, bottom) => {
 const kids = x => (x && typeof x === 'object' ? (x.children ?? x.props?.children ?? []) : [])
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : kids(x).map(text).join(''))
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of kids(x)) find(c, pred, out); return out }
+// A row in words: its picture's alt (the row as drawn), then any text beside it.
+const say = d => (d ? [...find(d, x => x.type === 'Svg').map(x => x.props.alt ?? ''), text(d)].join(' ') : '')
 const render = (cols = 120) => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: cols, scroll: { bodyRows: 60 } }, viewport: { columns: cols } }, async () => ({}))
 const tick = () => new Promise(r => setTimeout(r, 5))
 let fails = 0
@@ -77,7 +79,7 @@ await it?.next()
 now += 12_000
 t = await render()
 const desk = find(t, x => x.props?.key === 'desk-main')[0]
-check('the desk says how long it has been thinking: 12s', /thinking 12s/.test(text(desk)), text(desk).replace(/\s+/g, ' ').slice(0, 160))
+check('its row says how long it has been thinking: 12s', /: Thinking · 12s/.test(say(desk)), say(desk).slice(0, 160))
 const win = find(t, x => x.props?.key === 'win-main')[0]
 check('...and so does its window', /thinking 12s/.test(text(win)), text(kids(win)[0]))
 
