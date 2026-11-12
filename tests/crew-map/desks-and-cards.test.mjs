@@ -114,8 +114,15 @@ tree = await render()
 // ── Outside the project: hide and bring back ──
 await press(tree, 'hide-outside')
 tree = await render()
-check('"✕ hide" takes the outside card away, and the toolbar counts it', !kids(byKey(tree, 'cards')).some(c => /outside/.test(text(kids(c)[0]))) && /1 hidden/.test(text(byKey(tree, 'show-outside'))))
-await press(tree, 'show-outside')
+check('"✕ hide" takes the outside card away, and the toolbar says one is hidden', !kids(byKey(tree, 'cards')).some(c => /outside/.test(text(kids(c)[0]))) && /1 outside, hidden/.test(text(tree)) && !byKey(tree, 'show-outside'))
+// One place to see every file: the files list, folder by folder, the hidden ones too, and the switch to show them.
+await press(tree, 'files')
+tree = await render()
+check('the files list shows every folder (outside the project too) with its files', !!byKey(tree, 'group:src/api') && !!byKey(tree, 'group:~outside') && /outside the project/.test(text(byKey(tree, 'group:~outside'))) && /Click files or folders to open/.test(text(tree)), find(tree, x => String(x.props?.key ?? '').startsWith('group:')).map(x => x.props.key).join(','))
+check('...a folder name there opens the folder', !!byKey(tree, 'pdir:src/api'))
+await press(tree, 'outside-toggle')
+tree = await render()
+await press(tree, 'files')
 tree = await render()
 check('...and brings it back', kids(byKey(tree, 'cards')).some(c => /outside/.test(text(kids(c)[0]))))
 

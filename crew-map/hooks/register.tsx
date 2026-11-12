@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.4.0'
+const VERSION = '1.4.1'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -2225,9 +2225,10 @@ const laneSvg = (o: {
   const tile = o.compact ? 15 : 30
   const tx = 20
   const ty = (H - tile) / 2
-  const x0 = tx + tile + 12
+  const x0 = tx + tile + (o.compact ? 14 : 22)
   const x1 = x0 + (o.compact ? 84 : 104)
-  const W = o.track ? x1 + 12 : tx + tile + 4
+  // Room either side of the track for half the Claude standing on its ends, and a gap from the tile.
+  const W = o.track ? x1 + (o.compact ? 10 : 16) : tx + tile + 4
   const line = '#30363D'
   let s = ''
   if (o.depth === 'root') s += `<circle cx="7" cy="${mid}" r="3.2" fill="${o.hue}"/>${o.below ? `<path d="M7 ${mid}V${H}" stroke="${line}" stroke-width="1.2"/>` : ''}`
@@ -4823,7 +4824,7 @@ export const register: Register = on => {
     const logBudget = isTerminal ? 6 : LOG_ROWS
     // What a line's text gets: the room fitPane leaves the pane, less the log box's frame, the clock, the name and a space.
     const logTextW = Math.max(20, (isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9 - nameW - 1)
-    // A line's mark (› to open it, ⌄ to close it) takes two of that, before the space.
+    // A line's mark (› to open it, ▾ to close it) takes two of that, before the space.
     // ...and the duration column at the right edge takes LOG_DUR_W.
     const logRowW = Math.max(10, logTextW - 2 - LOG_DUR_W)
     // How long an action took (340ms, 2.4s, 1m12s), or how long it has run so far (● 12.3s); none for the rest.
@@ -5032,10 +5033,10 @@ export const register: Register = on => {
     )
 
     // The worked-files list: pinned open under the map by its button, or shown by hovering the folder.
-    const workedRows = worked.slice(0, 22).map(([path, ch]) => {
+    const fileRow = ([path, ch]: (typeof worked)[number]) => {
       const [badge, color] = fileType(path)
       return (
-        <Box flexDirection="row">
+        <Box key={`row:${path}`} flexDirection="row">
           <Text color={color} bold>
             {badge.padEnd(5)}
           </Text>
@@ -5054,16 +5055,49 @@ export const register: Register = on => {
           <Text color={PALETTE[ch.hue % PALETTE.length]}>{` ${ch.by}`}</Text>
         </Box>
       )
-    })
+    }
+    // Every file the work touched, under its folder (in the order the work first reached them); a folder's
+    // name opens it. Files outside the project are listed too, hidden from the map and cards or not, with
+    // the switch for that on their group: one place to see them all.
+    const workedGroups: { g: string; rows: (typeof worked)[number][] }[] = []
+    for (const w of worked) {
+      const g = groupOf(w[0])
+      const at = workedGroups.find(x => x.g === g)
+      if (at) at.rows.push(w)
+      else workedGroups.push({ g, rows: [w] })
+    }
+    let workedLeft = 22
     const workedList = (
       <Box flexDirection="column">
-        {worked.length === 0 ? (
-          <Text dimColor>{'none yet'}</Text>
-        ) : (
-          <Text dimColor wrap="truncate">{editor === 'system' ? 'click to open: each in its own app' : 'click to open · pictures, media and documents in their own app · edited code as a diff'}</Text>
-        )}
-        {workedRows}
-        {worked.length > 22 ? <Text dimColor>{`+${fmtK(worked.length - 22)} more`}</Text> : null}
+        {worked.length === 0 ? <Text dimColor>{'none yet'}</Text> : <Text dimColor wrap="truncate">{'Click files or folders to open'}</Text>}
+        {workedGroups.map(({ g, rows }) => {
+          const label = g === OUTSIDE ? 'outside the project' : g === '.' ? 'project top' : g
+          const dirPath = g === OUTSIDE || g.startsWith('demo') ? '' : g === '.' ? sessionDir : `${sessionDir}/${g}`
+          const shownRows = rows.slice(0, Math.max(0, workedLeft))
+          workedLeft -= shownRows.length
+          return (
+            <Box key={`group:${g}`} flexDirection="column">
+              <Box flexDirection="row">
+                {dirPath ? (
+                  <Button key={`pdir:${g}`} plain onPress={() => void openAndSay($, 'dir', dirPath, label)}>
+                    {`📁 ${label} ↗`}
+                  </Button>
+                ) : (
+                  <Text color="#E3B95C">{`📁 ${label}`}</Text>
+                )}
+                <Text dimColor>{`  ${fmtK(rows.length)} file${rows.length === 1 ? '' : 's'}`}</Text>
+                <Box flexGrow={1} />
+                {g === OUTSIDE && sessionDir ? (
+                  <Button key="outside-toggle" plain dimColor onPress={() => void write?.(d => ({ ...d, hideOutside: !d.hideOutside }))}>
+                    {c.hideOutside ? '👁 show on the map and cards' : '✕ hide from the map and cards'}
+                  </Button>
+                ) : null}
+              </Box>
+              {shownRows.map(fileRow)}
+              {rows.length > shownRows.length ? <Text dimColor>{`  +${fmtK(rows.length - shownRows.length)} more`}</Text> : null}
+            </Box>
+          )
+        })}
       </Box>
     )
 
@@ -5302,7 +5336,7 @@ export const register: Register = on => {
                   <Box key={`moreslot:${o.id}`} flexDirection="row" flexShrink={0}>
                     {more ? (
                       <Button key={`deskopen:${o.id}`} plain dimColor={!open} onPress={toggle}>
-                        {open ? '  ⌄ less' : '  › more'}
+                        {open ? '  ▾ less' : '  › more'}
                       </Button>
                     ) : null}
                   </Box>
@@ -5446,13 +5480,6 @@ export const register: Register = on => {
           )}
         </Box>
         <Box flexDirection="row" flexWrap="wrap">
-          <Box flexDirection="row">
-            {/* Always a button (dim while there is nothing to replay): text in its place would jump the row. */}
-            <Button key="replay" plain dimColor={!(frames.length > 1 && !replaying)} onPress={() => (frames.length > 1 && !replaying ? void replayTo('play') : undefined)}>
-              {'⏪ replay'}
-            </Button>
-            <Text>{'   '}</Text>
-          </Box>
           {sessionDir ? (
             <Box flexDirection="row">
               <Button key="open-project" plain onPress={() => void openAndSay($, 'dir', sessionDir, 'the project folder')}>
@@ -5468,12 +5495,7 @@ export const register: Register = on => {
             <Text color="#3FB950">{`  +${fmtK(totalAdded)}`}</Text>
             <Text color="#F85149">{` −${fmtK(totalRemoved)}`}</Text>
           </Box>
-          {outsideCount ? <Text>{'   '}</Text> : null}
-          {outsideCount ? (
-            <Button key="show-outside" plain onPress={() => void write?.(d => ({ ...d, hideOutside: false }))}>
-              {`👁 ${fmtK(outsideCount)} hidden`}
-            </Button>
-          ) : null}
+          {outsideCount ? <Text dimColor>{`  (${fmtK(outsideCount)} outside, hidden)`}</Text> : null}
           {q ? <Text dimColor>{`   ${fmtK(matches)} match${matches === 1 ? '' : 'es'}`}</Text> : null}
           <Box flexGrow={1} />
           <Button key="view-map" plain onPress={() => void write?.(d => ({ ...d, view: 'map' }))}>
@@ -5536,8 +5558,10 @@ export const register: Register = on => {
               {/* Just the field: matches show on the map as each letter is typed (Enter also steps to the next one). */}
               {inputLive ? (
                 // Just the field: a click gives it the keyboard; each letter typed searches the map.
-                <Box width={cols < 90 ? 17 : 26} borderStyle="round" borderColor="#30363D" paddingX={1}>
-                  <Client key="search" module="./search.tsx" props={{ q: sq.q }} width={(cols < 90 ? 17 : 26) - 4} height={1} />
+                // One row, to sit in the header bar: a magnifier, then the field.
+                <Box width={cols < 90 ? 16 : 22} flexDirection="row">
+                  <Text dimColor>{'⌕ '}</Text>
+                  <Client key="search" module="./search.tsx" props={{ q: sq.q }} width={(cols < 90 ? 16 : 22) - 2} height={1} />
                 </Box>
               ) : (
                 <Box width={cols < 90 ? 17 : 26}>
@@ -5627,12 +5651,6 @@ export const register: Register = on => {
             </Box>
             </Box>
             <Box flexDirection="row" flexWrap="wrap">
-              <Box flexDirection="row">
-                <Button key="replay" plain dimColor={!(frames.length > 1 && !replaying)} onPress={() => (frames.length > 1 && !replaying ? void replayTo('play') : undefined)}>
-                  {'⏪ replay'}
-                </Button>
-                <Text>{'   '}</Text>
-              </Box>
               {sessionDir ? (
                 <Box flexDirection="row">
                   <Button key="open-project" plain onPress={() => void openAndSay($, 'dir', sessionDir, 'the project folder')}>
@@ -5648,12 +5666,7 @@ export const register: Register = on => {
                 <Text color="#3FB950">{`  +${fmtK(totalAdded)}`}</Text>
                 <Text color="#F85149">{` −${fmtK(totalRemoved)}`}</Text>
               </Box>
-              {map.outsideHidden ? <Text>{'  '}</Text> : null}
-              {map.outsideHidden ? (
-                <Button key="show-outside" plain onPress={() => void write?.(d => ({ ...d, hideOutside: false }))}>
-                  {`👁 ${fmtK(map.outsideHidden)} hidden`}
-                </Button>
-              ) : null}
+              {map.outsideHidden ? <Text dimColor>{`  (${fmtK(map.outsideHidden)} outside, hidden)`}</Text> : null}
               <Box flexGrow={1} />
               <Text>{' '}</Text>
               <Button key="view-desks" plain onPress={() => void write?.(d => ({ ...d, view: 'desks' }))}>
@@ -5753,7 +5766,7 @@ export const register: Register = on => {
             const m = messageOf(l)
             const k = logKey(l)
             const open = openLog.has(k)
-            // A line cut short gets a › to open it whole, over as many rows as it needs; ⌄ folds it again.
+            // A line cut short gets a › to open it whole, over as many rows as it needs; ▾ folds it again.
             const cut = open || cutLine(l)
             // Each row starts under the first: the time and name on the first only. Yours is "You";
             // another session's is "Msg", its sender first in bold.
@@ -5776,7 +5789,7 @@ export const register: Register = on => {
                 <Box width={2} flexShrink={0}>
                   {i === 0 && cut ? (
                     <Button key={`logopen:${k}`} plain dimColor={!open} onPress={() => toggleLog(k)}>
-                      {open ? ' ⌄' : ' ›'}
+                      {open ? ' ▾' : ' ›'}
                     </Button>
                   ) : (
                     <Text dimColor>{i === 0 && l.kind === 'think' ? ' ›' : '  '}</Text>

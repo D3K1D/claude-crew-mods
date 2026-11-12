@@ -135,29 +135,9 @@ check('over budget toasts', toasts.some(t => t.startsWith('💸 Over budget')), 
 tree = await render()
 check('header shows spend of budget', text(tree).includes('of $0.05') && text(tree).includes('% of budget'))
 
-// ── Replay ──
-const steps = crew().timeline.length
-check('timeline recorded steps', steps >= 15, String(steps))
-await btn(tree, 'replay').props.onPress()
-tree = await render()
-check('replay bar shows step 1', text(tree).includes(`⏪ replay 1/${steps}`))
-const svg1 = svgOf(tree)
-await advance(900 * 3)
-tree = await render()
-check('replay plays forward', text(tree).includes(`replay 4/${steps}`), text(tree).match(/replay \d+\/\d+/)?.[0])
-// The first steps may sit on one file (the same picture); by the end the map has grown.
-const svgAt4 = svgOf(tree)
-await btn(tree, 'rp-play').props.onPress()
-await advance(900 * 3)
-tree = await render()
-check('pause holds the step', text(tree).includes(`replay 4/${steps}`))
-await btn(tree, 'rp-end').props.onPress()
-tree = await render()
-check('jump to the end', text(tree).includes(`replay ${steps}/${steps}`))
-check('the map changes as it plays', svgOf(tree) !== svg1 && svgOf(tree) !== svgAt4)
-await btn(tree, 'rp-live').props.onPress()
-tree = await render()
-check('back to live hides the bar', !text(tree).includes('REPLAY'))
+// ── No replay: the button was taken out ──
+check('timeline recorded steps (for the task summary)', crew().timeline.length >= 15, String(crew().timeline.length))
+check('no replay button', !btn(tree, 'replay'))
 
 // ── Demo shows problems and summary ──
 await btn(tree, 'demo').props.onPress()

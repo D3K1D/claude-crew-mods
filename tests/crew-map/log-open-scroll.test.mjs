@@ -1,4 +1,4 @@
-// A log line cut short has a › to open it whole, over as many rows as it needs (⌄ folds it). ▲ and ▼
+// A log line cut short has a › to open it whole, over as many rows as it needs (▾ folds it). ▲ and ▼
 // scroll the log back and forth; scrolled back (or with a line open) it holds still while new lines
 // come in below, says how many, and ⤓ latest follows again. A desk with a line cut short has › more.
 globalThis.h = (type, props, ...children) => {
@@ -68,7 +68,7 @@ const said = logRows(t).filter(r => kids(r)[1] && /^\s*$|Claude/.test(text(kids(
 const at = said.findIndex(s => s.startsWith('The save bug'))
 const whole = said.slice(at).join(' ')
 check('opened, the thought reads whole over several rows', at >= 0 && whole === long, whole)
-check('...its mark is now ⌄ to fold it', text(button(t, k => k.startsWith('logopen:'))) === ' ⌄')
+check('...its mark is now ▾ to fold it', text(button(t, k => k.startsWith('logopen:'))) === ' ▾')
 check('...and the log holds there: ⤓ latest shows', !!button(t, k => k === 'log-latest'))
 
 // New lines come in while it's held: what shows stays, and it counts them.
@@ -87,8 +87,8 @@ await press(button(t, k => k === 'log-down'))
 await press(button(await render(), k => k === 'log-down'))
 t = await render()
 check('▼ back to the newest follows again', /Another newer step/.test(logText(t)) && !button(t, k => k === 'log-latest'))
-// Fold the thought again (found by its ⌄), then ⤓ latest from a scrolled-back log.
-await press(button(t, k => k.startsWith('logopen:') && text(button(t, x => x === k)) === ' ⌄') ?? button(t, k => k.startsWith('logopen:')))
+// Fold the thought again (found by its ▾), then ⤓ latest from a scrolled-back log.
+await press(button(t, k => k.startsWith('logopen:') && text(button(t, x => x === k)) === ' ▾') ?? button(t, k => k.startsWith('logopen:')))
 t = await render()
 check('folded, the log is its 12 rows again', logRows(t).length === 12, String(logRows(t).length))
 await press(button(t, k => k === 'log-up'))
@@ -116,7 +116,7 @@ const yAt = mine.findIndex(r => /You/.test(text(kids(r)[1])))
 const yRows = mine.slice(yAt).map(r => text(kids(r)[3]).trim())
 check('opened, all of your message reads, every word', yRows.join(' ') === msg, `${yRows.length} rows`)
 
-// A helper's desk: its job in short, and › more opens all it was asked; ⌄ less folds it.
+// A helper's desk: its job in short, and › more opens all it was asked; ▾ less folds it.
 const job = 'Rebuild the inventory panel so it keeps its size when items come and go, then check it at 1080p and 4K on Windows and macOS, and write the notes for the release'
 await fire('tool.call', { tool: 'Agent', tool_use_id: 'sp1', description: 'Inventory panel', prompt: job, subagent_type: 'general-purpose', run_in_background: true }, async e => {
   await fire('agent.spawn', { tool_use_id: e.tool_use_id, prompt: job, description: 'Inventory panel', subagentType: 'general-purpose', provider: {}, parentModel: 'm' }, async () => ({ agentId: 'sub1' }))
@@ -131,7 +131,7 @@ await press(more)
 t = await render()
 const jobRows = kids(desk(t)).slice(1).map(x => text(x).trim()).join(' ')
 check('opened, the lane reads all it was asked', jobRows.includes(`for: Inventory panel: ${job}`), jobRows)
-check('...and says ⌄ less', /⌄ less/.test(text(find(desk(t), x => x.type === 'Button' && x.props.key === 'deskopen:sub1')[0])))
+check('...and says ▾ less', /▾ less/.test(text(find(desk(t), x => x.type === 'Button' && x.props.key === 'deskopen:sub1')[0])))
 await press(find(desk(t), x => x.type === 'Button' && x.props.key === 'deskopen:sub1')[0])
-check('⌄ less folds it back to its size', kids(desk(await render())).length === folded && folded === 1)
+check('▾ less folds it back to its size', kids(desk(await render())).length === folded && folded === 1)
 console.log(`\n${fails} failing check(s)`)

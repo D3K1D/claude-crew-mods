@@ -1,5 +1,7 @@
 // The map's search field, drawn here on the surface so it is just a field: no Enter button beside
-// it. A click gives it the keyboard (Escape gives it back); each letter typed searches at once.
+// it. A click gives it the keyboard (Escape gives it back); each letter typed searches at once. While it
+// has the keyboard the placeholder steps aside for the caret; with nothing typed, it comes back once the
+// pointer leaves the field (a module hears no blur: leaving is the nearest it can see of a click away).
 
 type Props = {
   /** The search as the hooks module last had it; a different one (cleared elsewhere) replaces the typed text. */
@@ -29,6 +31,9 @@ const Search = (props: Props, surface: any) => {
       if (e.type === 'down' && !me.focused) {
         me.focused = true
         surface.setState({ ...me })
+      } else if (e.type === 'leave' && me.focused && !me.q) {
+        me.focused = false
+        surface.setState({ ...me })
       }
     })
     surface.onKey((e: any) => {
@@ -37,6 +42,11 @@ const Search = (props: Props, surface: any) => {
         surface.setState({ ...me })
       }
       if (e.ctrl || e.meta) return
+      if (e.key === 'escape') {
+        me.focused = false
+        surface.setState({ ...me })
+        return
+      }
       if (e.key === 'backspace') change(me.q.slice(0, -1))
       else if (e.key === 'delete') change('')
       else if (e.key === 'return') surface.post({ q: me.q, next: true })
@@ -55,11 +65,11 @@ const Search = (props: Props, surface: any) => {
     }
   }
   const q = live.q
-  // One line: the text typed (or the placeholder), and a caret once it has the keyboard.
+  // One line: the text typed, or (without the keyboard) the placeholder; a caret once it has the keyboard.
   return (
     <Box width={surface.columns || undefined} flexDirection="row">
       <Text color={q ? '#E6EDF3' : '#8B949E'} wrap="truncate">
-        {q || 'Search files...'}
+        {q || (live.focused ? '' : 'Search files...')}
       </Text>
       {live.focused ? <Text color="#79C0FF">{'▏'}</Text> : null}
     </Box>

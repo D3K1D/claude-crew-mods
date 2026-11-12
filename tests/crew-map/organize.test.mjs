@@ -135,7 +135,7 @@ await draw()
 const typeSearch = (q, next = false) => hooks['ui.message']($, { surface: 'desktop', component: 'Pane', requestId: 'crew-map', element: 'search', module: './search.tsx', data: { q, next } }, async () => ({}))
 const searchField = () => find(tree, x => x.type === 'Client' && x.props.key === 'search')[0]
 check('once the map has had the mouse, the search is a field of our own (no Enter button)', !!searchField() && searchField().props.module === './search.tsx' && !find(tree, x => x.type === 'Input' && x.props.key === 'search').length)
-check('it is one line inside a quiet field border, nothing else', searchField()?.props.height === 1 && find(tree, x => x.type === 'Box' && x.props.borderColor === '#30363D' && x.props.borderStyle === 'round' && (x.props.children ?? []).some(c => c?.props?.key === 'search')).length === 1)
+check('it is one row in the header: a magnifier, then the field (no border to make the bar taller)', searchField()?.props.height === 1 && find(tree, x => x.type === 'Box' && !x.props.borderStyle && (x.props.children ?? []).some(c => c?.props?.key === 'search') && (x.props.children ?? []).some(c => c?.type === 'Text' && /⌕/.test(text(c)))).length === 1)
 await msg({ click: spotOf('docs', 17, 14) })
 await draw()
 check('(docs folded for the search)', !svg().includes('>setup.md</text>'))
@@ -175,9 +175,14 @@ ran.length = 0
 await msg({ click: spotOf('outside project', 48 + 22, -2 + 8) })
 await draw()
 check('the hide chip hides files outside the project', crew().hideOutside === true && !svg().includes('>z1.ts</text>') && !svg().includes('outside project') && ran.length === 0)
-const show = find(tree, x => x.type === 'Button' && x.props.key === 'show-outside')[0]
-check('a button below the map says how many are hidden', !!show && text(show).includes('2 hidden'), show && text(show))
+check('below the map it says how many are hidden (no separate button: the files list has them)', /2 outside, hidden/.test(text(tree)) && !find(tree, x => x.type === 'Button' && x.props.key === 'show-outside').length)
+await press('files')
+await draw()
+const show = find(tree, x => x.type === 'Button' && x.props.key === 'outside-toggle')[0]
+check('the files list lists them under "outside the project", with the switch to show them', !!show && /show on the map/.test(text(show)))
 await show.props.onPress()
+await draw()
+await press('files')
 await draw()
 check('and brings them back', !crew().hideOutside && svg().includes('>z1.ts</text>'))
 

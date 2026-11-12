@@ -54,15 +54,13 @@ The warning clears once it gets past the problem. It may just need a hint from y
 
 **Spending.** The header and the spend row show what the whole chat has cost (**chat $12.40**), as Claude Code's own `/cost` totals it: every reply, helpers' included. The spend row then shows each Claude's share as a bar. Type a dollar amount into **budget $** to get a pop-up as the session passes 50%, 80% and 100% of it. The header shows how much has been spent against the budget, and the budget is remembered between sessions.
 
-**Replay.** Press **⏪ replay** to step back through the session, one tool call at a time. You can play, pause, step, jump to either end, or go back to live.
-
 **Task summary.** When a task ends, a green card sums it up: time taken, files changed with lines added and removed, tests run and the last result, which Claudes and how many Codex runs were involved, and the cost. **Copy as Markdown** puts it on your clipboard, ready for a PR description.
 
 **Opening files.** Click a card's folder name (marked ↗) to open that folder in your file manager, and any file chip to open the file. Pictures, video, audio, documents, archives, fonts and 3D files open in your system's app for that type (Photos for a .png on Windows, Preview on a Mac). Code and text open in the editor you pick. Programs, and scripts when no editor is picked, are shown selected in their folder rather than run. **📁 folder** opens the project folder. **▸ files** lists every file touched this session with lines added and removed, and every file there, in the Problems list and in the Codex windows is a button too. A file edited this session opens as a diff against your last commit. Pick where code opens (VS Code, Cursor, or your system's default app) from the **code in** picker.
 
 **The log.** Everything in time order, one line per action or thought, colour-coded by who did it. Your own messages show as **You**, in blue, over up to three lines so a long one stays readable. A message another Claude session sent this one shows as **Msg** in purple, with the sender's name and its words (not the app's wrapper round it). Commands show as ▸ and Claude's own words for them.
 
-A line that's cut short has a **›** before it: click it to open the line over as many rows as it needs (a Claude's thought opens to everything it said, not just its gist), and **⌄** folds it again. **▲** and **▼** beside the log's title scroll back through the last 120 lines. While you're scrolled back, or have a line open, the log holds still as new lines come in, and **⤓ latest · N new** says how many arrived; click it (or **▼** to the bottom) to follow the newest lines again.
+A line that's cut short has a **›** before it: click it to open the line over as many rows as it needs (a Claude's thought opens to everything it said, not just its gist), and **▾** folds it again. **▲** and **▼** beside the log's title scroll back through the last 120 lines. While you're scrolled back, or have a line open, the log holds still as new lines come in, and **⤓ latest · N new** says how many arrived; click it (or **▼** to the bottom) to follow the newest lines again.
 
 **Following a Claude.** **◎ follow** in a Claude's window points the tree map's camera at it, closer than the whole map, and the camera moves with it from file to file. Moving the map yourself (arrows, zoom, drag, fit), pressing **◉ following** again, or the Claude finishing stops it.
 
@@ -79,7 +77,6 @@ A line that's cut short has a **›** before it: click it to open the line over 
 - `⏻ intro` plays the start-up intro again.
 - `▶ demo` runs three pretend Claudes over a pretend project for half a minute. It includes a failing test, a pretend Codex run and a summary card at the end.
 - `Search files...` keeps only the matching files.
-- `⏪ replay` steps back through the session.
 - `▸ files N` lists every file touched this session.
 - `◐ auto` / `☀ light` / `☾ dark` picks the theme (auto follows the app).
 - `⊞ tree map` / `▤ desks` switches between the two views. On the tree map, `◀ ▲ ▼ ▶` moves it and `− / +` and `⤢ fit` zoom.

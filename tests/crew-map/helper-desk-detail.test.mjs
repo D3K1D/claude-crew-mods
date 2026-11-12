@@ -48,7 +48,7 @@ const lane = d => {
     name: text(parts[0]).trim(),
     head: text(parts[1]).trim(),
     right: text(parts.at(-1)).trim(),
-    line2: l2 ? text(l2).replace(/\s*(› more|⌄ less)\s*$/, '').trim() : '',
+    line2: l2 ? text(l2).replace(/\s*(› more|▾ less)\s*$/, '').trim() : '',
     more: find(d, x => x.type === 'Button' && String(x.props.key).startsWith('deskopen:'))[0],
     opened: kids(d).slice(1).map(x => text(x).trim()).join(' '),
   }

@@ -158,26 +158,11 @@ for (const cols of WIDTHS) {
   check('a Ctrl-click on the map reaches the pane with Ctrl', !!click && click.ctrl === true, JSON.stringify(click))
 }
 
-// ── The replay bar keeps one height as it steps along a long timeline ──
+// ── No replay button, on the tree map or the desks: replay was taken out ──
 {
   for (let i = 0; i < 40; i++) await call(ids[i % 2], 'Grep', { pattern: i % 4 ? 'x' : 'a rather long search pattern that someone might type when looking for the chunk loader code', path: P })
-  const bar = find(await render(100), x => x.type === 'Button' && x.props.key === 'replay')[0]
-  await bar.props.onPress()
-  await tick()
-  const last = crew().timeline.length - 1
-  for (const cols of [40, 80, 120]) {
-    const heights = new Set()
-    for (let at = Math.max(0, last - 40); at <= last; at++) {
-      globalThis.__store.set('replay', { on: true, at, playing: false })
-      const tree = await render(cols)
-      const box = find(tree, x => x.props?.key === 'replay')[0]
-      const wraps = find(box, x => x.type === 'Text' && x.props.wrap === 'wrap')
-      // A wrapping line takes as many rows as its text needs across the box's inside.
-      heights.add(rowsOf(box) + wraps.reduce((s, w) => s + Math.max(0, Math.ceil(W(text(w)) / (cols - 4 - W(text(kids(find(box, y => y.type === 'Box' && kids(y).includes(w))[0] ?? {})[0] ?? '')))) - 1), 0))
-    }
-    check(`${cols} cols: the replay bar keeps one height from step to step`, heights.size === 1, [...heights].join(','))
-  }
-  globalThis.__store.set('replay', { on: false, at: 0, playing: false })
+  const t = await render(100)
+  check('a long session: no replay button, and no replay bar', !find(t, x => x.type === 'Button' && x.props.key === 'replay').length && !find(t, x => x.props?.key === 'replay').length)
 }
 
 console.log(`\n${fails} failing check(s)`)
