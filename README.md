@@ -7,27 +7,20 @@ Two mods for [Claude Code](https://claude.com/claude-code) (the desktop app's Co
 - **Claude Crew** (`crew-map`): a live view of Claude and its helper Claudes at work. See what each one is on right now, which folders and files they've touched and changed, what it costs, how full each one's context is, when one is waiting on you, when tests are running, and which files a build broke.
 - **Codex Bridge** (`codex-bridge`): lets Claude hand tasks to OpenAI Codex as a subagent, using your own ChatGPT/Codex subscription. Codex keeps memory per project, and named threads carry on where they left off.
 
-They work on their own and better together: with both installed, a running Codex gets its own desk and window in the crew view.
+They work on their own and better together: with both installed, a running Codex gets its own row in the crew view.
 
-![Claude Crew running its demo: a desk per Claude with what it is on now, Codex at a desk of its own, and folder cards of the files touched](docs/crew-desks.png)
+![Claude Crew in a busy session: one Claude needing you pinned on top in amber, helpers indented under who started them, a test running, Codex in a row, the files touched by folder, and the log](docs/crew-pane.png)
 
 ## Claude Crew (`/crew`)
 
-- **At a glance, and folder cards.** One row per Claude: what it is doing in plain words ("Writing code · fixture.js"), how far along ("Step 2 of 3"), its model, and colour for its state (working, waiting, needs you, done), helpers indented under who started them; **Details** opens the rest. Below, every folder the crew touched is a card of file chips: green with line counts when edited, red when a build failed on them, with a coloured dot while a Claude is on them. Click a chip to open the file, or **›** on a log line to read it whole, and scroll the log back with **▲ ▼**. The older tree map is one click away.
-- **Light and dark.** The pane follows the app's light or dark theme, or pick one with **◐ auto** in the toolbar.
-- **Exact times, and following.** Each action in the log shows how long it took, thinking is timed too, and **◎ follow** keeps the tree map's camera on one Claude.
-- **A window per Claude.** Each window shows its goal, a progress bar counted from Claude's own task list, tokens with a dollar estimate, how full its context is (and how often it was compacted), what it's doing and its last actions. Finished helpers fold into one line.
-- **What it's waiting on.** When a Claude needs a permission, an answer or a plan approval, its desk and window turn amber, move to the front, and say what it needs. The main Claude also says when it's waiting on its helpers or on a command, and when it's your turn.
-- **Tests and commands.** A running line shows each long command and test run in plain words, with a timer. Test results (passed/failed counts) appear in the window, the log and a pop-up.
-- **Problems.** When a build or test fails, the files it names turn red with an error count. A Problems list shows each error, and clicking one opens the file at that line. Supported output: rustc/cargo, tsc, C#/MSBuild, gcc/clang, Go, Python tracebacks, pytest and jest/vitest.
-- **Stuck warning.** You get a heads-up when a Claude runs the same failing command three times, has its last five tool calls fail, or keeps rewriting one file.
-- **Budget.** Set a dollar budget in the pane. You'll get a pop-up at 50%, 80% and 100%, and a spend-by-Claude bar shows who's using what.
-- **Replay.** Step back through the session one tool call at a time, or let it play.
-- **Task summary.** When a task ends, a card lists the files changed, tests, cost and time. **Copy as Markdown** turns it into something you can paste into a PR.
-- **Tree map** (optional): files as icons hung under their folders and importers, with stations for work that isn't a file (the terminal, research, the browser, this PC or a remote one, documents, other MCP apps).
-- Click any folder to open it in your file manager, and any file to open it: pictures, video, audio and documents in your system's app for them (Photos for a .png on Windows), code in VS Code or Cursor (as a diff against your last commit). Programs are shown in their folder, never run.
-
-![The optional tree map running the demo: Claudes swinging between files, a failing test, Codex working on a thread](docs/crew-demo.gif)
+- **Who is doing what.** One row per Claude: what it is doing in plain words ("Writing code · fixture.js", "Running tests · 42s"), how far along ("Step 2 of 3"), its model, and colour for its state only (working, waiting, needs you, done). Helpers sit indented under who started them, and Codex under who ran it. The header counts them by state.
+- **What needs you.** A Claude waiting for a permission, an answer or a plan approval is pinned on top in amber, with its whole request.
+- **What the work touched.** One line per folder, its files as buttons: lines added and removed, red with an error count when a build or test failed on them, and a little Claude on the file one is editing. Click a file to open it (a broken one at its first error).
+- **One viewer.** A box with tabs: the log (every action timed, **›** opens a line whole), every file, search, settings, and any Claude's Details (what it was asked, its steps, its cost and context).
+- **What it cost.** The chat's cost in the header, against a budget if you set one, with a heads-up at 50%, 80% and 100%.
+- **When it's done.** The last task's card: time, files changed, tests, cost and who worked on it. **Copy as Markdown** turns it into something you can paste into a PR.
+- **Static and readable.** Every band is drawn to the pixel, so nothing is clipped; only the Claudes band grows, to fit them all. Light and dark both work.
+- Files open in their own app (Photos for a .png on Windows), code in VS Code or Cursor (as a diff against your last commit). Programs are shown in their folder, never run.
 
 ## Codex Bridge (`/codex`)
 

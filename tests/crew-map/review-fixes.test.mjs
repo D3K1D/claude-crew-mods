@@ -121,7 +121,7 @@ check('a system reminder keeps the goal too', crew().agents.find(a => a.id === '
 // A goal saved by an older version that is really a notice is not shown.
 globalThis.__store.set('crew', { ...crew(), agents: crew().agents.map(a => (a.id === 'main' ? { ...a, goal: '<task-notification><summary>x</summary></task-notification>' } : a)) })
 const shownText = JSON.stringify(await render())
-check('an old notice goal is not shown', !shownText.includes('task-notification') && shownText.includes('waiting for a prompt'))
+check('an old notice goal is not shown', !shownText.includes('task-notification') && shownText.includes('your turn'))
 /** Buttons, Inputs and Clients inside an absolutely placed Box: the engine gives such a Box's pointer to its parent, so they would never be clicked. */
 const underAbsolute = (x, inAbs = false, out = []) => {
   if (!x || typeof x !== 'object') return out
@@ -132,19 +132,17 @@ const underAbsolute = (x, inAbs = false, out = []) => {
 }
 const drawn = await render()
 check('no Button, Input or Client sits in an absolute Box (it would get no clicks)', underAbsolute(drawn).length === 0, underAbsolute(drawn).join(', '))
-const panBox = (() => {
+const hitBoxes = (() => {
+  const out = []
   const walk = (x, parent) => {
-    if (!x || typeof x !== 'object') return null
-    if (x.type === 'Client' && x.props.key === 'pan') return parent
-    for (const c of x.props?.children ?? []) {
-      const f = walk(c, x)
-      if (f) return f
-    }
-    return null
+    if (!x || typeof x !== 'object') return
+    if (x.type === 'Client' && /^hit-/.test(x.props.key)) out.push(parent)
+    for (const c of x.props?.children ?? []) walk(c, x)
   }
-  return walk(drawn, null)
+  walk(drawn, null)
+  return out
 })()
-check('the map\'s pan module is in the layout, pulled up over the picture by its height', !!panBox && panBox.props.position !== 'absolute' && panBox.props.marginTop === -panBox.props.height, JSON.stringify(panBox?.props && { marginTop: panBox.props.marginTop, height: panBox.props.height, position: panBox.props.position }))
+check("each picture's hit module is in the layout, pulled up over the picture by its height", hitBoxes.length === 2 && hitBoxes.every(b => b.props.position !== 'absolute' && b.props.marginTop === -b.props.height), JSON.stringify(hitBoxes.map(b => ({ marginTop: b.props.marginTop, height: b.props.height }))))
 // ── Commands in words: the toast and the window never show raw command text ──
 {
   const toasts = []
@@ -171,25 +169,5 @@ check('the map\'s pan module is in the layout, pulled up over the picture by its
   check("Claude's own description wins", main().actions[0] === '▸ Run the auth unit tests', main().actions[0])
   check('no action line shows a path, quote or redirect', main().actions.every(x => !/["'>]|\/[a-z]/i.test(x)), main().actions.join(' | '))
   $.ui.toast = realToast
-}
-// ── Smooth motion: loops keep their phase across draws; a hop is redrawn where it is; paths stay low ──
-{
-  const realNow = Date.now
-  // A clock past the module's own start, however the suite's fixed clock sits against it.
-  let t = Math.max(realNow(), Date.parse('2031-01-01T00:00:00'))
-  Date.now = () => t
-  const svgNow = async () => find(await hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 140 }, viewport: { columns: 140 } }), x => x.type === 'Svg')[0].props.source
-  const go = (p, during) => hooks['tool.call']($, { tool: 'Read', tool_use_id: 'm' + Math.random(), file_path: p }, async () => { if (during) await during(); return { text: 'ok' } })
-  await go(P + '/src/m1.ts')
-  t += 5000
-  let d1 = '', d2 = ''
-  await go(P + '/src/m2.ts', async () => { t += 200; d1 = await svgNow(); t += 300; d2 = await svgNow() })
-  check('looping animations take their phase from the clock the picture is shown at', /animation-delay:calc\(-1s \* var\(--clk, 0\)/.test(d1) && !/infinite;?[^"]*?-?\d+\.\d+s infinite/.test(d1))
-  check('...which each draw sets on the picture', /^<svg[^>]*style="--clk:\d+\.\d{2}"/.test(d1) && d1.match(/--clk:([\d.]+)/)[1] !== d2.match(/--clk:([\d.]+)/)[1])
-  const begins = src => [...src.matchAll(/<animateMotion [^>]*begin="(-?[\d.]+)s"/g)].map(m => Number(m[1]))
-  check('a hop drawn again mid-flight continues from where it is (not replayed)', begins(d1).length > 0 && Math.abs(begins(d2)[0] - begins(d1)[0] + 0.3) < 0.011, JSON.stringify([begins(d1), begins(d2)]))
-  const path = d1.match(/<animateMotion path="M(-?[\d.]+) (-?[\d.]+)C(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+)/)?.slice(1).map(Number)
-  check('a hop across rises only a little over its higher end', !!path && Math.min(path[1], path[7]) - Math.min(path[3], path[5]) <= 60, JSON.stringify(path))
-  Date.now = realNow
 }
 console.log(`\n${fails} failing check(s)`)

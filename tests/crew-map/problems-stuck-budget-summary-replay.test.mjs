@@ -45,6 +45,9 @@ const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return ou
 const render = () => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 140 }, viewport: { columns: 140 } })
 const btn = (tree, key) => find(tree, x => x.type === 'Button' && x.props.key === key)[0]
 const svgOf = t => find(t, x => x.type === 'Svg')[0].props.source
+const { words, glyphs, makePress } = await import('./kit.mjs')
+const press = makePress(elements, render, () => new Promise(r => setTimeout(r, 20)))
+const said = t => words(t).join(' | ')
 let n = 0
 const call = (e, result) => hooks['tool.call']($, { tool_use_id: `c${n++}`, ...e }, async () => { now += 1000; return result })
 let fails = 0
@@ -65,12 +68,12 @@ let pr = crew().problems
 check('rustc errors become problems with absolute paths', pr.length === 2 && pr[0].path === 'C:/proj/src/world/chunk.rs' && pr[0].line === 42 && pr[0].message === 'mismatched types', JSON.stringify(pr.map(p => [p.path, p.line, p.message])))
 check('broken files join the map', !!crew().nodes['C:/proj/src/world/chunk.rs'] && !!crew().nodes['C:/proj/src/world/gen.rs'])
 let tree = await render()
-check('map marks broken files red with a count', svgOf(tree).includes('fill="#DA3633"'))
-check('problems box lists file:line and message', text(tree).includes('✗ 2 problems · cargo build') && text(tree).includes('src/world/chunk.rs:42'))
+check('Touched marks broken files red, with how many errors', glyphs(tree, 'top').find(g => g.t === 'chunk.rs')?.role === 'red' && glyphs(tree, 'top').some(g => g.t === '✕1' && g.role === 'red'), said(tree))
+check("Touched's summary counts the problems", words(tree, 'top').some(w => /2 problems/.test(w)), said(tree))
 ran.length = 0
-await btn(tree, 'problem:0:C:/proj/src/world/chunk.rs:42').props.onPress()
+await press('chunk.rs')
 await new Promise(r => setTimeout(r, 20))
-check('clicking a problem opens the editor at its line', ran.some(a => a.join(' ') === 'cmd /d /c code -g C:/proj/src/world/chunk.rs:42'), JSON.stringify(ran))
+check('clicking a broken file opens the editor at its first error', ran.some(a => a.join(' ') === 'cmd /d /c code -g C:/proj/src/world/chunk.rs:42'), JSON.stringify(ran))
 await call({ tool: 'Bash', command: 'cargo build' }, { text: 'Finished dev profile' })
 check('a clean build clears the problems', crew().problems.length === 0)
 
@@ -98,7 +101,7 @@ for (let i = 0; i < 3; i++) await call({ tool: 'Bash', command: 'npm run build' 
 check('same command failing 3 times marks the Claude stuck', /ran the same command 3 times \(npm run build\) and it failed every time/.test(main().stuck), main().stuck)
 check('stuck gives a toast', toasts.some(t => t.startsWith('⚠ Claude looks stuck')), toasts.join(' | '))
 tree = await render()
-check('stuck shows in its window and bubble', text(tree).includes('Stuck? It ') && svgOf(tree).includes('Stuck?'))
+check('stuck shows on its row, in amber', glyphs(tree, 'top').some(g => /^Stuck\? It ran the same command/.test(g.t) && g.role === 'amber'), said(tree))
 await call({ tool: 'Bash', command: 'npm run build' }, { text: 'ok' })
 check('a success clears stuck', main().stuck === '')
 
@@ -110,20 +113,17 @@ const s = crew().summary
 check('summary built at the end of the task', s && s.files.length === 1 && s.files[0].added === 3 && s.tests.runs >= 1 && s.tests.last.startsWith('passed'), JSON.stringify(s))
 check('done toast', toasts.some(t => t.startsWith('✓ Done in')), toasts.at(-1))
 tree = await render()
-check('summary card shows', text(tree).includes('✓ Done in') && /files +1 changed/.test(text(tree)))
-await btn(tree, 'copy-summary').props.onPress({ surface: 'desktop' })
-await new Promise(r => setTimeout(r, 20))
+check("the last task's card shows in the crew's place", words(tree, 'top').some(w => /^Last task done in /.test(w)) && words(tree, 'top').some(w => /^1 file · \+3 −1$/.test(w)), said(tree))
+await press('Copy as Markdown')
 check('copy as Markdown', copied[0]?.text.startsWith('### Make chunk loading async') && copied[0].text.includes('| `src/world/chunk.rs` | 3 | 1 |'), copied[0]?.text)
 console.log('\n--- summary markdown ---\n' + copied[0]?.text + '\n')
-await btn(tree, 'close-summary').props.onPress()
-check('summary dismissed', crew().summary === null)
 
 // ── Budget ──
-tree = await render()
-const input = find(tree, x => x.type === 'Input' && x.props.key === 'budget')[0]
-input.props.onSubmit('$0.05')
-await new Promise(r => setTimeout(r, 10))
-check('budget set and stored', crew().budget === 0.05 && stored.budget === 0.05)
+await press('Settings')
+await press('$5')
+check('budget set in Settings, and stored', crew().budget === 5 && stored.budget === 5)
+// A small budget, to cross its marks quickly.
+globalThis.__store.set('crew', { ...crew(), budget: 0.05, budgetWarned: 0 })
 toasts.length = 0
 await hooks['turn.start']($, { text: 'more', turnId: 'T2' }, async () => ({}))
 await hooks['turn.complete']($, { reason: 'answer', answer: 'x', durationMs: 1, isAborted: false, turnId: 'T2', usage: { input_tokens: 2000, output_tokens: 1000, model: 'claude-opus-5-5' } }, async () => ({ text: 'x' }))
@@ -133,14 +133,15 @@ check('no repeat toast for the same mark', toasts.filter(t => t.startsWith('💸
 await hooks['turn.complete']($, { reason: 'answer', answer: 'x', durationMs: 1, isAborted: false, turnId: 'T4', usage: { output_tokens: 3000, model: 'claude-opus-5-5' } }, async () => ({ text: 'x' }))
 check('over budget toasts', toasts.some(t => t.startsWith('💸 Over budget')), toasts.join(' | '))
 tree = await render()
-check('header shows spend of budget', text(tree).includes('of $0.05') && text(tree).includes('% of budget'))
+check('the header shows the cost of the budget, in red once over', words(tree, 'top').includes('of $0.05') && glyphs(tree, 'top').find(g => /^\$\d/.test(g.t))?.role === 'red', said(tree).slice(0, 120))
 
 // ── No replay: the button was taken out ──
 check('timeline recorded steps (for the task summary)', crew().timeline.length >= 15, String(crew().timeline.length))
 check('no replay button', !btn(tree, 'replay'))
 
 // ── Demo shows problems and summary ──
-await btn(tree, 'demo').props.onPress()
+await press('Settings')
+await press('▶ try a pretend session')
 await advance(2600 * 2 + 300)
 check('demo raises problems', crew().problems.some(p => p.path.startsWith('demo/')))
 mkdirSync(OUT, { recursive: true })

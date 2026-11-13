@@ -59,45 +59,36 @@ for (const surface of ['desktop', 'terminal'] as const) {
     await busy($, 3)
     for (const cols of [40, 80, 120, 200]) {
       const ui = await $.ui.mount({ plugin: 'crew-map', surface, ...PANE(cols) })
-      const tree = await ui.drawn()
-      expect(tree, `${surface} ${cols} drawn`).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /CLAUDE CREW v\d+\.\d+\.\d+/ }), `${surface} ${cols} header`).toBeDefined()
-      expect(await ui.find({ key: 'view-map' }), `${surface} ${cols}: desks view shows the 'tree map' toggle`).toBeDefined()
-      expect(await ui.find({ key: 'view-desks' }), `${surface} ${cols}: not on the tree map`).toBeUndefined()
-      expect((await ui.findAll({ type: 'Button', key: 'file:' + ROOT + '/src/a.ts' })).length, `${surface} ${cols}: a.ts chip`).toBe(1)
+      const drawn = JSON.stringify(await ui.drawn())
+      expect(/✻ Claude Crew|f-brand/.test(drawn), `${surface} ${cols} header`).toBe(true)
+      expect(drawn.includes('a.ts'), `${surface} ${cols}: Touched names a.ts`).toBe(true)
+      expect(/undefined|NaN|\[object Object\]/.test(drawn), `${surface} ${cols}: nothing raw`).toBe(false)
       await ui.unmount()
     }
 
     const ui = await $.ui.mount({ plugin: 'crew-map', surface, ...PANE(120) })
-    // A file chip opens the file (through some process).
+    // A file on Touched opens the file (through some process): a button in the terminal, a click on the picture on the desktop.
     const before = ran.length
-    await ui.press({ key: `file:${ROOT}/src/a.ts` })
-    expect(ran.length, 'pressing a chip ran an opener').toBeGreaterThan(before)
-    // A folder name opens the folder.
-    const dir = (await ui.findAll({ type: 'Button' })).find(b => (b.key ?? '').startsWith('dir:'))
-    expect(dir, 'a folder button').toBeDefined()
-    await ui.press({ key: dir!.key! })
-    // +N more on a card of 15+ files.
-    const more = (await ui.findAll({ type: 'Button' })).find(b => (b.key ?? '').startsWith('more:'))
-    expect(more, 'a +N more button on the big card').toBeDefined()
-    await ui.press({ key: more!.key! })
+    if (surface === 'terminal') {
+      const file = (await ui.findAll({ type: 'Button' })).find(b => /^a\.ts\b/.test(String((b as { text?: string }).text ?? '')))
+      expect(file, 'a.ts is a button').toBeDefined()
+      await ui.press({ key: file!.key! })
+    } else {
+      const top = String((await ui.findAll({ type: 'Svg' }))[0]?.props.source ?? '')
+      const m = [...top.matchAll(/<text x="([\d.]+)" y="([\d.]+)"[^>]*>a\.ts<\/text>/g)][0]
+      expect(!!m, 'a.ts is drawn').toBe(true)
+      const H = Number((await ui.findAll({ type: 'Svg' }))[0]?.props.height ?? 0)
+      const W = Number((await ui.findAll({ type: 'Svg' }))[0]?.props.width ?? 1)
+      await ui.resize({ columns: 119, rows: H / 19, in: 'hit-top' })
+      const c = { x: Math.floor(((Number(m![1]) + 8) / W) * 119), y: Math.floor((Number(m![2]) - 4) / 19) }
+      await ui.pointer({ type: 'down', x: c.x, y: c.y, button: 'left', in: 'hit-top' } as never)
+      await ui.pointer({ type: 'up', x: c.x, y: c.y, button: 'left', in: 'hit-top' } as never)
+    }
+    expect(ran.length, 'opening a file ran an opener').toBeGreaterThan(before)
 
-    // To the tree map and back.
-    await ui.press({ key: 'view-map' })
-    expect(await ui.find({ key: 'view-desks' }), 'tree map shows the desks toggle').toBeDefined()
-    for (const k of ['fit', 'bigger', 'smaller']) if (await ui.find({ key: k })) await ui.press({ key: k })
-    const moves = (await ui.findAll({ type: 'Button' })).filter(b => (b.key ?? '').startsWith('move-'))
-    for (const m of moves) await ui.press({ key: m.key! })
-    await ui.press({ key: 'view-desks' })
-    expect(await ui.find({ key: 'view-map' }), 'back on the desks').toBeDefined()
-
-    // A helper finishes: its window gets – fold; folding puts it on the log's title row, unfold opens it again.
+    // A helper finishes: one dim line that says Done.
     await $.turn.complete({ agentId: 'agent-s0', reason: 'answer', answer: 'done', turnId: 'H0' } as never)
-    expect(await ui.find({ key: 'fold:agent-s0' }), 'finished helper window has – fold').toBeDefined()
-    await ui.press({ key: 'fold:agent-s0' })
-    expect(await ui.find({ key: 'unfold:agent-s0' }), 'folded helper is a button on the log title row').toBeDefined()
-    await ui.press({ key: 'unfold:agent-s0' })
-    expect(await ui.find({ key: 'fold:agent-s0' }), 'unfolded again').toBeDefined()
+    expect(JSON.stringify(await ui.drawn()).includes('Done'), 'a finished helper says Done').toBe(true)
     await ui.unmount()
   })
 
@@ -106,10 +97,11 @@ for (const surface of ['desktop', 'terminal'] as const) {
     await busy($, 12)
     for (const cols of [40, 80, 120, 200]) {
       const ui = await $.ui.mount({ plugin: 'crew-map', surface, ...PANE(cols) })
-      expect(await ui.find({ type: 'Text', text: /CLAUDE CREW v/ }), `${cols} header`).toBeDefined()
-      await ui.press({ key: 'view-map' })
-      expect(await ui.find({ key: 'view-desks' }), `${cols} tree map with 12 helpers`).toBeDefined()
-      await ui.press({ key: 'view-desks' })
+      const drawn = JSON.stringify(await ui.drawn())
+      expect(/✻ Claude Crew|f-brand/.test(drawn), `${cols} header`).toBe(true)
+      // Every Claude has its row: the pane grows to fit them all, each with Details.
+      expect((drawn.match(/>Details</g) ?? []).length + (drawn.match(/"Details"/g) ?? []).length >= 12, `${cols}: a row with Details for each Claude the crew keeps (12): ${(drawn.match(/>Details</g) ?? []).length + (drawn.match(/"Details"/g) ?? []).length}`).toBe(true)
+      expect(/undefined|NaN|\[object Object\]/.test(drawn), `${cols}: nothing raw`).toBe(false)
       await ui.unmount()
     }
   })

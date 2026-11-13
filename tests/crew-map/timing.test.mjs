@@ -40,10 +40,15 @@ const render = (cols = 120) => fire('ui.render', { component: 'Pane', requestId:
 const tick = () => new Promise(r => setTimeout(r, 5))
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
-const logBox = t => find(t, x => x.type === 'Box' && x.props.borderStyle && /^\s*log\b/i.test(text(kids(x)[0])))[0]
-// A log row's words and its duration column (the last).
-const rowOf = (t, re) => kids(logBox(t)).slice(1).find(r => re.test(text(r)))
-const durOf = r => text(kids(r).at(-1)).trim()
+const { glyphs, words, pics } = await import('./kit.mjs')
+// The log's rows, as the viewer draws them: each row's words left to right; its duration is the last.
+const logRows = t => {
+  const by = new Map()
+  for (const g of glyphs(t, 'view')) by.set(g.y, [...(by.get(g.y) ?? []), g])
+  return [...by.values()].map(gs => gs.sort((a, b) => a.x - b.x))
+}
+const rowOf = (t, re) => logRows(t).find(r => re.test(r.map(g => g.t).join(' ')))
+const durOf = r => (r ? r.at(-1).t : '')
 
 await fire('session.start', {}, async () => ({}))
 await fire('turn.start', { text: 'Fix the save bug', turnId: 'T' }, async () => ({}))
@@ -54,8 +59,9 @@ await call('Bash', { command: 'npm test', description: 'Run the save tests' }, 7
 let t = await render()
 check('a quick read: 340ms', durOf(rowOf(t, /save\.ts/)) === '340ms', durOf(rowOf(t, /save\.ts/)))
 check('a build: 2.4s', durOf(rowOf(t, /Build the game/)) === '2.4s', durOf(rowOf(t, /Build the game/)))
-check('the tests: 1m12s', durOf(rowOf(t, /▸ Run the save tests/)) === '1m12s', kids(logBox(t)).slice(1).map(r => text(r)).filter(s => /save tests/.test(s)).join(' | '))
-check('every duration sits in the same column at the right edge', kids(logBox(t)).slice(1).filter(r => r.type === 'Box').every(r => kids(r).at(-1).props?.width === 8))
+check('the tests: 1m12s', durOf(rowOf(t, /Claude Run the save tests/)) === '1m12s', logRows(t).map(r => r.map(g => g.t).join(' ')).join(' | '))
+const W = pics(t)[1].width
+check('every duration ends at the right edge', ['340ms', '2.4s', '1m12s'].every(d => { const g = glyphs(t, 'view').find(x => x.t === d); return g && Math.abs(g.x + d.length * g.size * 0.6 - (W - 2)) < 0.6 }))
 
 // While one runs: it counts up, ● before it.
 let release
@@ -63,10 +69,10 @@ const long = fire('tool.call', { tool: 'Bash', tool_use_id: 'long', command: 'ca
 await tick()
 now += 1500
 t = await render()
-check('running: ●1.5s', durOf(rowOf(t, /Build the engine/)) === '●1.5s', durOf(rowOf(t, /Build the engine/)))
+check('running: ● 1.5s', durOf(rowOf(t, /Build the engine/)) === '● 1.5s', durOf(rowOf(t, /Build the engine/)))
 now += 3000
 t = await render()
-check('...and counting: ●4.5s', durOf(rowOf(t, /Build the engine/)) === '●4.5s', durOf(rowOf(t, /Build the engine/)))
+check('...and counting: ● 4.5s', durOf(rowOf(t, /Build the engine/)) === '● 4.5s', durOf(rowOf(t, /Build the engine/)))
 release({ text: 'ok' })
 await long
 check('done: its time is kept as it ended (4.5s)', durOf(rowOf(await render(), /Build the engine/)) === '4.5s', durOf(rowOf(await render(), /Build the engine/)))
@@ -78,10 +84,8 @@ const it = step?.[Symbol.asyncIterator]?.()
 await it?.next()
 now += 12_000
 t = await render()
-const desk = find(t, x => x.props?.key === 'desk-main')[0]
-check('its row says how long it has been thinking: 12s', /: Thinking · 12s/.test(say(desk)), say(desk).slice(0, 160))
-const win = find(t, x => x.props?.key === 'win-main')[0]
-check('...and so does its window', /thinking 12s/.test(text(win)), text(kids(win)[0]))
+const top = words(t, 'top')
+check('its row says how long it has been thinking: 12s', top[top.indexOf('Thinking') + 1]?.startsWith('12s'), top.slice(0, 12).join('|'))
 
 // The clock ticks each second while a Claude thinks, with nothing else running.
 const before = globalThis.__store.get('tick') ?? 0

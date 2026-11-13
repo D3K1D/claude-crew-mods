@@ -75,17 +75,11 @@ for (const surface of ['desktop', 'terminal'] as const)
 
     for (const cols of [40, 80, 120, 200]) {
       const ui = await $.ui.mount({ plugin: 'crew-map', surface, ...PANE(cols) })
-      const all = await ui.findAll({})
-      const text = all.map((x: any) => x.text).join('\n')
-      expect(/Codex/.test(text), `${surface} ${cols}: Codex on the crew map`).toBe(true)
-      expect(all.some((x: any) => String(x.key).startsWith('desk-cx-')), `${surface} ${cols}: a Codex desk for a running run`).toBe(true)
-      expect(/undefined|NaN|\[object Object\]/.test(text), `${surface} ${cols}: nothing raw`).toBe(false)
-      if (surface === 'desktop') {
-        // The tree map with Codex's own tree on it, then back (the terminal has no way back: reported separately).
-        await ui.press({ key: 'view-map' })
-        expect(/Codex/.test((await ui.findAll({})).map((x: any) => `${x.text} ${x.props?.alt ?? ''}`).join('\n')), `${cols}: Codex on the tree map`).toBe(true)
-        await ui.press({ key: 'view-desks' })
-      }
+      const drawn = JSON.stringify(await ui.drawn())
+      // Its row: its name (in the picture on the desktop, as text in the terminal), and its model where there is room.
+      expect(/>Codex<|"Codex"|Codex/.test(drawn), `${surface} ${cols}: Codex has a row`).toBe(true)
+      if (surface === 'desktop' && cols >= 80) expect(drawn.includes('gpt-5.6-sol'), `${cols}: its model`).toBe(true)
+      expect(/undefined|NaN|\[object Object\]/.test(drawn), `${surface} ${cols}: nothing raw`).toBe(false)
       await ui.unmount()
     }
   })

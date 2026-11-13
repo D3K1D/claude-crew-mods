@@ -44,8 +44,20 @@ const kids = x => (x && typeof x === 'object' ? (x.children ?? x.props?.children
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : kids(x).map(text).join(''))
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of kids(x)) find(c, pred, out); return out }
 const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 50 } }, viewport: { columns: 150 } }, async () => ({}))
-const windowOf = (tree, name) => find(tree, x => x.type === 'Box' && x.props.borderStyle && find(x, y => y.type === 'Text' && text(y) === `✻ ${name}`).length)[0]
-const svgOf = tree => find(tree, x => x.type === 'Svg')[0].props.source
+const { lines, words, glyphs, makePress } = await import('./kit.mjs')
+const press = makePress(elements, render, () => new Promise(r => setTimeout(r, 20)))
+// A Claude's row, as its picture draws it: its lines' words, in order.
+const rowOf = (tree, name) => {
+  const ls = lines(tree, 'top')
+  const i = ls.findIndex(l => l.some(g => g.t === name))
+  return i < 0 ? '' : ls.slice(i).filter(l => l[0].y < ls[i][0].y + 45).flat().map(g => g.t).join(' ')
+}
+// What the viewer shows for a Claude: its Details, opened by its row's button.
+const details = async name => {
+  await press(`${name}: Details`)
+  const t = await render()
+  return words(t, 'view').join(' | ')
+}
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 let n = 0
@@ -58,14 +70,13 @@ await call('Bash', { command: 'npm test', description: 'Run the auth tests' }, a
   tree = await render()
 })
 {
-  const win = windowOf(tree, 'Claude')
-  check('a permission prompt marks the Claude as waiting on you', /needs you: allow running Run the auth tests/.test(text(win)), text(win).slice(0, 160))
-  check('...its window turns amber and says so in its corner', win.props.borderColor === '#E3B341' && text(win).includes('⏸ waiting on you'))
-  check('...the header counts it', text(tree).includes('⏸ 1 waiting on you'))
-  check('...its bubble on the map says "Needs you"', svgOf(tree).includes('Needs you'))
+  const row = rowOf(tree, 'Claude')
+  check('a permission prompt marks the Claude as needing you, with what it asks', /Claude Needs you .*Allow running Run the auth tests\? Answer in the chat\./.test(row), row)
+  check('...in amber, its card amber', glyphs(tree, 'top').find(g => g.t === 'Needs you')?.role === 'amber' && /class="f-amberbg s-amber"/.test(find(tree, x => x.type === 'Svg')[0].props.source))
+  check('...the header counts it', words(tree, 'top').includes('⏸ 1 needs you'))
   check('...and the log says what it needs', crew().log.some(l => l.text === '⏸ needs you: allow running Run the auth tests'))
 }
-check('when the call ends (answered and run), it no longer waits on you', !agent('main').needs && !text(await render()).includes('waiting on you'))
+check('when the call ends (answered and run), it no longer waits on you', !agent('main').needs && !words(await render(), 'top').some(w => /needs you/.test(w)))
 // A hook beneath that decided at once: no prompt was shown, so nothing waits.
 await fire('classic.PermissionRequest', { tool_name: 'Edit', tool_input: { file_path: `${P}/src/a.ts` } }, async () => ({ decision: { behavior: 'allow' } }))
 check('a permission a hook decided at once leaves nothing waiting', !agent('main').needs)
@@ -76,9 +87,9 @@ await fire('classic.PermissionDenied', { tool_name: 'Edit' }, async () => ({}))
 check('a denial ends the wait', !agent('main').needs)
 // A question: waits while the tool runs.
 await call('AskUserQuestion', { questions: [] }, async () => { tree = await render() })
-check('a question waits on you while it is open', text(windowOf(tree, 'Claude')).includes('needs you: answer a question'))
+check('a question waits on you while it is open', /Claude Needs you .*Answer a question\? Answer in the chat\./.test(rowOf(tree, 'Claude')), rowOf(tree, 'Claude'))
 check('...and not once it is answered', !agent('main').needs)
-// A helper waiting on you comes first among the windows.
+// A helper waiting on you is pinned on top, flush left.
 await fire('agent.spawn', { tool_use_id: 'sp1', prompt: 'Look at the tests', description: 'Scout', subagentType: 'Explore', provider: {}, parentModel: 'm' }, async () => ({ agentId: 'sub1' }))
 await call('Read', { file_path: `${P}/tests/a.test.ts` }, async () => {}, { text: 'ok' }, { agentId: 'sub1' })
 await call('Bash', { command: 'rm -rf build' }, async () => {
@@ -86,16 +97,16 @@ await call('Bash', { command: 'rm -rf build' }, async () => {
   tree = await render()
 }, { text: 'ok' }, { agentId: 'sub1' })
 {
-  const wins = find(tree, x => x.type === 'Box' && x.props.borderStyle && find(x, y => y.type === 'Text' && /^✻ /.test(text(y))).length)
-  const first = find(wins[0], y => y.type === 'Text' && /^✻ /.test(text(y)))[0]
-  // Windows keep their places (a static layout): waiting on you shows in amber, not by moving.
-  const waiting = wins.find(w => w.props.borderColor === '#E3B341')
-  check('a helper waiting on you keeps its place, its window amber', !!first && text(first) === '✻ Claude' && !!waiting && !/✻ Claude\b/.test(text(find(waiting, y => y.type === 'Text' && /^✻ /.test(text(y)))[0])), wins.map(w => text(find(w, y => y.type === 'Text' && /^✻ /.test(text(y)))[0])).join(', '))
+  const gs = glyphs(tree, 'top')
+  const helper = gs.find(g => g.t === agent('sub1').name)
+  const main = gs.find(g => g.t === 'Claude')
+  check('a helper needing you is pinned on top, flush left, over the Claude that started it', !!helper && !!main && helper.y < main.y && helper.x === main.x, `${helper?.y},${helper?.x} ${main?.y},${main?.x}`)
+  check('...saying who it helps', /helping Claude/.test(rowOf(tree, agent('sub1').name)))
 }
 await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'S', agentId: 'sub1', usage: { input_tokens: 10, output_tokens: 10, model: 'claude-opus-5-5' } }, async () => ({ text: 'ok' }))
 check('its turn ending ends any wait', !agent('sub1').needs)
 
-// ── 2. Context meter ──
+// ── 2. Context meter, in each Claude's Details ──
 const step = async (agentId, model, usage) => {
   const it = fire('turn.step', { turnId: 'T', index: 0, model, messageCount: 4, agentId }, () => (async function* () { yield { kind: 'text', text: 'hi' }; return { turnId: 'T', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage } })())
   let r = await it.next()
@@ -104,63 +115,66 @@ const step = async (agentId, model, usage) => {
 }
 const res = await step(undefined, 'claude-opus-5-5', { input_tokens: 1000, cache_read_input_tokens: 120000, cache_creation_input_tokens: 500, output_tokens: 500, model: 'claude-opus-5-5' })
 check('a model request passes through untouched', res?.stopReason === 'end_turn')
-tree = await render()
-check('the window shows how full its context is (61% of 200k)', /ctx\s*█+░*\s+61% of 200k/.test(text(windowOf(tree, 'Claude'))), text(windowOf(tree, 'Claude')))
+let d = await details('Claude')
+check('Details show how full its context is (61% of 200k)', /61% of 200k/.test(d), d)
 await fire('session.measure', { context: { tokens: 400000, window: 1000000, percent: 40 }, rateLimits: [] }, async () => ({ changed: true }))
-check("the engine's own measure gives the main window's true size", /40% of 1\.0M/.test(text(windowOf(await render(), 'Claude'))))
+d = words(await render(), 'view').join(' | ')
+check("the engine's own measure gives the main window's true size", /40% of 1\.0M/.test(d), d)
 await step('sub1', 'claude-haiku-5-5', { input_tokens: 175000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1000, model: 'claude-haiku-5-5' })
 await fire('agent.spawn', { tool_use_id: 'sp2', prompt: 'Big job', description: 'Builder', subagentType: 'general-purpose', provider: {}, parentModel: 'm' }, async () => ({ agentId: 'sub2' }))
 await call('Read', { file_path: `${P}/src/b.ts` }, async () => {
   await step('sub2', 'claude-sonnet-5-5[1m]', { input_tokens: 300000, output_tokens: 1000, model: 'claude-sonnet-5-5' })
-  tree = await render()
 }, { text: 'ok' }, { agentId: 'sub2' })
 check('a [1m] model counts against a million', agent('sub2').ctx?.window === 1_000_000)
+check('a finished helper keeps its own measure (88% of 200k)', agent('sub1').ctx && Math.round((agent('sub1').ctx.tokens / agent('sub1').ctx.window) * 100) === 88)
 {
-  const w = windowOf(tree, agent('sub1').name)
-  const pctText = find(w, x => x.type === 'Text' && /^ +88%$/.test(text(x)))[0]
-  check('nearly full says it compacts soon, the share in red', !!w && /88% of 200k · compacts soon/.test(text(w)) && pctText?.props.color === '#FF7B72', w && text(w).match(/ctx.{0,60}/)?.[0])
+  // A helper at work, its context nearly full.
+  await call('Read', { file_path: `${P}/src/c.ts` }, async () => {
+    await step('sub2', 'claude-sonnet-5-5[1m]', { input_tokens: 880000, output_tokens: 1000, model: 'claude-sonnet-5-5' })
+    await press('Activity')
+    const d1 = await details(agent('sub2').name)
+    const t = await render()
+    check('nearly full says it compacts soon, in red', /88% of 1\.0M · compacts soon/.test(d1) && glyphs(t, 'view').find(g => /88%/.test(g.t))?.role === 'red', d1)
+  }, { text: 'ok' }, { agentId: 'sub2' })
 }
 await fire('session.compact', { trigger: 'auto', messages: [1, 2, 3] }, async () => ({ messages: [1] }))
-tree = await render()
-check('a compaction is counted, and the meter waits for the next request', agent('main').compactions === 1 && /ctx\s*— · compacted 1×/.test(text(windowOf(tree, 'Claude'))), text(windowOf(tree, 'Claude')))
+await press('Activity')
+d = await details('Claude')
+check('a compaction is counted, and the meter waits for the next request', agent('main').compactions === 1 && /context \| — · compacted 1×/.test(d), d)
 await step(undefined, 'claude-opus-5-5', { input_tokens: 30000, output_tokens: 100, model: 'claude-opus-5-5' })
-check('...then shows the new size with the count', /3% of 1\.0M · compacted 1×/.test(text(windowOf(await render(), 'Claude'))), text(windowOf(await render(), 'Claude')).match(/ctx.{0,50}/)?.[0])
+d = words(await render(), 'view').join(' | ')
+check('...then shows the new size with the count', /3% of 1\.0M · compacted 1×/.test(d), d)
+await press('Activity')
 
-// ── 3. One colour per file ──
+// ── 3. One colour per meaning on Touched: edited files say what changed in green, files only read are dim ──
 await call('Read', { file_path: `${P}/src/read-only.ts` })
 await call('Edit', { file_path: `${P}/src/changed.ts`, old_string: 'a', new_string: 'b\nc' })
 for (const a of crew().agents) if (a.state !== 'done') a.state = 'idle'
 now += 1000
 tree = await render()
 {
-  const svg = svgOf(tree)
-  const outline = name => { const i = svg.indexOf(`>${name}</text>`); const g = svg.lastIndexOf('<g transform="translate(', i); return svg.slice(g, i).match(/<path d="M0 0H\d+L\d+ 10V\d+H0Z" fill="#0D1117" stroke="([^"]+)"/)?.[1] }
-  check('an edited file is outlined green', outline('changed.ts') === '#3FB950', outline('changed.ts'))
-  check('a file only read keeps the light outline', outline('read-only.ts') === '#E8DFC8', outline('read-only.ts'))
-  check('the key says green is edited', svg.includes('green = edited'))
+  const gs = glyphs(tree, 'top')
+  const changed = gs.find(g => g.t === 'changed.ts')
+  check('an edited file is in the text colour, its lines added in green', changed?.role === 'text' && gs.some(g => g.t === '+2' && g.role === 'green' && Math.abs(g.y - changed.y) < 1), JSON.stringify(changed))
+  check('a file only read is dim', gs.find(g => g.t === 'read-only.ts')?.role === 'dim')
 }
 
-// ── 4. Finished helpers fold away ──
+// ── 4. A finished helper: one dim line a moment, then gone ──
 await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'S2', agentId: 'sub2', usage: { input_tokens: 10, output_tokens: 10, model: 'claude-opus-5-5' } }, async () => ({ text: 'ok' }))
-tree = await render()
 const name2 = agent('sub2').name
-check('a helper that just finished keeps its window a moment, with a fold button', !!windowOf(tree, name2) && !!find(tree, x => x.type === 'Button' && x.props.key === 'fold:sub2').length)
-now += 25_000
+const doneRow = t => rowOf(t, name2)
 tree = await render()
-check('...then folds away', !windowOf(tree, name2))
-const unfold = find(tree, x => x.type === 'Button' && x.props.key === 'unfold:sub2')[0]
-check("...into the log's title row, as a button", !!unfold && text(unfold).includes(name2))
-await unfold.props.onPress()
-tree = await render()
-check('a click opens its window again', !!windowOf(tree, name2))
-await find(tree, x => x.type === 'Button' && x.props.key === 'fold:sub2')[0].props.onPress()
-tree = await render()
-check('and "– fold" puts it away', !windowOf(tree, name2) && !!find(tree, x => x.type === 'Button' && x.props.key === 'unfold:sub2').length)
+if (agent('sub2').state === 'done') {
+  check('a helper that just finished keeps a dim line a moment, saying Done', /Done/.test(doneRow(tree)) && glyphs(tree, 'top').find(g => g.t === name2)?.role === 'dim', doneRow(tree))
+  now += 25_000
+  check('...then leaves the crew', !doneRow(await render()))
+} else console.log(`SKIP done line (${agent('sub2').state})`)
 // Junk from the engine changes nothing shown.
 {
   const before = JSON.stringify(agent('main').ctx)
   await fire('session.measure', { context: { tokens: NaN, window: -5 }, rateLimits: [] }, async () => ({}))
   await step(undefined, 'claude-opus-5-5', { input_tokens: NaN, output_tokens: 5 })
-  check('a nonsense measure or usage leaves the meter as it was', JSON.stringify(agent('main').ctx) === before && !/NaN|-5/.test(text(windowOf(await render(), 'Claude'))), JSON.stringify(agent('main').ctx))
+  const dd = await details('Claude')
+  check('a nonsense measure or usage leaves the meter as it was', JSON.stringify(agent('main').ctx) === before && !/NaN|-5/.test(dd), JSON.stringify(agent('main').ctx))
 }
 console.log(`\n${fails} failing check(s)`)

@@ -45,10 +45,8 @@ const find = (x, pred, out = []) => {
 const render = surface => hooks['ui.render']($, { surface, props: { bodyColumns: 120 }, viewport: { columns: 120 } })
 const windows = async () => {
   const tree = await render('desktop')
-  const boxes = find(tree, x => x.type === 'Box' && x.props.borderStyle === 'round')
-  const wins = boxes.filter(b => b.props.borderColor !== '#30363D' && b.props.borderColor !== '#F0BC55')
-  const logBox = boxes.filter(b => b.props.borderColor === '#30363D').pop()
-  return { wins: wins.map(b => b.props.children.map(text).join('\n')), log: logBox.props.children.map(text) }
+  const { words } = await import('./kit.mjs')
+  return { wins: [words(tree, 'top').join('\n')], log: words(tree, 'view') }
 }
 let fails = 0
 const check = (label, cond, extra = '') => {
@@ -57,11 +55,9 @@ const check = (label, cond, extra = '') => {
 }
 
 await hooks['session.start']($, {}, async () => ({}))
-// These checks are about the tree map: show it (desks and folder cards are the default).
-globalThis.__store.set('crew', { ...globalThis.__store.get('crew'), view: 'map' })
 check('main exists and is idle at start', main()?.state === 'idle')
 let w = await windows()
-check('main window says waiting before any prompt', w.wins[0]?.includes('waiting for a prompt'), w.wins[0]?.split('\n')[1])
+check("the main Claude's row says it is idle, your turn, before any prompt", w.wins[0]?.includes('Idle') && w.wins[0]?.includes('your turn'), w.wins[0]?.split('\n').slice(0, 6).join('|'))
 
 tick(1000)
 await hooks['turn.start']($, { text: 'Fix the chunk loader so far chunks stream in', turnId: 'T1' }, async () => ({ turnId: 'T1' }))

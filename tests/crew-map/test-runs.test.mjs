@@ -38,7 +38,9 @@ const crew = () => globalThis.__store.get('crew')
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : (x?.props?.children ?? []).map(text).join(''))
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of x.props?.children ?? []) find(c, pred, out); return out }
 const render = () => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 120 }, viewport: { columns: 120 } })
-const svgOf = t => find(t, x => x.type === 'Svg')[0].props.source
+const svgOf = t => find(t, x => x.type === 'Svg').map(x => x.props.source).join('')
+// Every word the pane's pictures draw, in one string.
+const said = t => [...svgOf(t).matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1].replace(/&amp;/g, '&')).join(' | ')
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 
@@ -49,28 +51,24 @@ let mid
 await hooks['tool.call']($, { tool: 'Bash', tool_use_id: 'b1', command: 'cd "C:/p" && npx jest auth' }, async () => {
   now += 12_000
   const tree = await render()
-  mid = { svg: svgOf(tree), all: text(tree), tick: globalThis.__store.get('tick') }
+  mid = { svg: svgOf(tree), all: said(tree), tick: globalThis.__store.get('tick') }
   return { text: 'PASS tests/auth.test.ts\nTests:       41 passed, 41 total\nTime: 3s' }
 })
-check('a running test shows in the map as "tests running"', mid.svg.includes('>tests running</text>'))
-check('the flask bubbles while it runs', mid.svg.includes('animation:rise'))
-check('the Claude\'s bubble says it is waiting on tests', mid.svg.includes('Waiting on tests'))
-check('the running box says a test is running, for what, waited on, with a timer', mid.all.includes('12s ⚗ Claude JS tests (jest): auth'), mid.all.slice(mid.all.indexOf('⚗'), mid.all.indexOf('⚗') + 80))
-check('the window shows the running test', /test +⚗ 12s JS tests/.test(mid.all))
+check("a running test is the Claude's work: its row says Running tests", mid.all.includes('Running tests'), mid.all.slice(0, 200))
+check('...for what, and for how long', /JS tests \(jest\): auth · 12s/.test(mid.all), mid.all.slice(0, 200))
 let t = crew().tests[0]
 check('the run settles as passed with counts', t.status === 'passed' && t.passed === 41 && t.failed === 0, JSON.stringify(t))
 check('toast on finish', toasts.some(x => x === '✓ Tests passed (41 passed) · JS tests (jest): auth') && !toasts.some(x => x.includes('npx') || x.includes('$')), toasts.join(' | '))
 check('log says started and passed', crew().log.some(l => l.text === '⚗ tests started · JS tests (jest): auth') && crew().log.some(l => l.text === '✓ tests passed (41 passed) in 12s · JS tests (jest): auth'))
 let tree = await render()
-check('after: map shows a green result pill', svgOf(tree).includes('✓ 41 passed'))
-check('after: no running strip', !text(tree).includes('⏱'))
-check('after: window shows the result', text(tree).includes('✓ 41 passed · 12s'))
+check('after: the log says it passed, with the counts and how long', /Tests passed \(41 passed\) in 12s/.test(said(tree)), said(tree).slice(-300))
+check('after: no running strip', !said(tree).includes('⏱') && !said(tree).includes('Running tests'))
 
 // 2. cargo, failing, summed across binaries.
 await hooks['tool.call']($, { tool: 'Bash', tool_use_id: 'b2', command: 'cargo test chunk' }, async () => ({ text: 'test result: ok. 10 passed; 0 failed; 0 ignored\ntest result: FAILED. 3 passed; 2 failed; 0 ignored', isError: true }))
 t = crew().tests.at(-1)
 check('cargo counts summed, failed', t.status === 'failed' && t.passed === 13 && t.failed === 2, JSON.stringify(t))
-check('map shows a red pill', svgOf(await render()).includes('✗ 2 failed'))
+check('the log says it failed, with the counts', /Tests failed \(2 failed, 13 passed\)/.test(said(await render())), said(await render()).slice(-300))
 
 // 3. pytest without an error flag still reads as failed.
 await hooks['tool.call']($, { tool: 'Bash', tool_use_id: 'b3', command: 'python -m pytest -q' }, async () => ({ text: '=== 1 failed, 40 passed in 2.10s ===' }))
@@ -89,7 +87,7 @@ check('background run stays running with its shell id', t.status === 'running' &
 await advance(5000)
 check('the 1s tick counts up while it runs', globalThis.__store.get('tick') >= 5, String(globalThis.__store.get('tick')))
 tree = await render()
-check('the running box says it runs in the background', text(tree).includes('⚗ Claude ◌ '))
+check('the log says it runs in the background', /Tests started in the background/.test(said(tree)), said(tree).slice(-300))
 await hooks['tool.call']($, { tool: 'BashOutput', tool_use_id: 'o1', bash_id: 'bash_7' }, async () => ({ text: '<status>running</status>\n<stdout>Compiling…</stdout>' }))
 check('still running while the output says so', crew().tests.at(-1).status === 'running')
 await hooks['tool.call']($, { tool: 'BashOutput', tool_use_id: 'o2', bash_id: 'bash_7' }, async () => ({ text: '<status>completed</status>\n<exit_code>0</exit_code>\n<stdout>test result: ok. 120 passed; 0 failed</stdout>' }))
@@ -104,7 +102,12 @@ await advance(3000)
 check('the tick stops once the turn is over and nothing runs', globalThis.__store.get('tick') === tickAt)
 
 // 6. The demo runs tests: fail, then pass.
-find(tree, x => x.type === 'Button' && x.props.key === 'demo')[0].props.onPress()
+{
+  const { makePress } = await import('./kit.mjs')
+  const press = makePress(elements, render, () => new Promise(r => setTimeout(r, 5)))
+  await press('Settings')
+  await press('▶ try a pretend session')
+}
 await advance(2600 + 300)
 const demoTests = () => crew().tests.filter(x => x.agentId.startsWith('demo-'))
 check('demo starts a test run', demoTests().some(x => x.command === 'npm test -- auth'), JSON.stringify(demoTests().map(x => [x.command, x.status])))
@@ -112,7 +115,7 @@ tree = await render()
 const demoSvg = svgOf(tree)
 mkdirSync(OUT, { recursive: true })
 writeFileSync(`${OUT}/tests.svg`, demoSvg)
-check('demo map shows tests running', demoSvg.includes('>tests running</text>'))
+check('the demo shows a Claude running tests', /Running tests/.test(said(tree)))
 await advance(2600)
 check('demo first run fails 1 of 42', demoTests().find(x => x.command === 'npm test -- auth')?.status === 'failed')
 await advance(2600 * 3)

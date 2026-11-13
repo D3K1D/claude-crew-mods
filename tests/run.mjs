@@ -30,17 +30,6 @@ for (const mod of ['crew-map', 'codex-bridge'])
     logLevel: 'warning',
   })
 
-// The terminal map module, built on its own.
-await build({
-  entryPoints: [join(root, 'crew-map', 'hooks', 'map.tsx')],
-  outfile: join(out, 'crew-map-terminal.mjs'),
-  bundle: true,
-  format: 'esm',
-  platform: 'node',
-  jsxFactory: 'h',
-  tsconfigRaw: {},
-  logLevel: 'warning',
-})
 // The search field's surface module, built on its own.
 await build({
   entryPoints: [join(root, 'crew-map', 'hooks', 'search.tsx')],
@@ -52,10 +41,10 @@ await build({
   tsconfigRaw: {},
   logLevel: 'warning',
 })
-// The desktop map's pan module, built on its own.
+// The pane's hit module, built on its own.
 await build({
-  entryPoints: [join(root, 'crew-map', 'hooks', 'pan.tsx')],
-  outfile: join(out, 'crew-map-pan.mjs'),
+  entryPoints: [join(root, 'crew-map', 'hooks', 'hit.tsx')],
+  outfile: join(out, 'crew-map-hit.mjs'),
   bundle: true,
   format: 'esm',
   platform: 'node',

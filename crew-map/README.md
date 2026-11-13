@@ -10,78 +10,35 @@ Open it with `/crew` (it also opens by itself in a wide window). The repository'
 
 ## What you see
 
-**At a glance.** Across the top, one row per Claude at work, readable at a glance by anyone. Its first line: a little Claude, its name, and what it is doing in plain words, the biggest text on the row ("Writing code · fixture.js", "Running tests", "Reading online", "Thinking · 12s", "Waiting · for Scout, Atlas"), with how long it has been at it. Its second line: how far along, a dot per step and "Step 2 of 3 · Wire the fixture agent" (or "No step list · 4 actions so far"), and the model it runs on (Opus 5.5, Sonnet 5.5…). Colour means its state only: green working, grey waiting, amber when it needs you, dim once done. A helper sits indented under the Claude that started it, a helper's helper further in. One that needs you moves to the top, in amber, with the whole request ("Allow running …? Answer in the chat."); a finished one shrinks to a single dim line. **Details** beside a row opens the rest: its model and cost, what it was asked, its steps (✓ done, ▸ on it, ○ to come) and its recent actions, your own hooks among them when one checks or blocks a tool. Each row is drawn as one picture laid out to fit, so nothing is clipped. A running Codex gets a row too. The area keeps its room as Claudes come and go, so nothing below jumps.
+The pane is four bands, top to bottom. Only the Claudes band changes height: the pane grows to fit every Claude, so nothing scrolls, folds or gets cut. Touched and the viewer keep fixed heights.
 
-**Folder cards.** Below the desks, every folder the crew touched gets a card, in the order the work first reached it. Its files are chips you can click to open: green with +/− line counts when edited, red with a count when a build or test failed on them, dim when nobody has touched them for five minutes, and with a coloured dot while a Claude is on them. A card shows ten chips, and **+N more** opens the rest. Files outside your project get their own card, which **✕ hide** puts away (**👁 show outside** brings it back). Typing in the search box keeps only the matching files and their folders.
+**The header.** Counts by state, in their colours: **⏸ 1 needs you** (amber), **● 4 working** (green), **◌ 1 waiting**, **✓ 1 done**. At the right, what the whole chat has cost, as Claude Code's own `/cost` totals it, and **of $10** when you set a budget (the cost turns amber at 80% of it and red past it).
 
-**The tree map.** **⊞ tree map** in the toolbar switches to the older view: every file as an icon hung under its folder or the file that imports it, with little Claudes swinging between them. Outlines say what happened to a file (dashed: not opened, light: read, green: edited, red: errors), and work that isn't a file gets a station down the right (the terminal, the web, browsers, computer use, documents, other MCP apps). Move it with **◀ ▲ ▼ ▶**, zoom with **− / +**, and **⤢ fit** shows all of it. **▤ desks** switches back.
+**The Claudes.** One row per Claude, readable at a glance by anyone. Its first line: a little Claude, its name, and what it is doing in plain words ("Writing code · fixture.js", "Running tests · Rust tests (cargo): chunk · 42s", "Reading online", "Using Blender", "Thinking · 12s", "Waiting · for Scout, Atlas"), with how long it has been at it. Its second line: how far along, a dot per step and "Step 2 of 3 · Wire the fixture agent" (or "4 actions so far"), and its model (Opus 5.5, Sonnet 5.5…). Colour means its state only: green working, grey waiting or idle, amber when it needs you, dim once done. A helper sits indented under the Claude that started it, a helper's helper further in, and a Codex run under whoever ran it. One that needs you is pinned on top, in amber, with its whole request ("Allow running …? Answer in the chat."). A finished helper is one dim line for a moment. A Claude that looks stuck says why on its second line, in amber (the same command failing three times, five failed calls in a row, or eight edits to one file in five minutes).
 
-**The windows.** Under the desks and cards, one window per Claude shows:
+When nobody is working, the last task's card takes the room the helpers used: how long it took, what changed, the tests, the cost and who worked on it, with **Copy as Markdown** for a PR description. Before any work, it says what will show there, with a pretend session to try.
 
-- its goal (your prompt, or the task a helper was given)
-- a progress bar
-- a cost line: the tokens its turns used and what they'd cost at Anthropic's API list prices (a subscription isn't billed per token, so treat it as a yardstick)
-- how full its context is, with how often it was compacted (amber from 60%, red with "compacts soon" from 85%)
-- what it's doing now, or its latest thought, and its last two actions
+**Touched.** One line per folder the work touched (the three worked in most lately), its files as buttons: lines added in green and removed, a red **✕2** when a build or test named errors in it, and a little Claude on the file one is editing now. **+N more** opens the Files tab, **Open folder** the project folder.
 
-**Waiting on you.** When a Claude is waiting for a permission, an answer or a plan approval, the header says "⏸ N waiting on you", its desk and window turn amber and move to the front, and they say what it needs ("allow running Clear the old build folder").
+**The viewer.** One box with tabs: **Activity**, **Files**, **⌕** (search), **⚙** (settings), and a Claude's own tab when you press **Details** on its row. **▲ ▼** scroll whichever tab is shown, and **⤓ latest** goes back to the newest.
 
-**What else it's waiting on.** The main Claude's desk and window title also say when it's waiting on its helpers (in purple, with their names: "⏳ waiting on Scout"), on a command it runs or left running in the background (in orange, in Claude's own words: "⏳ waiting on Build the app"), or simply on you, once its turn is over and nothing else is running ("○ your turn").
+- **Activity** is the log: every action, thought and message in time order, with who did it and how long each action took (340ms, 2.4s, 1m12s; one still running counts up with ●). Your messages show as **You**, and a message another Claude session sent shows its sender and words. A line cut short has a **›**: click it to read it whole (a thought opens to everything Claude said), **▾** folds it again. While you're scrolled back or have a line open, the log holds still as new lines come in.
+- **Details** for a Claude: its model, who it helps, its time; its cost and tokens; how full its context is (red with "compacts soon" from 85%, and how often it was compacted); everything it was asked; its steps (✓ done, ▸ on it, ○ to come); and its own lines from the log. **Shown below** on its row, or **✕** on its tab, closes it.
+- **Files** lists every file touched, under its folder, with lines added and removed, or "read", and who touched it. Files outside the project can be hidden.
+- **Search** finds files and log lines as you type.
+- **Settings**: the theme (◐ auto, ☀ light, ☾ dark), a budget (with a heads-up at 50%, 80% and 100%), where files open, files outside the project shown or hidden, the intro on or off (and play it now), and a pretend session to try the pane.
 
-**Finished helpers** keep their window for 20 seconds, then fold into a button on the log's title row. Click it to open the window again, and **– fold** puts it away.
+**Opening files.** Click any file to open it. Pictures, video, audio, documents, archives, fonts and 3D files open in your system's app for that type (Photos for a .png on Windows, Preview on a Mac). Code and text open in the editor you pick in Settings (VS Code, Cursor, or your system's default app). A file edited this session opens as a diff against your last commit, and a file with errors opens at its first one. Programs, and scripts when no editor is picked, are shown selected in their folder rather than run.
 
-The bar shows a percentage only when the Claude keeps a plan (Claude Code's task list, or a to-do list), since that's the only real measure of progress. It counts the tasks that Claude made which are finished, out of those still part of the work since your latest message ("40% · 2 of 5 tasks done"), with the one it's on shaded and named on the **now** row. Tasks finished before your latest message drop out, and a helper's tasks fill its own bar. Otherwise the window shows what's known: how many steps it has taken and for how long. A shell command shows as Claude's own one-line description of it. Every window keeps the same rows, and long lines are cut with "…".
+**Tests.** A Claude running a test command (cargo test, npm test, jest, vitest, pytest, go test and the like) says "Running tests" with what the run is for and how long it has gone. The pass and fail counts land in the log and a pop-up.
 
-**Compaction.** When the conversation is compacted to free up room, the Claude shows "Compacting memory", the header says "🗜 compacting", and the log says how many messages went in and came out.
+**Codex.** With the `codex-bridge` mod installed, a running Codex gets its own row, its Details and its lines in the log.
 
-**Tests.** When a Claude runs a test command (cargo test, npm test, jest, vitest, pytest, go test and the like):
+**The intro.** When the mod starts and when you open `/crew`, a six-second intro plays: the title rises a letter at a time and four little Claudes hop across it. **skip ▸** jumps past it, **don't show again** turns it off, and Settings plays it again or turns it back on.
 
-- the running line under the toolbar says what the run is for (Claude's own description of the command, or the runner and its targets, like "Rust tests (cargo): chunk") and how long it's been going. A loop that keeps checking a test log reads as "watching <file>". Other long commands show there too, in plain words.
-- the Claude's window shows the run with its timer
-- on the tree map, a bubbling flask appears beside the terminal
+**Light and dark.** The pane follows the app's theme, and Settings can pick light or dark when it guesses wrong. The choice is kept for new sessions, and Codex Bridge's pane follows it.
 
-The pass and fail counts land in its window, the log and a pop-up.
-
-**Problems.** When a build or test fails, each file it names turns red in its folder card with a count of its errors, and a Problems list shows `file:line` and the message. Click an error to open the file at that line. A clean build or test run clears the list. It understands rustc and cargo panics, tsc, C#/MSBuild, gcc/clang, Go, Python tracebacks, pytest, and jest/vitest stack frames.
-
-**Stuck warning.** A Claude gets a red "Stuck?" bubble, a warning in its window and a pop-up when:
-
-- it runs the same command three times and it fails each time
-- its last five tool calls all fail
-- it edits the same file eight times in five minutes
-
-The warning clears once it gets past the problem. It may just need a hint from you.
-
-**Spending.** The header and the spend row show what the whole chat has cost (**chat $12.40**), as Claude Code's own `/cost` totals it: every reply, helpers' included. The spend row then shows each Claude's share as a bar. Type a dollar amount into **budget $** to get a pop-up as the session passes 50%, 80% and 100% of it. The header shows how much has been spent against the budget, and the budget is remembered between sessions.
-
-**Task summary.** When a task ends, a green card sums it up: time taken, files changed with lines added and removed, tests run and the last result, which Claudes and how many Codex runs were involved, and the cost. **Copy as Markdown** puts it on your clipboard, ready for a PR description.
-
-**Opening files.** Click a card's folder name (marked ↗) to open that folder in your file manager, and any file chip to open the file. Pictures, video, audio, documents, archives, fonts and 3D files open in your system's app for that type (Photos for a .png on Windows, Preview on a Mac). Code and text open in the editor you pick. Programs, and scripts when no editor is picked, are shown selected in their folder rather than run. **📁 folder** opens the project folder. **▸ files** lists every file touched this session with lines added and removed, and every file there, in the Problems list and in the Codex windows is a button too. A file edited this session opens as a diff against your last commit. Pick where code opens (VS Code, Cursor, or your system's default app) from the **code in** picker.
-
-**The log.** Everything in time order, one line per action or thought, colour-coded by who did it. Your own messages show as **You**, in blue, over up to three lines so a long one stays readable. A message another Claude session sent this one shows as **Msg** in purple, with the sender's name and its words (not the app's wrapper round it). Commands show as ▸ and Claude's own words for them.
-
-A line that's cut short has a **›** before it: click it to open the line over as many rows as it needs (a Claude's thought opens to everything it said, not just its gist), and **▾** folds it again. **▲** and **▼** beside the log's title scroll back through the last 120 lines. While you're scrolled back, or have a line open, the log holds still as new lines come in, and **⤓ latest · N new** says how many arrived; click it (or **▼** to the bottom) to follow the newest lines again.
-
-**Following a Claude.** **◎ follow** in a Claude's window points the tree map's camera at it, closer than the whole map, and the camera moves with it from file to file. Moving the map yourself (arrows, zoom, drag, fit), pressing **◉ following** again, or the Claude finishing stops it.
-
-**Times.** Every action in the log ends with how long it took, measured from start to end (340ms, 2.4s, 1m12s), and one still running counts up with a ●. Thinking is timed too: a Claude between actions says how long its current step has been thinking ("thinking 12s"). The clocks count every second while any Claude works or thinks.
-
-**Codex.** With the `codex-bridge` mod installed, a running Codex gets its own desk, window and log lines. On the tree map it gets its own tree (Codex, its threads, and the files each thread read or edited), with a teal robot on the file it's on.
-
-**The intro.** When the mod starts and when you open `/crew`, a six-second intro plays: the title rises a letter at a time, and four little Claudes drop onto it and hop across the letters before the pane takes over. **skip ▸** jumps past it, **don't show again** turns it off, and **⏻ intro** in the header plays it again (and turns it back on).
-
-**Light and dark.** The pane follows the app's theme. Its text uses Claude Code's own theme colours, so it reads on a light or a dark theme alike, and the pictures (the little Claudes and the tree map) switch to light colours when the app is light. If it guesses wrong, the **◐ auto** button in the toolbar switches to **☀ light** or **☾ dark**, and the choice is kept for new sessions. Codex Bridge's pane follows the same choice.
-
-## Controls
-
-- `⏻ intro` plays the start-up intro again.
-- `▶ demo` runs three pretend Claudes over a pretend project for half a minute. It includes a failing test, a pretend Codex run and a summary card at the end.
-- `Search files...` keeps only the matching files.
-- `▸ files N` lists every file touched this session.
-- `◐ auto` / `☀ light` / `☾ dark` picks the theme (auto follows the app).
-- `⊞ tree map` / `▤ desks` switches between the two views. On the tree map, `◀ ▲ ▼ ▶` moves it and `− / +` and `⤢ fit` zoom.
-- `code in` picks where code and text files open. Other files always open in their own app.
-- `budget $` sets the spending budget.
+**In a terminal.** The same bands as text: each row's words, Touched's files and the tabs as buttons.
 
 ## How it works
 
@@ -92,7 +49,7 @@ The mod hooks Claude Code's events:
 - **every helper spawn**
 - **every turn's start and end:** goal, status, tokens
 
-When a code file is first opened, the mod reads that file's imports to build the tree map (JS/TS, Python, Rust including `use crate::…`, C/C++, CSS). The desks and cards are plain text and buttons, and the tree map is an SVG that only redraws when something on it changes.
+Each band is drawn as one picture laid out to the pixel, so nothing is clipped, with a small module over it that tells the mod where a click landed; the mod runs what is drawn there. Where that module can't run, the pictures' targets are drawn as plain buttons under them.
 
 A warning also pops up when two Claudes edit the same file within a minute of each other.
 

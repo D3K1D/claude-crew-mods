@@ -1,5 +1,6 @@
 // The pane drawn by the engine itself (its own elements and rules), on the desktop and the terminal,
-// empty and in a busy session: it draws every time, with no element the engine would refuse.
+// empty and in a busy session: it draws every time, with no element the engine would refuse; and a
+// click on a picture goes through the real hit module to what is drawn under it.
 import { test, expect, mock } from 'claude-code/testing'
 
 const PANE = (bodyColumns: number) =>
@@ -9,10 +10,11 @@ const PANE = (bodyColumns: number) =>
     props: { title: 'Claude Crew', isFocused: true, bodyColumns, placement: 'dock', scroll: { offset: 0, bodyRows: 40, contentRows: 80 }, view: {} },
   }) as never
 
-/** Every element of a drawing, and whether any carries a "children" prop (the engine refuses one). */
-const walk = (x: unknown, out: { type?: string; props?: Record<string, unknown> }[] = []) => {
+type El = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+/** Every element of a drawing. */
+const walk = (x: unknown, out: El[] = []) => {
   if (!x || typeof x !== 'object') return out
-  const el = x as { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+  const el = x as El
   out.push(el)
   for (const k of el.children ?? []) walk(k, out)
   return out
@@ -22,6 +24,13 @@ const textOf = (x: unknown): string => {
   if (!x || typeof x !== 'object') return ''
   return ((x as { children?: unknown[] }).children ?? []).map(textOf).join('')
 }
+const pictures = (tree: unknown) => walk(tree).filter(e => e.type === 'Svg').map(e => ({ source: String(e.props?.source ?? ''), height: Number(e.props?.height ?? 0), width: Number(e.props?.width ?? 0) }))
+const wordsOf = (src: string) => [...src.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1].replace(/&amp;/g, '&'))
+/** Where a word is drawn in a picture: its x (its right end for text set by its end) and baseline. */
+const spotOf = (src: string, word: string) => {
+  const m = [...src.matchAll(/<text x="([\d.]+)" y="([\d.]+)"[^>]*>([^<]*)<\/text>/g)].find(x => x[3] === word)
+  return m ? { x: Number(m[1]), y: Number(m[2]), end: /text-anchor="end"/.test(m[0]) } : undefined
+}
 
 const drawAll = async ($: any, label: string) => {
   for (const surface of ['desktop', 'terminal'] as const) {
@@ -29,8 +38,16 @@ const drawAll = async ($: any, label: string) => {
       const ui = await $.ui.mount({ plugin: 'crew-map', surface, ...PANE(cols) })
       const tree = await ui.drawn()
       const all = walk(tree)
-      expect(all.some(e => e.type === 'Text' && /CLAUDE CREW v/.test(textOf(e))), `${label} ${surface} ${cols}: header`).toBe(true)
+      const pics = pictures(tree)
+      const header = surface === 'desktop' ? pics.some(p => p.source.includes('class="f-brand"')) : /✻ Claude Crew/.test(textOf(tree))
+      expect(header, `${label} ${surface} ${cols}: header`).toBe(true)
       expect(all.filter(e => e.props && 'children' in e.props).length, `${label} ${surface} ${cols}: no children prop`).toBe(0)
+      if (surface === 'desktop') {
+        expect(pics.length, `${label} desktop ${cols}: two pictures`).toBe(2)
+        // The engine names the module by its path in the plugin.
+        expect(all.filter(e => e.type === 'Client' && /(^|\/)hit\.tsx$/.test(String(e.props?.module))).length, `${label} desktop ${cols}: a hit module over each`).toBe(2)
+        expect(pics.every(p => p.source.length < 131072 && p.height % 19 === 0), `${label} desktop ${cols}: within the engine's size, whole rows`).toBe(true)
+      } else expect(pics.length, `${label} terminal ${cols}: no pictures`).toBe(0)
       await ui.unmount()
     }
   }
@@ -63,11 +80,34 @@ test('the pane draws empty, and in a busy session', async ($, on) => {
   for await (const _ of steps as AsyncIterable<unknown>);
   await drawAll($, 'busy')
 
-  // What the busy desktop pane says: waiting on you, the context, the cut goal.
-  const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'desktop', ...PANE(120) })
-  const text = textOf(await ui.drawn())
-  expect(text.includes('waiting on you'), 'waiting on you').toBe(true)
-  expect(/ctx/.test(text), 'context row').toBe(true)
-  expect(/When the claude moves downward[^]*…/.test(text), 'long goal cut with …').toBe(true)
+  // What the busy desktop pane says: needing you, with its whole request; Touched with the edit.
+  const cols = 87
+  const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'desktop', ...PANE(cols) })
+  let [top, view] = pictures(await ui.drawn())
+  const said = wordsOf(top.source)
+  expect(said.includes('Needs you'), 'needs you').toBe(true)
+  expect(said.some(w => w.startsWith('Allow running Clear the old build folder?')), 'its whole request').toBe(true)
+  expect(said.includes('a.ts') && said.includes('+2'), 'Touched names the edited file').toBe(true)
+
+  // A click on "Details", through the hit module: the viewer shows that Claude.
+  const vwCols = cols - 1
+  const click = async (key: string, pic: { width: number; height: number }, x: number, y: number) => {
+    await ui.resize({ columns: vwCols, rows: pic.height / 19, in: key })
+    const c = { x: Math.floor((x / pic.width) * vwCols), y: Math.floor(y / 19) }
+    await ui.pointer({ type: 'down', x: c.x, y: c.y, button: 'left', in: key } as never)
+    await ui.pointer({ type: 'up', x: c.x, y: c.y, button: 'left', in: key } as never)
+  }
+  const det = spotOf(top.source, 'Details')!
+  await click('hit-top', top, det.x - 12, det.y - 4)
+  ;[top, view] = pictures(await ui.drawn())
+  expect(wordsOf(top.source).includes('Shown below'), "a click on Details shows that Claude's details").toBe(true)
+  expect(wordsOf(top.source).includes('Claude ✕'), '...in its own tab').toBe(true)
+
+  // A click on a tab: every file.
+  const filesTab = wordsOf(top.source).find(w => /^Files \d+$/.test(w))!
+  const files = spotOf(top.source, filesTab)!
+  await click('hit-top', top, files.x + 6, files.y - 4)
+  ;[top, view] = pictures(await ui.drawn())
+  expect(wordsOf(view.source).some(w => w.startsWith('and-an-even-longer')), 'the Files tab lists every file').toBe(true)
   await ui.unmount()
 })

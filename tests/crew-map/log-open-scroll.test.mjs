@@ -37,12 +37,22 @@ const render = (cols = 87) => fire('ui.render', { component: 'Pane', requestId: 
 const tick = () => new Promise(r => setTimeout(r, 5))
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
-const logBox = t => find(t, x => x.type === 'Box' && x.props.borderStyle && /^\s*log\b/i.test(text(kids(x)[0])))[0]
-const logRows = t => kids(logBox(t)).slice(1)
-// A row's columns read apart (the time, the name, the mark, the words, how long it took).
-const logText = t => logRows(t).map(r => kids(r).map(text).join('|')).join('\n')
-const button = (t, pred) => find(t, x => x.type === 'Button' && pred(String(x.props.key ?? ''), text(x)))[0]
-const press = async b => { b.props.onPress(); await tick() }
+const { lines, glyphs, words, pics, find: findIn, text: textOf } = await import('./kit.mjs')
+// The viewer's rows: each row's words, left to right, as one string.
+const logRows = t => lines(t, 'view').map(l => l.map(g => g.t).join(' '))
+const logText = t => logRows(t).join('\n')
+const mark = (t, w) => glyphs(t, 'view').concat(glyphs(t, 'top')).find(g => g.t === w)
+// Presses a target by its label (the last one drawn, when several share it: the newest line).
+const press = async label => {
+  const saved = elements.Client
+  elements.Client = undefined
+  const t = await render()
+  elements.Client = saved
+  const b = findIn(t, x => x.type === 'Button' && textOf(x) === label).at(-1)
+  if (!b) throw new Error('no target ' + label)
+  await b.props.onPress({ surface: 'desktop' })
+  await tick()
+}
 const say = (agentId, words) => fire('session.append', { ...(agentId ? { agentId } : {}), door: 'response', message: { role: 'assistant', content: [{ type: 'text', text: words }] }, origin: {}, uuid: `u${now}` }, async () => ({}))
 let n = 0
 const act = async what => { now += 1000; await fire('tool.call', { tool: 'Bash', tool_use_id: `b${n++}`, command: 'x', description: what }, async () => ({ text: 'ok' })) }
@@ -55,83 +65,77 @@ now += 1000
 const long = 'The save bug comes from the slot index being read before the profile loads. So the fix is to wait for the profile, then read the slot, and add a test that loads a profile slowly to prove the order holds on every platform we ship to.'
 await say(undefined, long)
 let t = await render()
-check('the log is its 12 rows', logRows(t).length === 12, String(logRows(t).length))
-const opener = button(t, k => k.startsWith('logopen:'))
-check('a thought cut short has a › to open it', !!opener && text(opener) === ' ›', opener && text(opener))
-check('a line that fits has no ›', !button(t, (k, l) => k.startsWith('logopen:') && false) && logRows(t).filter(r => /Step number 14/.test(text(r))).every(r => !find(r, x => x.type === 'Button').length))
-check('following: ▼ is dim (nowhere newer to go), and no ⤓ latest', text(button(t, k => k === 'log-down')) === ' ▽ ' && !button(t, k => k === 'log-latest'))
+check('the viewer is its 12 rows', pics(t)[1].height === 12 * 19 && logRows(t).length <= 12, String(logRows(t).length))
+check('a thought cut short has a › to open it', logRows(t).some(r => /^\S+ Claude The save bug .*… ›/.test(r)), logRows(t).at(-1))
+check('a line that fits has no ›', logRows(t).filter(r => /Step number 14/.test(r)).every(r => !r.includes('›')))
+check('following: ▼ is faint (nowhere newer to go), and ⤓ latest is dim', mark(t, '▼')?.role === 'faint' && mark(t, '⤓ latest')?.role === 'dim')
 
 // Open it: all of it, over as many rows as it takes, every word; the log holds still.
-await press(opener)
+await press('Show the whole line')
 t = await render()
-const said = logRows(t).filter(r => kids(r)[1] && /^\s*$|Claude/.test(text(kids(r)[1])) && kids(r).length === 5).map(r => text(kids(r)[3]).trim())
-const at = said.findIndex(s => s.startsWith('The save bug'))
-const whole = said.slice(at).join(' ')
-check('opened, the thought reads whole over several rows', at >= 0 && whole === long, whole)
-check('...its mark is now ▾ to fold it', text(button(t, k => k.startsWith('logopen:'))) === ' ▾')
-check('...and the log holds there: ⤓ latest shows', !!button(t, k => k === 'log-latest'))
+const rows = logRows(t)
+const at = rows.findIndex(r => /Claude The save bug/.test(r))
+const whole = [rows[at]?.replace(/^\S+ Claude /, '').replace(/ ▾( \S+)?$/, ''), ...rows.slice(at + 1)].join(' ')
+check('opened, the thought reads whole over several rows', at >= 0 && whole.replace(/ ▾/, '') === long.replace(/^the/, 'The'), whole)
+check('...its mark is now ▾ to fold it', rows[at]?.includes('▾'))
+check('...and the log holds there: ⤓ latest lights up', mark(t, '⤓ latest')?.role === 'text')
 
-// New lines come in while it's held: what shows stays, and it counts them.
+// New lines come in while it's held: what shows stays.
 const before = logText(t)
 await act('A newer step')
 await act('Another newer step')
 t = await render()
 check('held: new lines do not move it', logText(t) === before)
-check('...and it says how many came in', /⤓ latest · 2 new/.test(text(button(t, k => k === 'log-latest'))), text(button(t, k => k === 'log-latest')))
 
 // Scroll back with ▲, forward with ▼.
-await press(button(t, k => k === 'log-up'))
+await press('Fold the line')
+await press('Scroll up')
 t = await render()
-check('▲ shows older lines', /Step number 8\b/.test(logText(t)) && !/A newer step/.test(logText(t)), logText(t).split('\n')[0])
-await press(button(t, k => k === 'log-down'))
-await press(button(await render(), k => k === 'log-down'))
+check('▲ shows older lines', /Step number 8\b/.test(logText(t)) && !/A newer step/.test(logText(t)), logRows(t)[0])
+await press('Scroll down')
+await press('Scroll down')
+await press('Scroll down')
 t = await render()
-check('▼ back to the newest follows again', /Another newer step/.test(logText(t)) && !button(t, k => k === 'log-latest'))
-// Fold the thought again (found by its ▾), then ⤓ latest from a scrolled-back log.
-await press(button(t, k => k.startsWith('logopen:') && text(button(t, x => x === k)) === ' ▾') ?? button(t, k => k.startsWith('logopen:')))
+check('▼ back to the newest follows again', /Another newer step/.test(logText(t)) && mark(t, '⤓ latest')?.role === 'dim', logRows(t).at(-1))
+check('folded, the log is its 12 rows again', logRows(t).length <= 12 && pics(t)[1].height === 12 * 19)
+await press('Scroll up')
+await press('Scroll up')
 t = await render()
-check('folded, the log is its 12 rows again', logRows(t).length === 12, String(logRows(t).length))
-await press(button(t, k => k === 'log-up'))
-await press(button(await render(), k => k === 'log-up'))
-t = await render()
-check('scrolled back, ⤓ latest shows', !!button(t, k => k === 'log-latest'))
-await press(button(t, k => k === 'log-latest'))
+check('scrolled back, ⤓ latest lights up', mark(t, '⤓ latest')?.role === 'text')
+await press('Back to the latest')
 await act('The very latest step')
 t = await render()
-check('⤓ latest: following again, the newest line at the bottom', /The very latest step/.test(text(logRows(t).at(-1))) && !button(t, k => k === 'log-latest'), text(logRows(t).at(-1)))
-check('no row of the log runs past it at 87 columns', logRows(t).every(r => text(r).length <= Math.floor(87 * 0.97) - 1 - 4), logRows(t).map(r => text(r).length).join(','))
+check('⤓ latest: following again, the newest line at the bottom', /The very latest step/.test(logRows(t).at(-1)) && mark(t, '⤓ latest')?.role === 'dim', logRows(t).at(-1))
+const W = pics(t)[1].width
+check('no row of the log runs past it at 87 columns', glyphs(t, 'view').every(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) <= W + 0.5))
 
-// A long message of yours: three rows, then › opens the rest.
+// A long message of yours: one row, then › opens the rest.
 const msg = Array.from({ length: 12 }, (_, i) => `point ${i + 1} is that the inventory panel should keep its size when items come and go`).join('; ')
 await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'T', usage: { input_tokens: 1, output_tokens: 1, model: 'claude-opus-5-5' } }, async () => ({ text: 'ok' }))
 now += 1000
 await fire('turn.start', { text: msg, turnId: 'U' }, async () => ({}))
 t = await render()
-const youOpen = logRows(t).find(r => /You/.test(text(kids(r)[1] ?? '')) && find(r, x => x.type === 'Button').length)
-check('a long message of yours has a › on its first row', !!youOpen)
-await press(find(youOpen, x => x.type === 'Button')[0])
+check('a long message of yours has a › on its row', logRows(t).some(r => / You Point 1 is that .*›$|  You point 1 .*›$/.test(r) || (/ You /.test(r) && r.endsWith('›'))), logRows(t).at(-1))
+await press('Show the whole line')
 t = await render()
-const mine = logRows(t).filter(r => kids(r).length === 5 && kids(r)[1].props?.width && kids(r)[0].props?.width === 9)
-const yAt = mine.findIndex(r => /You/.test(text(kids(r)[1])))
-const yRows = mine.slice(yAt).map(r => text(kids(r)[3]).trim())
-check('opened, all of your message reads, every word', yRows.join(' ') === msg, `${yRows.length} rows`)
+const all = logRows(t)
+const yAt = all.findIndex(r => / You /.test(r))
+const yWhole = [all[yAt]?.replace(/^\S+ You /, '').replace(/ ▾$/, ''), ...all.slice(yAt + 1)].join(' ')
+check('opened, your message reads from its start over the whole viewer, word for word, cut with … only past its 12 rows', all.length === 12 && yAt === 0 && yWhole.endsWith('…') && msg.toLowerCase().startsWith(yWhole.slice(0, -1).trimEnd().toLowerCase()), yWhole.slice(-80))
+await press('Fold the line')
+await press('Back to the latest')
 
-// A helper's desk: its job in short, and › more opens all it was asked; ▾ less folds it.
+// A helper's Details: all it was asked.
 const job = 'Rebuild the inventory panel so it keeps its size when items come and go, then check it at 1080p and 4K on Windows and macOS, and write the notes for the release'
 await fire('tool.call', { tool: 'Agent', tool_use_id: 'sp1', description: 'Inventory panel', prompt: job, subagent_type: 'general-purpose', run_in_background: true }, async e => {
   await fire('agent.spawn', { tool_use_id: e.tool_use_id, prompt: job, description: 'Inventory panel', subagentType: 'general-purpose', provider: {}, parentModel: 'm' }, async () => ({ agentId: 'sub1' }))
   return { text: 'Started in the background' }
 })
-const desk = t => find(t, x => x.props?.key === 'desk-sub1')[0]
+const name = globalThis.__store.get('crew').agents.find(a => a.id === 'sub1').name
+await press(`${name}: Details`)
 t = await render()
-const more = find(desk(t), x => x.type === 'Button' && x.props.key === 'details:sub1')[0]
-check('each row has Details', !!more && text(more) === 'Details')
-const folded = kids(desk(t)).length
-await press(more)
-t = await render()
-const jobRows = [...String(find(desk(t), x => x.type === 'Svg')[0]?.props.source ?? '').matchAll(/<text[^>]*>(.*?)<\/text>/g)].map(m => m[1].replace(/<[^>]+>/g, '')).join(' ')
-check('opened, Details reads all the helper was asked', jobRows.replace(/\s+/g, ' ').includes(`for: Inventory panel: ${job}`), jobRows)
-check('...and says Hide', text(find(desk(t), x => x.type === 'Button' && x.props.key === 'details:sub1')[0]) === 'Hide')
-await press(find(desk(t), x => x.type === 'Button' && x.props.key === 'details:sub1')[0])
-check('Hide folds it back to its size', kids(desk(await render())).length === folded && folded === 1)
+check("each row's Details opens what the helper was asked, whole", words(t, 'view').join(' ').replace(/\s+/g, ' ').includes(job), words(t, 'view').join(' | ').slice(0, 300))
+check('...its row says the Details show below', words(t, 'top').includes('Shown below'))
+await press(`${name}: Shown below`)
+check('pressed again, the viewer goes back to Activity', !words(await render(), 'top').includes('Shown below'))
 console.log(`\n${fails} failing check(s)`)

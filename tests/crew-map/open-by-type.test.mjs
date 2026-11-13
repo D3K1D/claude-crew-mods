@@ -42,13 +42,20 @@ await fire('session.start', {}, async () => ({}))
 await fire('turn.start', { text: 'Look around', turnId: 'T' }, async () => ({}))
 const files = ['art/hero sprite.png', 'art/intro.mp4', 'docs/spec.pdf', 'docs/notes.xlsx', 'src/loader.ts', 'tools/build.bat', 'tools/setup.exe', 'tools/run.ps1']
 for (const f of files) await fire('tool.call', { tool: 'Read', tool_use_id: `c${n++}`, file_path: `${P}/${f}` }, async () => ({ text: 'ok' }))
+// Files are pressed where every one of them is listed: the viewer's Files tab (by name; a folder by its name and /).
 const click = async (key, choice) => {
-  if (choice) globalThis.__store.get('crew').editor = choice
+  const c = globalThis.__store.get('crew')
+  if (choice) c.editor = choice
+  c.pane = { tab: 'files' }
+  const saved = elements.Client
+  elements.Client = undefined
   const tree = await render()
-  const b = find(tree, x => x.type === 'Button' && x.props.key === key)[0]
+  elements.Client = saved
+  const label = key.startsWith('dir:') ? `${key.slice(4)}/` : key.split('/').pop()
+  const b = find(tree, x => x.type === 'Button' && text(x) === label)[0]
   ran.length = 0
   toasts.length = 0
-  await b?.props.onPress()
+  await b?.props.onPress({ surface: 'desktop' })
   await new Promise(r => setTimeout(r, 5))
   return { argv: ran[0] ?? [], toast: toasts[0] ?? '', found: !!b }
 }
@@ -81,10 +88,8 @@ check('with Cursor chosen, a picture still opens in its app', r.argv[0] === 'exp
 
 // Folders: the card's name opens the file manager, and shows it can.
 globalThis.__store.get('crew').editor = 'code'
-const tree = await render()
-const dirBtn = find(tree, x => x.type === 'Button' && x.props.key === 'dir:art')[0]
-check("a card's folder name is a button marked ↗", !!dirBtn && /📁 art ↗/.test(text(dirBtn)), text(dirBtn))
 r = await click('dir:art')
+check("a folder's name in Files is a button", r.found)
 check('...that opens the folder in the file manager', r.argv[0] === 'explorer' && r.argv[1] === win('art') && r.toast === 'Opening art in the file manager…', `${JSON.stringify(r.argv)} ${r.toast}`)
 
 // macOS: open / open -R; Linux: xdg-open (the folder for a program).
@@ -95,15 +100,24 @@ const platformTry = async (name, uname) => {
   mod.register((ev, m, fn) => { regs2.push({ ev, m: fn ? m : {}, fn: fn ?? m }); return { catch() {} } }, {})
   const fire2 = (ev, e, bottom) => { const mine = regs2.filter(x => x.ev === ev && Object.entries(x.m).every(([k, v]) => e[k] === v)); const run = i => (i < mine.length ? mine[i].fn($2, e, y => run(i + 1, y)) : bottom(e)); return run(0) }
   const out = []
-  const $2 = { ...$, env: { get: async () => undefined }, process: { run: async argv => { out.push(argv); return { exitCode: 0, stdout: argv[0] === 'uname' ? uname : '', stderr: '' } } } }
+  const $2 = { ...$, session: { cwd: async () => '/home/me/game' }, env: { get: async () => undefined }, process: { run: async argv => { out.push(argv); return { exitCode: 0, stdout: argv[0] === 'uname' ? uname : '', stderr: '' } } } }
   globalThis.__store = new Map()
   await fire2('session.start', {}, async () => ({}))
   for (const f of ['art/hero sprite.png', 'tools/setup.exe']) await fire2('tool.call', { tool: 'Read', tool_use_id: `m${n++}`, file_path: `/home/me/game/${f}` }, async () => ({ text: 'ok' }))
-  const t = await fire2('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
+  const saved = elements.Client
+  elements.Client = undefined
+  const draw = () => fire2('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
+  // This copy's project is /home/me/game: the files the first copy read are outside it, hidden.
+  for (const label of ['Settings', 'hidden', 'All files']) {
+    await find(await draw(), x => x.type === 'Button' && text(x) === label)[0]?.props.onPress({ surface: 'desktop' })
+    await new Promise(res => setTimeout(res, 20))
+  }
+  const t = await draw()
+  elements.Client = saved
   const got = []
   for (const f of ['art/hero sprite.png', 'tools/setup.exe']) {
     out.length = 0
-    await find(t, x => x.type === 'Button' && x.props.key === `file:/home/me/game/${f}`)[0]?.props.onPress()
+    await find(t, x => x.type === 'Button' && text(x) === f.split('/').pop())[0]?.props.onPress({ surface: 'desktop' })
     await new Promise(res => setTimeout(res, 5))
     got.push(out.filter(a => a[0] !== 'uname').at(-1) ?? [])
   }

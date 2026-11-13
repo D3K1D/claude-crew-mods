@@ -194,6 +194,8 @@ export type Crew = {
   view?: 'desks' | 'map'
   /** Folder cards the person opened to show every file (by folder). */
   cardsOpen?: Record<string, boolean>
+  /** The viewer: which tab shows (a Claude's details: 'claude' with its id), and how far its list is scrolled. */
+  pane?: { tab?: 'activity' | 'files' | 'search' | 'settings' | 'claude'; focus?: string; top?: number }
 }
 
 /**
