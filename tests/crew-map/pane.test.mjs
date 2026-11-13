@@ -61,7 +61,15 @@ await fire('session.start', {}, async () => ({}))
 let t = await render()
 check('desktop: the header and the row are pictures; no Client, nothing laid over a picture', pics(t).length >= 2 && find(t, x => x.type === 'Client').length === 0 && find(t, x => x.type === 'Box' && (x.props.marginTop ?? 0) < 0).length === 0)
 check("a row beside its Details is whole rows tall, so the Button sits on the row's line", find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-')).every(b => find(b, y => y.type === 'Svg')[0].props.height === b.props.height * 19))
-check('the viewer is 12 rows', viewHeight(t) === 12)
+{
+  // The viewer runs to the bottom of the pane: what the pane has, less what is above it; never under 8.
+  const at = rows => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 87, scroll: { bodyRows: rows } }, viewport: { columns: 87 } }, async () => ({})).then(viewHeight)
+  const [h60, h40, h10] = [await at(60), await at(40), await at(10)]
+  check('the viewer fills the pane to its bottom: 20 more rows of pane, 20 more rows of log', h60 - h40 === 20 && h60 > 12, `${h60} ${h40}`)
+  check('...and keeps 8 rows in a short pane', h10 === 8, String(h10))
+  const unsized = await fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 87 }, viewport: { columns: 87 } }, async () => ({})).then(viewHeight)
+  check('...and 12 where the surface gives no size', unsized === 12, String(unsized))
+}
 check('header: the brand and one idle Claude, nothing running', has(t, '✻ Claude Crew', 'top') && has(t, '◌ 1 idle', 'top') && has(t, 'nothing running', 'top'))
 check('the idle Claude says it is your turn, and what to do', has(t, 'Idle', 'top') && has(t, 'your turn', 'top') && has(t, 'ask Claude something to start', 'top'))
 check('before any work, the crew says what will show there', has(t, 'Nothing yet. Each Claude gets a row here as it starts.', 'top'))

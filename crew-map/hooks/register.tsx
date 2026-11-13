@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.6.2'
+const VERSION = '1.6.3'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -1943,6 +1943,8 @@ let hovers = 0
 let diagDirty = false
 /** When this pane last had the mouse or a button (the record kept is the latest one's). */
 let lastInputAt = 0
+/** The pane's size as the surface last reported it (columns × body rows), kept in the diag record. */
+let paneSize = ''
 const note = (text: string) => {
   diag.push(`${new Date().toISOString().slice(11, 19)} ${text}`)
   if (diag.length > 40) diag.shift()
@@ -2653,7 +2655,7 @@ export const register: Register = on => {
           // Several panes (one per chat) share the store: keep the record of the one last used.
           const kept = (await $.store.get('diag').catch(() => undefined)) as { lastInputAt?: number } | undefined
           if (!kept || (kept.lastInputAt ?? 0) <= lastInputAt)
-            await $.store.set('diag', { version: VERSION, at: new Date().toISOString(), lastInputAt, cwd: sessionDir, draws, hovers, frames: perf.frames, avgChainMs: Math.round(perf.chainMs / Math.max(1, perf.frames)), avgRenderMs: Math.round(perf.renderMs / Math.max(1, perf.frames)), events: diag }).catch(() => undefined)
+            await $.store.set('diag', { version: VERSION, at: new Date().toISOString(), lastInputAt, cwd: sessionDir, paneSize, draws, hovers, frames: perf.frames, avgChainMs: Math.round(perf.chainMs / Math.max(1, perf.frames)), avgRenderMs: Math.round(perf.renderMs / Math.max(1, perf.frames)), events: diag }).catch(() => undefined)
         }
         const c = await read($, crew)
         const running = (c.tests ?? []).filter(t => t.status === 'running')
@@ -3714,8 +3716,28 @@ export const register: Register = on => {
       : ''
 
     // The viewer: what each tab lists, as lines; the body shows BODY_ROWS of them from where it is scrolled.
-    const BODY_ROWS = tab === 'search' ? 11 : 12
+    // Every Claude shows; the viewer takes the rest of the pane, down to its bottom (8 rows at least).
     const ROW = CELL_H
+    const DET = 10
+    const rowW = Math.round((vwCols - DET) * CELL_W)
+    const askLines = (r: PaneRow) => (r.state === 'you' ? wrapRows(r.ask, askCols(rowW), 6).length : 0)
+    const aboveRows = isTerminal
+      ? 1 +
+        1 +
+        rowsP.reduce((n, r) => n + (r.state === 'done' ? 1 : r.state === 'you' ? 2 + wrapRows(r.ask, Math.max(16, cols - 6), 6).length : 2), 0) +
+        (recap ? (recap.copy ? 2 + recap.facts.length : 2) : 0)
+      : Math.ceil(
+          (24 +
+            rowsP.reduce((n, r) => n + (r.state === 'done' ? rowH(r, 0) : Math.ceil((rowH(r, askLines(r)) + 4) / ROW) * ROW), 0) +
+            (recap ? recapH(recap) - 6 + ROW : 0)) /
+            ROW,
+        )
+    const paneRows = Math.max(0, Math.floor(e.props?.scroll?.bodyRows ?? 0))
+    if (`${e.surface} ${cols}x${paneRows}` !== paneSize) {
+      paneSize = `${e.surface} ${cols}x${paneRows}`
+      diagDirty = true
+    }
+    const BODY_ROWS = Math.max(8, (paneRows || aboveRows + 1 + 4 + 2 + 1 + 12) - aboveRows - 1 - 4 - 2 - (tab === 'search' ? 1 : 0) - 1)
     const timeW = (wide ? 8 : 5) * CELL_W
     const logCols = Math.max(12, vwCols - (wide ? 8 : 5) - 3 - 7 - 3 - 3 - 9)
     // A line opened reads over as many rows as it takes, up to the viewer's (the rest of a longer one is in the chat).
@@ -3928,7 +3950,7 @@ export const register: Register = on => {
         return (
           <Button key={k} plain onPress={press(act)}>
             {(g.parts ?? [[body, g.role ?? 'text']]).map(([pt, role], i) => (
-              <Text key={`${k}p${i}`} color={toneOf(role)} bold={g.b} underline={g.u}>
+              <Text key={`${k}p${i}`} mono size="footnote" color={toneOf(role)} bold={g.b} underline={g.u}>
                 {pt}
               </Text>
             ))}
@@ -3936,24 +3958,24 @@ export const register: Register = on => {
         )
       }
       return (
-        <Text key={k} color={tone} bold={g.b} italic={g.i} wrap="truncate">
+        <Text key={k} mono size="footnote" color={tone} bold={g.b} italic={g.i} wrap="truncate">
           {body}
         </Text>
       )
     }
     const lineEl = (l: VLine, k: string) => (
       <Box key={k} flexDirection="row" height={1} overflow="hidden">
-        {l.indent ? <Text>{' '.repeat(Math.round(l.indent / CELL_W))}</Text> : null}
+        {l.indent ? <Text mono size="footnote">{' '.repeat(Math.round(l.indent / CELL_W))}</Text> : null}
         {l.segs.map((g, i) => (
           <Box key={`${k}s${i}`} flexDirection="row" flexShrink={g.flex ? 1 : 0}>
             {segEl(g, `${k}g${i}`)}
-            <Text>{' '}</Text>
+            <Text mono size="footnote">{' '}</Text>
           </Box>
         ))}
         <Box flexGrow={1} />
         {(l.right ?? []).map((g, i) => (
           <Box key={`${k}r${i}`} flexDirection="row" flexShrink={0}>
-            <Text>{' '}</Text>
+            <Text mono size="footnote">{' '}</Text>
             {segEl(g, `${k}h${i}`)}
           </Box>
         ))}
@@ -3973,18 +3995,16 @@ export const register: Register = on => {
     const headLine: VLine = { segs: [{ t: '✻ Claude Crew', b: true, role: 'brand' }, ...counts.map(([t, role, b]) => ({ t, role, b }))], right: totalCost > 0 || c.budget > 0 ? [{ t: `${fmtUsd(totalCost)}${budgetText ? ` ${budgetText}` : ''}`, role: costRole }] : [] }
 
     // The Claudes: each row a picture, its Details a Button beside it on the line it belongs to.
-    const DET = 8
-    const rowW = Math.round((vwCols - DET) * CELL_W)
     const detailsBtn = (r: PaneRow) => (
       <Button key={`details:${r.id}`} plain onPress={press(openDetails(r.id))}>
-        <Text color={r.focused ? '#E6EDF3' : '#8B949E'} underline>
+        <Text mono size="footnote" color={r.focused ? '#E6EDF3' : '#8B949E'} underline>
           {r.focused ? 'Hide' : 'Details'}
         </Text>
       </Button>
     )
     const rowEl = (r: PaneRow) => {
       const P = picture()
-      const lines = r.state === 'you' ? wrapRows(r.ask, askCols(rowW), 6).length : 0
+      const lines = askLines(r)
       const tall = rowH(r, lines)
       drawCrew(P, [r], 0, rowW, wide, openDetails)
       const alt = `${r.name}: ${r.status}${r.object ? ` · ${r.object}` : ''}${r.state === 'you' ? ` · ${r.ask}` : r.state === 'done' ? '' : ` · ${r.progress}`}`
@@ -4061,7 +4081,7 @@ export const register: Register = on => {
     }
     const searchEl = tab === 'search' ? (
       <Box key="search-row" flexDirection="row">
-        <Text color="#8B949E">{'⌕ '}</Text>
+        <Text mono size="footnote" color="#8B949E">{'⌕ '}</Text>
         <Box flexGrow={1}>
           <Input key="search-input" placeholder="Search files and the log..." value={sq.q} submitLabel="" onInput={(v: string) => void searchFor($, v)} onSubmit={(v: string) => void searchFor($, v, true)} />
         </Box>

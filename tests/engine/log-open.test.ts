@@ -50,7 +50,7 @@ test('a long message opens whole in the log, and folds again', async ($, on) => 
     const opened = rowsOf(await ui.drawn())
     const words = opened.join(' ').replace(/\s+/g, ' ')
     expect(MSG.split(' ').every(w => words.includes(w)) && words.includes('point 8 is that'), `${cols}: opened, every word of it shows: ${opened.join(' / ').slice(0, 900)}`).toBe(true)
-    expect(opened.length <= 12, `${cols}: within the viewer's 12 rows`).toBe(true)
+    expect(opened.length <= 60, `${cols}: within the pane's rows`).toBe(true)
     // Live: Claude keeps working while it's open, new lines coming in. It stays whole and in place.
     for (const f of ['e', 'f', 'g']) await $.tool.call({ tool: 'Read', tool_use_id: `r-${cols}-${f}`, file_path: `C:/work/game/src/${f}-${cols}.ts` } as never)
     expect(rowsOf(await ui.drawn()).join('\n') === opened.join('\n'), `${cols}: live, the log holds still while it's open`).toBe(true)

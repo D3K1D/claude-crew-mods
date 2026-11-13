@@ -10,7 +10,7 @@ Open it with `/crew` (it also opens by itself in a wide window). The repository'
 
 ## What you see
 
-The pane is four bands, top to bottom. Only the Claudes band changes height: the pane grows to fit every Claude, so nothing scrolls, folds or gets cut. Touched and the viewer keep fixed heights.
+The pane is four bands, top to bottom. Every Claude always shows: the Claudes band is as tall as its rows. Touched keeps a fixed height, and the viewer takes all the room left, down to the bottom of the pane: a taller pane shows more of the log.
 
 **The header.** Counts by state, in their colours: **⏸ 1 needs you** (amber), **● 4 working** (green), **◌ 1 waiting**, **✓ 1 done**. At the right, what the whole chat has cost, as Claude Code's own `/cost` totals it, and **of $10** when you set a budget (the cost turns amber at 80% of it and red past it).
 
