@@ -37,7 +37,7 @@ const render = (cols = 87) => fire('ui.render', { component: 'Pane', requestId: 
 const tick = () => new Promise(r => setTimeout(r, 5))
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
-const { lines, glyphs, words, pics, find: findIn, text: textOf } = await import('./kit.mjs')
+const { lines, glyphs, words, pics, find: findIn, text: textOf, viewHeight } = await import('./kit.mjs')
 // The viewer's rows: each row's words, left to right, as one string.
 const logRows = t => lines(t, 'view').map(l => l.map(g => g.t).join(' '))
 const logText = t => logRows(t).join('\n')
@@ -48,7 +48,8 @@ const press = async label => {
   elements.Client = undefined
   const t = await render()
   elements.Client = saved
-  const b = findIn(t, x => x.type === 'Button' && textOf(x) === label).at(-1)
+  const want = { 'Show the whole line': '›', 'Fold the line': '▾', 'Scroll up': '▲ older', 'Scroll down': '▼ newer', 'Back to the latest': '⤓ latest' }[label] ?? label
+  const b = findIn(t, x => x.type === 'Button' && textOf(x) === want).at(-1)
   if (!b) throw new Error('no target ' + label)
   await b.props.onPress({ surface: 'desktop' })
   await tick()
@@ -65,10 +66,10 @@ now += 1000
 const long = 'The save bug comes from the slot index being read before the profile loads. So the fix is to wait for the profile, then read the slot, and add a test that loads a profile slowly to prove the order holds on every platform we ship to.'
 await say(undefined, long)
 let t = await render()
-check('the viewer is its 12 rows', pics(t)[1].height === 12 * 19 && logRows(t).length <= 12, String(logRows(t).length))
+check('the viewer is its 12 rows', viewHeight(t) === 12 && logRows(t).length <= 12, String(logRows(t).length))
 check('a thought cut short has a › to open it', logRows(t).some(r => /^\S+ Claude The save bug .*… ›/.test(r)), logRows(t).at(-1))
 check('a line that fits has no ›', logRows(t).filter(r => /Step number 14/.test(r)).every(r => !r.includes('›')))
-check('following: ▼ is faint (nowhere newer to go), and ⤓ latest is dim', mark(t, '▼')?.role === 'faint' && mark(t, '⤓ latest')?.role === 'dim')
+check('following: ▼ newer is dim (nowhere newer to go), and so is ⤓ latest', mark(t, '▼ newer')?.role === 'dim' && mark(t, '⤓ latest')?.role === 'dim')
 
 // Open it: all of it, over as many rows as it takes, every word; the log holds still.
 await press('Show the whole line')
@@ -97,7 +98,7 @@ await press('Scroll down')
 await press('Scroll down')
 t = await render()
 check('▼ back to the newest follows again', /Another newer step/.test(logText(t)) && mark(t, '⤓ latest')?.role === 'dim', logRows(t).at(-1))
-check('folded, the log is its 12 rows again', logRows(t).length <= 12 && pics(t)[1].height === 12 * 19)
+check('folded, the log is its 12 rows again', logRows(t).length <= 12 && viewHeight(t) === 12)
 await press('Scroll up')
 await press('Scroll up')
 t = await render()
@@ -106,8 +107,12 @@ await press('Back to the latest')
 await act('The very latest step')
 t = await render()
 check('⤓ latest: following again, the newest line at the bottom', /The very latest step/.test(logRows(t).at(-1)) && mark(t, '⤓ latest')?.role === 'dim', logRows(t).at(-1))
-const W = pics(t)[1].width
-check('no row of the log runs past it at 87 columns', glyphs(t, 'view').every(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) <= W + 0.5))
+{
+  const { find: f2 } = await import('./kit.mjs')
+  const view = f2(t, x => x.type === 'Box' && x.props?.key === 'view')[0]
+  const rows = f2(view, x => x.type === 'Box' && x.props?.height === 1)
+  check('every row of the log is one line, cut to the pane (never past it)', rows.length > 0 && rows.every(r => r.props.overflow === 'hidden'))
+}
 
 // A long message of yours: one row, then › opens the rest.
 const msg = Array.from({ length: 12 }, (_, i) => `point ${i + 1} is that the inventory panel should keep its size when items come and go`).join('; ')
@@ -132,10 +137,12 @@ await fire('tool.call', { tool: 'Agent', tool_use_id: 'sp1', description: 'Inven
   return { text: 'Started in the background' }
 })
 const name = globalThis.__store.get('crew').agents.find(a => a.id === 'sub1').name
-await press(`${name}: Details`)
+const { makePress, find: f3, text: t3 } = await import('./kit.mjs')
+const pressRow = makePress(elements, () => render(), tick)
+await pressRow(`${name}: Details`)
 t = await render()
 check("each row's Details opens what the helper was asked, whole", words(t, 'view').join(' ').replace(/\s+/g, ' ').includes(job), words(t, 'view').join(' | ').slice(0, 300))
-check('...its row says the Details show below', words(t, 'top').includes('Shown below'))
-await press(`${name}: Shown below`)
-check('pressed again, the viewer goes back to Activity', !words(await render(), 'top').includes('Shown below'))
+check('...its row says Hide', f3(t, x => x.type === 'Button' && t3(x) === 'Hide').length === 1)
+await pressRow(`${name}: Hide`)
+check('pressed again, the viewer goes back to Activity', !f3(await render(), x => x.type === 'Button' && t3(x) === 'Hide').length)
 console.log(`\n${fails} failing check(s)`)

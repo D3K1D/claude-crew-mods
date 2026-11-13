@@ -43,10 +43,10 @@ const drawAll = async ($: any, label: string) => {
       expect(header, `${label} ${surface} ${cols}: header`).toBe(true)
       expect(all.filter(e => e.props && 'children' in e.props).length, `${label} ${surface} ${cols}: no children prop`).toBe(0)
       if (surface === 'desktop') {
-        expect(pics.length, `${label} desktop ${cols}: two pictures`).toBe(2)
-        // The engine names the module by its path in the plugin.
-        expect(all.filter(e => e.type === 'Client' && /(^|\/)hit\.tsx$/.test(String(e.props?.module))).length, `${label} desktop ${cols}: a hit module over each`).toBe(2)
-        expect(pics.every(p => p.source.length < 131072 && p.height % 19 === 0), `${label} desktop ${cols}: within the engine's size, whole rows`).toBe(true)
+        expect(pics.length >= 2, `${label} desktop ${cols}: the header and a row are pictures`).toBe(true)
+        expect(all.filter(e => e.type === 'Client').length, `${label} desktop ${cols}: nothing laid over a picture`).toBe(0)
+        expect(all.some(e => e.type === 'Button'), `${label} desktop ${cols}: the controls are Buttons`).toBe(true)
+        expect(pics.every(p => p.source.length < 131072), `${label} desktop ${cols}: within the engine's size`).toBe(true)
       } else expect(pics.length, `${label} terminal ${cols}: no pictures`).toBe(0)
       await ui.unmount()
     }
@@ -83,31 +83,21 @@ test('the pane draws empty, and in a busy session', async ($, on) => {
   // What the busy desktop pane says: needing you, with its whole request; Touched with the edit.
   const cols = 87
   const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'desktop', ...PANE(cols) })
-  let [top, view] = pictures(await ui.drawn())
-  const said = wordsOf(top.source)
+  const said = pictures(await ui.drawn()).flatMap(p => wordsOf(p.source))
   expect(said.includes('Needs you'), 'needs you').toBe(true)
   expect(said.some(w => w.startsWith('Allow running Clear the old build folder?')), 'its whole request').toBe(true)
-  expect(said.includes('a.ts') && said.includes('+2'), 'Touched names the edited file').toBe(true)
+  const buttonText = async () => (await ui.findAll({ type: 'Button' })).map(b => textOf(b) || String((b as { text?: string }).text ?? ''))
+  const labels = await buttonText()
+  expect(labels.some(t => /a\.ts\s*\+2/.test(t)), `Touched has the edited file as a Button, with its lines: ${labels.join(' | ').slice(0, 300)}`).toBe(true)
 
-  // A click on "Details", through the hit module: the viewer shows that Claude.
-  const vwCols = cols - 1
-  const click = async (key: string, pic: { width: number; height: number }, x: number, y: number) => {
-    await ui.resize({ columns: vwCols, rows: pic.height / 19, in: key })
-    const c = { x: Math.floor((x / pic.width) * vwCols), y: Math.floor(y / 19) }
-    await ui.pointer({ type: 'down', x: c.x, y: c.y, button: 'left', in: key } as never)
-    await ui.pointer({ type: 'up', x: c.x, y: c.y, button: 'left', in: key } as never)
-  }
-  const det = spotOf(top.source, 'Details')!
-  await click('hit-top', top, det.x - 12, det.y - 4)
-  ;[top, view] = pictures(await ui.drawn())
-  expect(wordsOf(top.source).includes('Shown below'), "a click on Details shows that Claude's details").toBe(true)
-  expect(wordsOf(top.source).includes('Claude ✕'), '...in its own tab').toBe(true)
+  // Pressed as the person presses it: Details shows that Claude in the viewer, in its own tab.
+  await ui.press({ key: 'details:main' })
+  expect((await buttonText()).includes('Claude ✕'), "Details shows that Claude's tab").toBe(true)
+  expect((await buttonText()).includes('Hide'), '...and its row says Hide').toBe(true)
 
-  // A click on a tab: every file.
-  const filesTab = wordsOf(top.source).find(w => /^Files \d+$/.test(w))!
-  const files = spotOf(top.source, filesTab)!
-  await click('hit-top', top, files.x + 6, files.y - 4)
-  ;[top, view] = pictures(await ui.drawn())
-  expect(wordsOf(view.source).some(w => w.startsWith('and-an-even-longer')), 'the Files tab lists every file').toBe(true)
+  // A tab: every file.
+  const filesTab = (await ui.findAll({ type: 'Button' })).find(b => /^Files \d+$/.test(textOf(b) || String((b as { text?: string }).text ?? '')))
+  await ui.press({ key: filesTab!.key! })
+  expect(JSON.stringify(await ui.drawn()).includes('and-an-even-longer-file-name.generated.ts'), 'the Files tab lists every file').toBe(true)
   await ui.unmount()
 })

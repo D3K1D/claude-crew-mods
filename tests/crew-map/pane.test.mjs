@@ -1,8 +1,9 @@
 // The whole pane as the design draws it: the header (counts by state, the one cost), the crew (a row per
 // Claude, helpers under who started them, one needing you pinned on top, Codex in a row), Touched (a
 // line per folder, files as buttons) and the viewer (Activity, Files, Search, Settings, or one Claude's
-// Details). Each band is a picture with the hit module over it; clicks land on what is drawn there.
-import { find, text, words, glyphs, has, pics, makePress, targets } from './kit.mjs'
+// Details). What is only read is drawn as pictures (the header, each Claude's row, the last task's card);
+// everything pressed is a real Button, beside or under them, never over them.
+import { find, text, words, glyphs, has, pics, makePress, targets, viewHeight } from './kit.mjs'
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
@@ -58,15 +59,15 @@ await fire('session.start', {}, async () => ({}))
 
 // ── Before any work: one Claude, idle; the crew's room says what will show there, with the demo.
 let t = await render()
-check('desktop: two pictures (the top bands, the viewer), each with the hit module over it', pics(t).length === 2 && find(t, x => x.type === 'Client').map(x => x.props.module).join(',') === './hit.tsx,./hit.tsx')
-check('each picture is whole rows tall (the hit module covers it exactly)', pics(t).every(p => p.height % 19 === 0), pics(t).map(p => p.height).join(','))
-check('the viewer is 12 rows', pics(t)[1].height === 12 * 19)
+check('desktop: the header and the row are pictures; no Client, nothing laid over a picture', pics(t).length >= 2 && find(t, x => x.type === 'Client').length === 0 && find(t, x => x.type === 'Box' && (x.props.marginTop ?? 0) < 0).length === 0)
+check("a row beside its Details is whole rows tall, so the Button sits on the row's line", find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-')).every(b => find(b, y => y.type === 'Svg')[0].props.height === b.props.height * 19))
+check('the viewer is 12 rows', viewHeight(t) === 12)
 check('header: the brand and one idle Claude, nothing running', has(t, '✻ Claude Crew', 'top') && has(t, '◌ 1 idle', 'top') && has(t, 'nothing running', 'top'))
 check('the idle Claude says it is your turn, and what to do', has(t, 'Idle', 'top') && has(t, 'your turn', 'top') && has(t, 'ask Claude something to start', 'top'))
 check('before any work, the crew says what will show there', has(t, 'Nothing yet. Each Claude gets a row here as it starts.', 'top'))
 check('...with the demo', (await targets(elements, render)).includes('▶ Try a pretend session'))
 check('Touched says there are no files yet', has(t, 'No files yet. Folders show here as the Claudes open files.', 'top'))
-check('the tabs: Activity (shown), Files 0, Search, Settings; ▲ ▼ and ⤓ latest', ['Activity', 'Files 0', '⌕', '⚙', '▲', '▼', '⤓ latest'].every(w => has(t, w, 'top')) && glyphs(t, 'top').find(g => g.t === 'Activity')?.bold === true)
+check('the tabs: Activity (shown), Files 0, Search, Settings; ▲ older, ▼ newer and ⤓ latest, each a Button', ['Activity', 'Files 0', '⌕', '⚙', '▲ older', '▼ newer', '⤓ latest'].every(w => find(t, x => x.type === 'Button' && text(x) === w).length === 1) && glyphs(t, 'top').find(g => g.t === 'Activity')?.bold === true)
 
 // ── Busy: the design's state. One needs you, helpers at work (one of theirs too), a test running, Codex, files changed.
 await fire('turn.start', { text: 'Fix the adapter tests and make them run offline', turnId: 'T' }, async () => ({}))
@@ -113,30 +114,25 @@ check('...its plan: Step 2 of 3 and the step, and its model', has(t, 'Step 2 of 
 check('a helper running the tests works (green), saying what for and how long', at('Running tests')?.role === 'green' && top.some(g => /Run the adapter tests · \d+(\.\d)?s/.test(g.t)), top.filter(g => /adapter tests/.test(g.t)).map(g => g.t).join('|'))
 check('a helper with no step list counts its actions', top.some(g => /^\d+ actions? so far$/.test(g.t)))
 check('Codex has a row: its model, what it does', has(t, 'gpt-5.6-sol', 'top') && has(t, 'adapter.ts', 'top'))
-check('every row but done ones has Details', top.filter(g => g.t === 'Details').length === names.length)
+check('every row but done ones has Details, a Button beside it', find(t, x => x.type === 'Button' && text(x) === 'Details').length === names.length)
 check('Touched: the summary, a line per folder, files with lines added', has(t, 'src/adapters/', 'top') && has(t, 'tests/', 'top') && has(t, 'types.ts', 'top') && has(t, '+13', 'top') && has(t, 'Open folder', 'top'))
 const topSrc = pics(t)[0].source
-check('the little Claude stands on the file it is editing', /fixture\.js<\/text>(?:(?!<text).)*<g transform="translate\([^)]*\) scale\(0\.82\)">/.test(topSrc))
+check('the file a Claude is editing carries its dot, in its colour', find(t, x => x.type === 'Button' && /^● fixture\.js/.test(text(x))).length === 1)
 check('Activity: the log, its lines timed, the one running counting with ●', has(t, 'Editing fixture.js', 'view') && words(t, 'view').some(w => /^● \d/.test(w)))
 check('the log names who did what', has(t, 'Scout', 'view') && has(t, 'Helper', 'view'))
 check('colour means state only: no colour of a state on a name', ['Claude', 'Scout', 'Helper'].every(n => at(n)?.role === 'text'))
 check('every picture stays within the size the engine takes', pics(t).every(p => p.source.length < 131072))
 check('no element carries children in its props as well as its own', find(t, x => x.props && 'children' in x.props && x.children).length === 0)
 
-// ── A click on a picture: the hit module reports where, the hooks run what is drawn there.
-const det = top.filter(g => g.t === 'Details')[2]
-await fire('ui.message', { component: 'Pane', requestId: 'crew-map', element: 'hit-top', surface: 'desktop', data: { click: [det.x - 20, det.y - 4] } }, async () => ({}))
-await tick()
+// ── Details: the Button beside a row shows that Claude in the viewer.
+await press('Scout: Details')
 t = await render()
-check("a click on a row's Details shows that Claude in the viewer (its tab, marked ✕)", has(t, 'Scout ✕', 'top') && has(t, 'Shown below', 'top'))
+check("a row's Details shows that Claude in the viewer (its tab, marked ✕), and says Hide", find(t, x => x.type === 'Button' && text(x) === 'Scout ✕').length === 1 && find(t, x => x.type === 'Button' && text(x) === 'Hide').length === 1)
 check('...its model and who it helps, its cost and tokens, what it was asked, its steps', has(t, 'Sonnet 5.5 · helping Claude', 'view') && words(t, 'view').some(w => /tokens/.test(w)) && has(t, 'Wire the fixture agent', 'view') && has(t, '✓ Read the adapter API', 'view') && has(t, '▸ Wire the fixture agent', 'view') && has(t, '○ Test it', 'view'))
 check('...and its own lines', has(t, 'Editing fixture.js', 'view') && !has(t, 'Editing adapter.test.ts', 'view'))
-check('the rows above hold still: the crew is as tall as before', pics(t)[0].height === pics(await render()).at(0).height)
-await press('Scout: Shown below')
+await press('Scout: Hide')
 t = await render()
-check('pressing it again goes back to Activity', !has(t, 'Scout ✕', 'top') && glyphs(t, 'top').find(g => g.t === 'Activity')?.bold)
-await fire('ui.message', { component: 'Pane', requestId: 'crew-map', element: 'hit-top', surface: 'desktop', data: { click: [1, 1] } }, async () => ({}))
-check('a click on nothing does nothing', has(await render(), 'Activity', 'top'))
+check('pressing it again goes back to Activity', !find(t, x => x.type === 'Button' && text(x) === 'Scout ✕').length && glyphs(t, 'top').find(g => g.t === 'Activity')?.bold)
 
 // ── Files, Search, Settings.
 await press('All files')
@@ -163,8 +159,9 @@ await press('off')
 check('the intro can be turned off', stored.intro === 'off')
 await press('Search')
 t = await render()
-check('Search: the field above the viewer', find(t, x => x.type === 'Client' && x.props.module === './search.tsx').length === 1 && pics(t)[1].height === 11 * 19)
-await fire('ui.message', { component: 'Pane', requestId: 'crew-map', element: 'search', surface: 'desktop', data: { q: 'adapter' } }, async () => ({}))
+const field = find(t, x => x.type === 'Input' && x.props.key === 'search-input')[0]
+check('Search: a field above the viewer', !!field)
+field.props.onInput('adapter')
 await tick()
 t = await render()
 check('...a search lists the matching files and log lines', words(t, 'view').some(w => /\d+ files? and \d+ log lines? match/.test(w)) && has(t, 'adapter.test.ts', 'view'))
@@ -174,20 +171,16 @@ await press('Activity')
 t = await render(57)
 check('narrow: counts without words, no model on the rows', has(t, '⏸ 1', 'top') && !has(t, 'Sonnet 5.5', 'top'))
 const W57 = pics(t)[0].width
-check('narrow: nothing is drawn past the right edge', glyphs(t).every(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) <= W57 + 0.5), glyphs(t).filter(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) > W57 + 0.5).map(g => g.t).join('|'))
+check('narrow: nothing is drawn past the right edge', glyphs(t).filter(g => g.x !== undefined).every(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) <= W57 + 0.5), glyphs(t).filter(g => g.x !== undefined && (g.end ? g.x : g.x + g.t.length * g.size * 0.6) > W57 + 0.5).map(g => g.t).join('|'))
 t = await render(87)
 const W87 = pics(t)[0].width
-check('wide: nothing is drawn past the right edge either', glyphs(t).every(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) <= W87 + 0.5), glyphs(t).filter(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) > W87 + 0.5).map(g => g.t).join('|'))
+check('wide: nothing is drawn past the right edge either', glyphs(t).filter(g => g.x !== undefined).every(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) <= W87 + 0.5), glyphs(t).filter(g => g.x !== undefined && (g.end ? g.x : g.x + g.t.length * g.size * 0.6) > W87 + 0.5).map(g => g.t).join('|'))
 
-// ── The hit module failing here: the targets become plain buttons under each picture.
-await fire('ui.fault', { component: 'Pane', requestId: 'crew-map', element: 'hit-top', reason: 'x' }, async () => ({}))
-t = await render()
-check('no hit module after it failed, and the targets as buttons', find(t, x => x.type === 'Client').length === 0 && find(t, x => x.type === 'Button').some(b => text(b) === 'Scout: Details'))
 
 // ── The terminal: the same bands as text, each target a button.
 t = await render(87, 'terminal')
 check('terminal: no pictures', pics(t).length === 0)
-check('terminal: the header, the rows, Touched, the tabs', /✻ Claude Crew/.test(text(t)) && /Writing code/.test(text(t)) && /Touched/.test(text(t)) && /\[Activity\]/.test(text(t)))
+check('terminal: the header, the rows, Touched, the tabs', /✻ Claude Crew/.test(text(t)) && /Writing code/.test(text(t)) && /Touched/.test(text(t)) && find(t, x => x.type === 'Button' && text(x) === 'Activity').length === 1)
 check('terminal: Details is a button', find(t, x => x.type === 'Button' && text(x) === 'Details').length >= 5)
 
 // ── Done: the last task's card in the crew's place, copied as Markdown.

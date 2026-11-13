@@ -9,7 +9,7 @@ globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
 const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
 const { register } = await import('../.build/crew-map.mjs')
-const { glyphs, words, pics, makePress } = await import('./kit.mjs')
+const { lines, words, makePress, viewHeight } = await import('./kit.mjs')
 let now = Date.parse('2031-01-01T08:21:54')
 Date.now = () => now
 const P = 'C:/work/game'
@@ -36,11 +36,7 @@ const press = makePress(elements, () => render(150), () => new Promise(r => setT
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 // The viewer's rows: each row's words, left to right.
-const rowsOf = t => {
-  const by = new Map()
-  for (const g of glyphs(t, 'view')) by.set(g.y, [...(by.get(g.y) ?? []), g])
-  return [...by.values()].map(gs => gs.sort((a, b) => a.x - b.x).map(g => g.t).join(' '))
-}
+const rowsOf = t => lines(t, 'view').map(r => r.map(g => g.t).join(' ').replace(/ ▾$| ▾ /, m => (m.endsWith(' ') && m.length > 2 ? ' ' : '')))
 
 await fire('session.start', {}, async () => ({}))
 const long = "I feel like we're going to have to keep hard coding stuff the entire time we're working on this project. And it's going to keep breaking every time the layout changes, so can we find a way to make the panels size themselves from what they hold instead, and then check it on a 1080p screen and a 4K one too?"
@@ -54,7 +50,7 @@ for (const cols of [150, 100, 70]) {
   const mine = rows.filter(r => / You I feel like/.test(r))
   check(`${cols} cols: your message is marked as yours, not "new task"`, mine.length === 1 && !rows.some(r => /new task/.test(r)), rows.find(r => /You/.test(r)))
   check(`${cols} cols: it is one row, cut with "…", with a › to open it whole`, /…/.test(mine[0] ?? '') && /›/.test(mine[0] ?? ''), mine[0])
-  check(`${cols} cols: the viewer keeps its height (12 rows)`, pics(t)[1].height === 12 * 19)
+  check(`${cols} cols: the viewer keeps its height (12 rows)`, viewHeight(t) === 12)
   check(`${cols} cols: the command reads "See why rehearsal 7c failed"`, rows.some(r => /Claude See why rehearsal 7c failed/.test(r)), rows.at(-1))
   check(`${cols} cols: no $ anywhere in the pane`, !words(t).some(w => w.includes('$')), words(t).find(w => w.includes('$')))
 }

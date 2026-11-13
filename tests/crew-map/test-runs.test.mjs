@@ -39,8 +39,9 @@ const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : 
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of x.props?.children ?? []) find(c, pred, out); return out }
 const render = () => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 120 }, viewport: { columns: 120 } })
 const svgOf = t => find(t, x => x.type === 'Svg').map(x => x.props.source).join('')
+const { words: kitWords } = await import('./kit.mjs')
 // Every word the pane's pictures draw, in one string.
-const said = t => [...svgOf(t).matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1].replace(/&amp;/g, '&')).join(' | ')
+const said = t => kitWords(t).join(' | ')
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 

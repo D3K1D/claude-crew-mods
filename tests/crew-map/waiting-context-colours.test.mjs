@@ -72,7 +72,7 @@ await call('Bash', { command: 'npm test', description: 'Run the auth tests' }, a
 {
   const row = rowOf(tree, 'Claude')
   check('a permission prompt marks the Claude as needing you, with what it asks', /Claude Needs you .*Allow running Run the auth tests\? Answer in the chat\./.test(row), row)
-  check('...in amber, its card amber', glyphs(tree, 'top').find(g => g.t === 'Needs you')?.role === 'amber' && /class="f-amberbg s-amber"/.test(find(tree, x => x.type === 'Svg')[0].props.source))
+  check('...in amber, its card amber', glyphs(tree, 'top').find(g => g.t === 'Needs you')?.role === 'amber' && find(tree, x => x.type === 'Svg').some(x => /class="f-amberbg s-amber"/.test(x.props.source)))
   check('...the header counts it', words(tree, 'top').includes('⏸ 1 needs you'))
   check('...and the log says what it needs', crew().log.some(l => l.text === '⏸ needs you: allow running Run the auth tests'))
 }
@@ -155,7 +155,7 @@ tree = await render()
 {
   const gs = glyphs(tree, 'top')
   const changed = gs.find(g => g.t === 'changed.ts')
-  check('an edited file is in the text colour, its lines added in green', changed?.role === 'text' && gs.some(g => g.t === '+2' && g.role === 'green' && Math.abs(g.y - changed.y) < 1), JSON.stringify(changed))
+  check('an edited file is in the text colour, its lines added in green', changed?.role === 'text' && gs.some(g => g.t === '+2' && g.role === 'green'), JSON.stringify(changed))
   check('a file only read is dim', gs.find(g => g.t === 'read-only.ts')?.role === 'dim')
 }
 

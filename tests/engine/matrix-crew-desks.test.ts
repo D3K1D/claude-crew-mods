@@ -67,23 +67,11 @@ for (const surface of ['desktop', 'terminal'] as const) {
     }
 
     const ui = await $.ui.mount({ plugin: 'crew-map', surface, ...PANE(120) })
-    // A file on Touched opens the file (through some process): a button in the terminal, a click on the picture on the desktop.
+    // A file on Touched is a Button that opens it (through some process), on the desktop and in the terminal alike.
     const before = ran.length
-    if (surface === 'terminal') {
-      const file = (await ui.findAll({ type: 'Button' })).find(b => /^a\.ts\b/.test(String((b as { text?: string }).text ?? '')))
-      expect(file, 'a.ts is a button').toBeDefined()
-      await ui.press({ key: file!.key! })
-    } else {
-      const top = String((await ui.findAll({ type: 'Svg' }))[0]?.props.source ?? '')
-      const m = [...top.matchAll(/<text x="([\d.]+)" y="([\d.]+)"[^>]*>a\.ts<\/text>/g)][0]
-      expect(!!m, 'a.ts is drawn').toBe(true)
-      const H = Number((await ui.findAll({ type: 'Svg' }))[0]?.props.height ?? 0)
-      const W = Number((await ui.findAll({ type: 'Svg' }))[0]?.props.width ?? 1)
-      await ui.resize({ columns: 119, rows: H / 19, in: 'hit-top' })
-      const c = { x: Math.floor(((Number(m![1]) + 8) / W) * 119), y: Math.floor((Number(m![2]) - 4) / 19) }
-      await ui.pointer({ type: 'down', x: c.x, y: c.y, button: 'left', in: 'hit-top' } as never)
-      await ui.pointer({ type: 'up', x: c.x, y: c.y, button: 'left', in: 'hit-top' } as never)
-    }
+    const file = (await ui.findAll({ type: 'Button' })).find(b => /^(● )?a\.ts\b/.test(String((b as { text?: string }).text ?? '')))
+    expect(file, 'a.ts is a button').toBeDefined()
+    await ui.press({ key: file!.key! })
     expect(ran.length, 'opening a file ran an opener').toBeGreaterThan(before)
 
     // A helper finishes: one dim line that says Done.

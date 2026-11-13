@@ -1,5 +1,5 @@
-// Reading the pane as the person sees it: the words its pictures draw, in order, and pressing what is
-// drawn by its label (each picture's targets, drawn as plain buttons when no hit module runs).
+// Reading the pane as the person sees it: the words its pictures draw and its text, and pressing its
+// Buttons by what they say (or by the names older tests gave them: "Scout: Details", "Settings"...).
 export const kids = x => (x && typeof x === 'object' ? (x.children ?? x.props?.children ?? []) : [])
 export const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : kids(x).map(text).join(''))
 export const find = (x, pred, out = []) => {
@@ -9,61 +9,81 @@ export const find = (x, pred, out = []) => {
   return out
 }
 const unxml = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&')
-/** Each picture's words, in drawing order; `band` picks the top one ('top') or the viewer ('view'). */
+/** The colour roles of the pane's text, by colour. */
+const ROLE_OF = { '#E6EDF3': 'text', '#8B949E': 'dim', '#6E7681': 'faint', '#E3B341': 'amber', '#3FB950': 'green', '#F85149': 'red', '#D97757': 'brand', text: 'text', inactive: 'dim', subtle: 'faint', warning: 'amber', success: 'green', error: 'red', claude: 'brand' }
+/** The viewer: the Box keyed "view", and its height in rows. */
+export const viewHeight = t => viewOf(t)?.props?.height
+const viewOf = t => find(t, x => x.type === 'Box' && x.props?.key === 'view')[0]
+const inView = t => {
+  const v = viewOf(t)
+  const set = new Set()
+  if (v) find(v, () => true).forEach(x => set.add(x))
+  return set
+}
 export const pics = t => find(t, x => x.type === 'Svg').map(x => x.props)
-export const words = (t, band) => {
-  const ps = pics(t)
-  const list = band === 'top' ? ps.slice(0, 1) : band === 'view' ? ps.slice(-1) : ps
-  return list.flatMap(p => [...p.source.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => unxml(m[1])))
+/** The words drawn in the pictures (with place and colour role, each picture placed under the last), and the text. */
+const svgGlyphs = t => {
+  let off = 0
+  return pics(t).flatMap(p => {
+    const out = [...p.source.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)" font-size="([\d.]+)" class="f-(\w+)"([^>]*)>([^<]*)<\/text>/g)].map(m => ({
+      x: +m[1], y: +m[2] + off, size: +m[3], role: m[4], bold: m[5].includes('700'), end: m[5].includes('end'), t: unxml(m[6]),
+    }))
+    off += Number(p.height) || 0
+    return out
+  })
 }
-/** The words drawn with their place and colour role: { t, x, y, role, bold, end }. */
+/** The text the pane draws as Text, row by row: each row Box of one line, its words in order. */
+const textRows = (root, skip = new Set()) => {
+  const rows = find(root, x => x.type === 'Box' && x.props?.height === 1 && !skip.has(x))
+  // A lone mark (a coloured dot, an action's glyph) is not a word; the › and ▾ that open and fold a line are.
+  return rows.map(r => find(r, x => x.type === 'Text').map(x => ({ t: text(x).trim(), role: ROLE_OF[x.props?.color] ?? 'text', bold: !!x.props?.bold })).filter(g => g.t && !/^[^\p{L}\p{N}›▾]$/u.test(g.t)))
+}
 export const glyphs = (t, band) => {
-  const ps = pics(t)
-  const list = band === 'top' ? ps.slice(0, 1) : band === 'view' ? ps.slice(-1) : ps
-  return list.flatMap(p =>
-    [...p.source.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)" font-size="([\d.]+)" class="f-(\w+)"([^>]*)>([^<]*)<\/text>/g)].map(m => ({
-      x: +m[1], y: +m[2], size: +m[3], role: m[4], bold: m[5].includes('700'), end: m[5].includes('end'), t: unxml(m[6]),
-    })),
-  )
+  if (band === 'view') return textRows(viewOf(t) ?? {}).flat()
+  const view = inView(t)
+  const rest = textRows(t, view).flat()
+  return band === 'top' ? [...svgGlyphs(t), ...rest] : [...svgGlyphs(t), ...rest, ...textRows(viewOf(t) ?? {}).flat()]
 }
+export const words = (t, band) => glyphs(t, band).map(g => g.t)
 export const has = (t, s, band) => words(t, band).some(w => w.includes(s))
-/** The words drawn on each line (within a few pixels of one baseline), left to right; text set by its right end sorts by its left. */
+/** The words on each line: the pictures' by baseline, then the Text rows; the viewer's rows alone for 'view'. */
 export const lines = (t, band) => {
+  if (band === 'view') return textRows(viewOf(t) ?? {})
   const left = g => (g.end ? g.x - g.t.length * g.size * 0.6 : g.x)
   const out = []
-  for (const g of glyphs(t, band).sort((a, b) => a.y - b.y)) {
+  for (const g of svgGlyphs(t).sort((a, b) => a.y - b.y)) {
     const last = out.at(-1)
     if (last && g.y - last.y <= 5) last.gs.push(g)
     else out.push({ y: g.y, gs: [g] })
   }
   return out.map(l => l.gs.sort((a, b) => left(a) - left(b)))
 }
-/**
- * Draws the pane once without a hit module, so its targets are buttons, and presses the one labelled
- * `label` (a string: its whole label; a RegExp: a match). Returns false when there is none.
- */
-export const makePress = (elements, render, tick = () => new Promise(r => setTimeout(r, 5))) => async (label, ...args) => {
-  const saved = elements.Client
-  elements.Client = undefined
-  let t
-  try {
-    t = await render(...args)
-  } finally {
-    elements.Client = saved
+/** What older tests called a target, as the Button now says it. */
+const ALIAS = { Settings: '⚙', Search: '⌕', 'Scroll up': '▲ older', 'Scroll down': '▼ newer', 'Back to the latest': '⤓ latest', 'Show the whole line': '›', 'Fold the line': '▾' }
+const buttonFor = (t, label) => {
+  const buttons = find(t, x => x.type === 'Button')
+  if (label instanceof RegExp) return buttons.find(b => label.test(text(b)))
+  // A row's Details: the Button beside the picture of the row that names that Claude.
+  const det = typeof label === 'string' && label.match(/^(.+): (Details|Shown below|Hide)$/)
+  if (det) {
+    const row = find(t, x => x.type === 'Box' && String(x.props?.key ?? '').startsWith('row-') && find(x, y => y.type === 'Svg' && String(y.props.alt).startsWith(`${det[1]}:`)).length)[0]
+    return row ? find(row, x => x.type === 'Button')[0] : undefined
   }
-  const b = find(t, x => x.type === 'Button' && (label instanceof RegExp ? label.test(text(x)) : text(x) === label))[0]
+  if (label === 'All files') return buttons.find(b => /^Files \d+$/.test(text(b)))
+  const close = typeof label === 'string' && label.match(/^Close (.+)'s details$/)
+  if (close) return buttons.find(b => text(b) === `${close[1]} ✕`)
+  const want = ALIAS[label] ?? label
+  // A file or folder by its name: past the mark before it (a dot for the Claude on it, a folder's glyph), before its counts.
+  const bare = b => text(b).replace(/^[^\p{L}\p{N}.+−✕]\s/u, '')
+  return buttons.find(b => text(b) === want) ?? buttons.find(b => bare(b) === want) ?? buttons.find(b => bare(b).startsWith(`${want} `))
+}
+/** Draws the pane and presses the Button `label` names (a RegExp: a match). Returns false when there is none. */
+export const makePress = (elements, render, tick = () => new Promise(r => setTimeout(r, 5))) => async (label, ...args) => {
+  const b = buttonFor(await render(...args), label)
   if (!b) return false
   await b.props.onPress({ surface: 'desktop' })
   await tick()
   return true
 }
-/** The labels of every target the pane draws now. */
-export const targets = async (elements, render, ...args) => {
-  const saved = elements.Client
-  elements.Client = undefined
-  try {
-    return find(await render(...args), x => x.type === 'Button').map(text)
-  } finally {
-    elements.Client = saved
-  }
-}
+/** The labels of every Button the pane draws now. */
+export const targets = async (elements, render, ...args) => find(await render(...args), x => x.type === 'Button').map(text)

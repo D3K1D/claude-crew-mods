@@ -142,7 +142,7 @@ const hitBoxes = (() => {
   walk(drawn, null)
   return out
 })()
-check("each picture's hit module is in the layout, pulled up over the picture by its height", hitBoxes.length === 2 && hitBoxes.every(b => b.props.position !== 'absolute' && b.props.marginTop === -b.props.height), JSON.stringify(hitBoxes.map(b => ({ marginTop: b.props.marginTop, height: b.props.height }))))
+check('nothing is laid over a picture (a Button there would get no clicks): no Client, no Box pulled up', hitBoxes.length === 0 && !JSON.stringify(drawn).includes('"marginTop":-'))
 // ── Commands in words: the toast and the window never show raw command text ──
 {
   const toasts = []

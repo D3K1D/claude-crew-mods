@@ -40,13 +40,9 @@ const render = (cols = 120) => fire('ui.render', { component: 'Pane', requestId:
 const tick = () => new Promise(r => setTimeout(r, 5))
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
-const { glyphs, words, pics } = await import('./kit.mjs')
+const { lines, words } = await import('./kit.mjs')
 // The log's rows, as the viewer draws them: each row's words left to right; its duration is the last.
-const logRows = t => {
-  const by = new Map()
-  for (const g of glyphs(t, 'view')) by.set(g.y, [...(by.get(g.y) ?? []), g])
-  return [...by.values()].map(gs => gs.sort((a, b) => a.x - b.x))
-}
+const logRows = t => lines(t, 'view')
 const rowOf = (t, re) => logRows(t).find(r => re.test(r.map(g => g.t).join(' ')))
 const durOf = r => (r ? r.at(-1).t : '')
 
@@ -60,8 +56,7 @@ let t = await render()
 check('a quick read: 340ms', durOf(rowOf(t, /save\.ts/)) === '340ms', durOf(rowOf(t, /save\.ts/)))
 check('a build: 2.4s', durOf(rowOf(t, /Build the game/)) === '2.4s', durOf(rowOf(t, /Build the game/)))
 check('the tests: 1m12s', durOf(rowOf(t, /Claude Run the save tests/)) === '1m12s', logRows(t).map(r => r.map(g => g.t).join(' ')).join(' | '))
-const W = pics(t)[1].width
-check('every duration ends at the right edge', ['340ms', '2.4s', '1m12s'].every(d => { const g = glyphs(t, 'view').find(x => x.t === d); return g && Math.abs(g.x + d.length * g.size * 0.6 - (W - 2)) < 0.6 }))
+check('every duration is the last word on its row, set against the right edge', ['340ms', '2.4s', '1m12s'].every(d => logRows(t).some(r => r.at(-1)?.t === d)))
 
 // While one runs: it counts up, ● before it.
 let release

@@ -52,7 +52,7 @@ const click = async (key, choice) => {
   const tree = await render()
   elements.Client = saved
   const label = key.startsWith('dir:') ? `${key.slice(4)}/` : key.split('/').pop()
-  const b = find(tree, x => x.type === 'Button' && text(x) === label)[0]
+  const b = find(tree, x => x.type === 'Button' && text(x).replace(/^[^\p{L}\p{N}.]\s/u, '') === label)[0]
   ran.length = 0
   toasts.length = 0
   await b?.props.onPress({ surface: 'desktop' })
@@ -108,7 +108,7 @@ const platformTry = async (name, uname) => {
   elements.Client = undefined
   const draw = () => fire2('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
   // This copy's project is /home/me/game: the files the first copy read are outside it, hidden.
-  for (const label of ['Settings', 'hidden', 'All files']) {
+  for (const label of ['⚙', 'hidden', 'Files 0', 'Files 1', 'Files 2', 'Files 3']) {
     await find(await draw(), x => x.type === 'Button' && text(x) === label)[0]?.props.onPress({ surface: 'desktop' })
     await new Promise(res => setTimeout(res, 20))
   }
@@ -117,7 +117,7 @@ const platformTry = async (name, uname) => {
   const got = []
   for (const f of ['art/hero sprite.png', 'tools/setup.exe']) {
     out.length = 0
-    await find(t, x => x.type === 'Button' && text(x) === f.split('/').pop())[0]?.props.onPress({ surface: 'desktop' })
+    await find(t, x => x.type === 'Button' && text(x).replace(/^[^\p{L}\p{N}.]\s/u, '') === f.split('/').pop())[0]?.props.onPress({ surface: 'desktop' })
     await new Promise(res => setTimeout(res, 5))
     got.push(out.filter(a => a[0] !== 'uname').at(-1) ?? [])
   }

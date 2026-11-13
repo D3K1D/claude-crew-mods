@@ -30,29 +30,6 @@ for (const mod of ['crew-map', 'codex-bridge'])
     logLevel: 'warning',
   })
 
-// The search field's surface module, built on its own.
-await build({
-  entryPoints: [join(root, 'crew-map', 'hooks', 'search.tsx')],
-  outfile: join(out, 'crew-map-search.mjs'),
-  bundle: true,
-  format: 'esm',
-  platform: 'node',
-  jsxFactory: 'h',
-  tsconfigRaw: {},
-  logLevel: 'warning',
-})
-// The pane's hit module, built on its own.
-await build({
-  entryPoints: [join(root, 'crew-map', 'hooks', 'hit.tsx')],
-  outfile: join(out, 'crew-map-hit.mjs'),
-  bundle: true,
-  format: 'esm',
-  platform: 'node',
-  jsxFactory: 'h',
-  tsconfigRaw: {},
-  logLevel: 'warning',
-})
-
 const filter = process.argv[2] ?? ''
 const files = ['crew-map', 'codex-bridge']
   .flatMap(dir => readdirSync(join(here, dir)).filter(f => f.endsWith('.test.mjs')).map(f => join(here, dir, f)))

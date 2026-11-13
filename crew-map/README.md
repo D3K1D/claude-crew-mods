@@ -18,12 +18,12 @@ The pane is four bands, top to bottom. Only the Claudes band changes height: the
 
 When nobody is working, the last task's card takes the room the helpers used: how long it took, what changed, the tests, the cost and who worked on it, with **Copy as Markdown** for a PR description. Before any work, it says what will show there, with a pretend session to try.
 
-**Touched.** One line per folder the work touched (the three worked in most lately), its files as buttons: lines added in green and removed, a red **✕2** when a build or test named errors in it, and a little Claude on the file one is editing now. **+N more** opens the Files tab, **Open folder** the project folder.
+**Touched.** One line per folder the work touched (the three worked in most lately), its files as buttons: lines added in green and removed, a red **✕2** when a build or test named errors in it, and a dot in a Claude's colour on the file it is editing now. **+N more** opens the Files tab, **Open folder** the project folder.
 
-**The viewer.** One box with tabs: **Activity**, **Files**, **⌕** (search), **⚙** (settings), and a Claude's own tab when you press **Details** on its row. **▲ ▼** scroll whichever tab is shown, and **⤓ latest** goes back to the newest.
+**The viewer.** One box with tabs: **Activity**, **Files**, **⌕** (search), **⚙** (settings), and a Claude's own tab when you press **Details** on its row. **▲ older** and **▼ newer** scroll whichever tab is shown, and **⤓ latest** goes back to the newest.
 
 - **Activity** is the log: every action, thought and message in time order, with who did it and how long each action took (340ms, 2.4s, 1m12s; one still running counts up with ●). Your messages show as **You**, and a message another Claude session sent shows its sender and words. A line cut short has a **›**: click it to read it whole (a thought opens to everything Claude said), **▾** folds it again. While you're scrolled back or have a line open, the log holds still as new lines come in.
-- **Details** for a Claude: its model, who it helps, its time; its cost and tokens; how full its context is (red with "compacts soon" from 85%, and how often it was compacted); everything it was asked; its steps (✓ done, ▸ on it, ○ to come); and its own lines from the log. **Shown below** on its row, or **✕** on its tab, closes it.
+- **Details** for a Claude: its model, who it helps, its time; its cost and tokens; how full its context is (red with "compacts soon" from 85%, and how often it was compacted); everything it was asked; its steps (✓ done, ▸ on it, ○ to come); and its own lines from the log. **Hide** beside its row, or **✕** on its tab, closes it.
 - **Files** lists every file touched, under its folder, with lines added and removed, or "read", and who touched it. Files outside the project can be hidden.
 - **Search** finds files and log lines as you type.
 - **Settings**: the theme (◐ auto, ☀ light, ☾ dark), a budget (with a heads-up at 50%, 80% and 100%), where files open, files outside the project shown or hidden, the intro on or off (and play it now), and a pretend session to try the pane.
@@ -49,7 +49,7 @@ The mod hooks Claude Code's events:
 - **every helper spawn**
 - **every turn's start and end:** goal, status, tokens
 
-Each band is drawn as one picture laid out to the pixel, so nothing is clipped, with a small module over it that tells the mod where a click landed; the mod runs what is drawn there. Where that module can't run, the pictures' targets are drawn as plain buttons under them.
+What is only read (the header, each Claude's row, the last task's card) is drawn as a picture laid out to the pixel, so nothing is clipped. Everything you press (Details, files, tabs, scrolling, the log's lines, settings) is a real button beside or under the pictures, never over them.
 
 A warning also pops up when two Claudes edit the same file within a minute of each other.
 

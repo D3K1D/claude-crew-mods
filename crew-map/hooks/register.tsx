@@ -7,7 +7,7 @@ import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, P
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.6.0'
+const VERSION = '1.6.1'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -963,8 +963,6 @@ const twoLines = (s: string, w: number): [string, string] => {
 const WINDOW_LINGER_MS = 20_000
 /** Lines the log keeps to scroll back through. */
 const LOG_KEEP = 120
-/** Rows an opened log line may take, and an opened desk's line. */
-const LOG_OPEN_ROWS = 40
 /** How many lines a press of ▲ or ▼ moves the log. */
 const LOG_STEP = 3
 /**
@@ -2282,11 +2280,6 @@ type Act =
   | { k: 'demo' }
   | { k: 'copy' }
 const NONE: Act = { k: 'none' }
-/** The targets of each band as last drawn, which the hit module's clicks are measured against. */
-const paneHits: Record<string, Hit[]> = {}
-/** The hit module failed on this surface: the bands' targets become plain buttons under them. */
-let hitFailed = false
-
 type TextOpts = { b?: boolean; i?: boolean; end?: boolean; u?: boolean }
 /** A picture being drawn: text, shapes, icons and the little Claude, and where its targets are. */
 const picture = () => {
@@ -2347,61 +2340,11 @@ type Seg = {
   /** Space after it (8 by default). */
   gap?: number
   run?: Act
+  /** A Button's words in their colours: [text, role]. */
+  parts?: [string, string][]
   label?: string
 }
 type VLine = { segs: Seg[]; right?: Seg[]; indent?: number }
-const segW = (g: Seg) => {
-  const size = g.size ?? 12
-  if (g.w !== undefined) return g.w
-  if (g.bar !== undefined) return 80
-  const lead = (g.dot ? 7 : 0) + (g.icon ? 13 : 0) + (g.sprite ? 14 : 0)
-  return g.t ? lead + (lead ? 5 : 0) + pxW(g.t, size) : lead
-}
-/** One line of the viewer, `h` tall from `top`: the segments left to right, `right` against the right edge. */
-const drawLine = (P: Pic, l: VLine, top: number, h: number, W: number) => {
-  const drawSeg = (g: Seg, x: number, room: number) => {
-    const size = g.size ?? 12
-    const role = g.role ?? 'text'
-    let at = x
-    if (g.dot) {
-      P.dot(at + 3.5, top + h / 2, 3.5, g.dot)
-      at += 7 + (g.t ? 5 : 0)
-    }
-    if (g.icon) {
-      P.icon(at, top + (h - 13) / 2, 13, g.icon[0], g.icon[1], 1.8)
-      at += 13 + (g.t ? 5 : 0)
-    }
-    if (g.sprite) {
-      P.sprite(at, top + (h - 10) / 2, g.sprite, 0.82)
-      at += 14 + (g.t ? 5 : 0)
-    }
-    if (g.bar !== undefined) {
-      P.rect(at, top + h / 2 - 4, 80, 8, 4, 'line')
-      if (g.bar > 0) P.rect(at, top + h / 2 - 4, Math.max(8, 80 * Math.min(1, g.bar)), 8, 4, g.role ?? 'dim')
-      return 80
-    }
-    const t = g.t ? fitPx(g.t, Math.max(0, room - (at - x)), size) : ''
-    const tw = P.line(at, top, h, t, size, role, { b: g.b, i: g.i, u: g.u })
-    const w = (g.w ?? at - x + tw) || 0
-    if (g.run) P.hit(x - 2, top, w + 4, h, g.label ?? g.t ?? '', g.run)
-    return w
-  }
-  let right = W - PADX
-  for (const g of [...(l.right ?? [])].reverse()) {
-    const w = segW(g)
-    drawSeg(g, right - w, w)
-    right -= w + (g.gap ?? 8)
-  }
-  let x = PADX + (l.indent ?? 0)
-  l.segs.forEach((g, i) => {
-    if (x >= right) return
-    // A flexible run gets what the runs after it leave; a fixed one its own width, if there is room.
-    const after = l.segs.slice(i + 1).reduce((n, q) => n + (q.flex ? 0 : segW(q)) + (q.gap ?? 8), 0)
-    const room = g.flex ? Math.max(0, right - x - after) : Math.min(segW(g), right - x)
-    x += Math.min(drawSeg(g, x, room), room) + (g.gap ?? 8)
-  })
-}
-
 /** One Claude's row as the pane draws it: the glance row, its whole request unwrapped, and whether its Details show. */
 type PaneRow = GlanceRow & { ask: string; focused: boolean }
 /** A row's height in the picture: done one line; at work two; needing you, its request (wrapped) and who it helps. */
@@ -2441,12 +2384,8 @@ const drawCrew = (P: Pic, rows: PaneRow[], y0: number, W: number, wide: boolean,
     const size = r.state === 'done' ? 12.5 : 13.5
     x += P.line(x, t1, 20, fitPx(r.status, right - x, size), size, sr, { b: true }) + 7
     if (r.object && right - x > 30) P.line(x, t1, 20, fitPx(r.object, right - x, 12.5), 12.5, r.state === 'done' ? 'dim' : 'text')
-    const details = (top: number, lh: number) => {
-      const label = r.focused ? 'Shown below' : 'Details'
-      const w = P.line(x1 - 11, top, lh, label, 11.5, r.focused ? 'text' : 'dim', { end: true, u: true })
-      P.hit(x1 - 11 - w - 4, top - 2, w + 8, lh + 4, `${r.name}: ${label}`, onDetails(r.id))
-      return w
-    }
+    // Details is a Button beside the row, not drawn in it.
+    const details = (_top: number, _lh: number) => -12
     if (r.state === 'you') {
       request.forEach((l, i) => P.line(ix + 24, t1 + 22 + 18 * i, 18, l, 12.5, 'text'))
       const t3 = t1 + 22 + 18 * request.length + 2
@@ -2471,7 +2410,7 @@ const drawCrew = (P: Pic, rows: PaneRow[], y0: number, W: number, wide: boolean,
 
 /** The last task's card in the crew's place while nobody works: how long, what changed, tests, cost, who. */
 type Recap = { title: string; goal: string; ago: string; facts: [string, string, string][]; copy?: Act; demo?: Act }
-const recapH = (r: Recap) => (r.copy ? 1 + 8 + 20 + r.facts.length * 22 + 22 + 8 + 1 : 1 + 8 + 18 + 4 + 18 + 8 + 1)
+const recapH = (r: Recap) => (r.copy ? 1 + 8 + 20 + r.facts.length * 22 + 8 + 1 : 1 + 8 + 18 + 8 + 1)
 const drawRecap = (P: Pic, r: Recap, y: number, W: number, wide: boolean) => {
   const h = recapH(r)
   P.rect(PADX + 0.5, y + 0.5, W - 2 * PADX - 1, h - 1, 8, '', 'line')
@@ -2479,9 +2418,6 @@ const drawRecap = (P: Pic, r: Recap, y: number, W: number, wide: boolean) => {
   if (!r.copy) {
     // Nothing done yet: what will show here, and the demo.
     P.line(x, y + 9, 18, fitPx(r.title, W - 2 * x, 12.5), 12.5, 'dim')
-    const label = '▶ Try a pretend session'
-    const w = P.line(x, y + 31, 18, label, 11.5, 'dim', { u: true })
-    if (r.demo) P.hit(x - 2, y + 29, w + 4, 22, label, r.demo)
     return y + h + 6
   }
   const t = y + 9
@@ -2496,89 +2432,14 @@ const drawRecap = (P: Pic, r: Recap, y: number, W: number, wide: boolean) => {
     P.line(x + 23, ft, 18, k, 12.5, 'dim')
     P.line(x + 23 + labelW + 10, ft, 18, fitPx(v, W - PADX - 11 - (x + 23 + labelW + 10), 12.5), 12.5, role)
   })
-  const ct = t + 20 + 4 + r.facts.length * 22
-  const label = 'Copy as Markdown'
-  const w = P.line(x + 23, ct, 18, label, 11.5, 'dim', { u: true })
-  P.hit(x + 21, ct - 2, w + 4, 22, label, r.copy)
   return y + h + 6
 }
 
 /** A file on a Touched line: its name, errors, lines added and removed, and the little Claude on it now. */
 type TouchFile = { name: string; errs: number; add: number; del: number; on: string; read?: boolean; run: Act }
 type TouchFolder = { name: string; files: TouchFile[] }
-const touchW = (f: TouchFile) =>
-  pxW(f.name, 12.5) + (f.errs ? 5 + pxW(`✕${f.errs}`, 12.5) : 0) + (f.add ? 5 + pxW(`+${fmtK(f.add)}`, 12.5) : 0) + (f.del ? 5 + pxW(`−${fmtK(f.del)}`, 12.5) : 0) + (f.on ? 5 + 14 : 0)
-/** Touched: its title and summary, Open folder, then a line per folder (three at most), its files as buttons. */
-const drawTouched = (P: Pic, y: number, W: number, wide: boolean, o: { title: string; sum: string; folders: TouchFolder[]; empty: string; openDir?: Act; more: Act }) => {
-  P.rule(y, 0, W)
-  const t = y + 8
-  let x = PADX
-  x += P.line(x, t, 20, o.title, 12.5, 'text', { b: true }) + 10
-  let right = W - PADX
-  if (o.openDir) {
-    const w = P.line(right, t, 20, 'Open folder', 11.5, 'dim', { end: true, u: true })
-    P.icon(right - w - 18, t + 3.5, 13, 'folder', 'dim', 1.7)
-    P.hit(right - w - 20, t - 2, w + 22, 24, 'Open folder', o.openDir)
-    right -= w + 18 + 10
-  }
-  P.line(x, t, 20, fitPx(o.sum, right - x, 12.5), 12.5, 'dim')
-  if (!o.folders.length) P.line(PADX, t + 24, 20, fitPx(o.empty, W - 2 * PADX, 12.5), 12.5, 'dim')
-  const folderW = wide ? 104 : 96
-  o.folders.slice(0, 3).forEach((d, i) => {
-    const lt = t + 24 + i * 24
-    P.line(PADX, lt, 20, fitPx(d.name, folderW, 12.5), 12.5, 'dim')
-    let fx = PADX + folderW + 12
-    const end = W - PADX
-    let shown = 0
-    for (const f of d.files) {
-      const left = d.files.length - shown - 1
-      const reserve = left ? pxW(`+${fmtK(left)} more`, 12.5) + 12 : 0
-      const w = touchW(f)
-      if (fx + w > end - reserve) break
-      let ax = fx
-      ax += P.line(ax, lt, 20, f.name, 12.5, f.errs ? 'red' : f.read ? 'dim' : 'text') + 5
-      if (f.errs) ax += P.line(ax, lt, 20, `✕${f.errs}`, 12.5, 'red', { b: true }) + 5
-      if (f.add) ax += P.line(ax, lt, 20, `+${fmtK(f.add)}`, 12.5, 'green') + 5
-      if (f.del) ax += P.line(ax, lt, 20, `−${fmtK(f.del)}`, 12.5, 'dim') + 5
-      if (f.on) P.sprite(ax, lt + 5, f.on, 0.82)
-      P.hit(fx - 2, lt - 2, w + 4, 24, f.name, f.run)
-      fx += w + 12
-      shown++
-    }
-    if (shown < d.files.length) {
-      const label = shown ? `+${fmtK(d.files.length - shown)} more` : `${fmtK(d.files.length)} files`
-      const w = P.line(fx, lt, 20, label, 12.5, 'dim', { u: true })
-      P.hit(fx - 2, lt - 2, w + 4, 24, `${d.name} ${label}`, o.more)
-    }
-  })
-  return y + 104
-}
-
 /** The viewer's tab row: the tabs (the one shown bold and underlined), then ▲ ▼ and back to the latest. */
 type Tab = { id: string; t: string; label: string; on: boolean; run: Act }
-const drawTabs = (P: Pic, y: number, W: number, wide: boolean, tabs: Tab[], scroll: { up: Act; down: Act; latest: Act; canUp: boolean; canDown: boolean; held: boolean }) => {
-  P.rule(y, 0, W)
-  const t = y + 6
-  let x = PADX
-  for (const tab of tabs) {
-    const w = P.line(x, t, 20, tab.t, 12.5, tab.on ? 'text' : 'dim', { b: tab.on })
-    if (tab.on) P.rect(x, t + 20, w, 2, 0, 'text')
-    P.hit(x - 4, t - 2, w + 8, 26, tab.label, tab.run)
-    x += w + 14
-  }
-  let r = W - PADX
-  const latest = wide ? '⤓ latest' : '⤓'
-  const lw = P.line(r, t, 20, latest, 12.5, scroll.held ? 'text' : 'dim', { end: true })
-  P.hit(r - lw - 4, t - 2, lw + 8, 26, 'Back to the latest', scroll.latest)
-  r -= lw + 14
-  const dw = P.line(r, t, 20, '▼', 12.5, scroll.canDown ? 'dim' : 'faint', { end: true })
-  P.hit(r - dw - 5, t - 2, dw + 10, 26, 'Scroll down', scroll.down)
-  r -= dw + 14
-  const uw = P.line(r, t, 20, '▲', 12.5, scroll.canUp ? 'dim' : 'faint', { end: true })
-  P.hit(r - uw - 5, t - 2, uw + 10, 26, 'Scroll up', scroll.up)
-  return y + 6 + 22 + 6
-}
-
 /** Does what a click on the pane asked for. */
 const doAction = async ($: EngineInterface, a: Act, surface: unknown) => {
   if (a.k === 'file') return openAndSay($, 'file', a.path, a.name, a.edits, a.line ?? 0)
@@ -3296,26 +3157,11 @@ export const register: Register = on => {
       if (typeof sd.q === 'string') await searchFor($, sd.q, sd.next === true)
       return {}
     }
-    if (e.element === 'hit-top' || e.element === 'hit-view') {
-      // A click on one of the pane's pictures: run what is drawn under it (the smallest target there).
-      const d = (e.data ?? {}) as { click?: unknown }
-      const at = Array.isArray(d.click) && d.click.length === 2 && d.click.every(v => typeof v === 'number' && Number.isFinite(v)) ? (d.click as [number, number]) : null
-      lastInputAt = Date.now()
-      if (at) {
-        const hit = (paneHits[e.element.slice(4)] ?? [])
-          .filter(t => at[0] >= t.x - 2 && at[0] <= t.x + t.w + 2 && at[1] >= t.y - 2 && at[1] <= t.y + t.h + 2)
-          .sort((p, q) => p.w * p.h - q.w * q.h)[0]
-        note(`hit ${e.element} ${Math.round(at[0])},${Math.round(at[1])}: ${hit ? hit.label : 'nothing'}`)
-        if (hit) await doAction($, hit.run, e.surface)
-      }
-      return {}
-    }
     return next(e)
   })
 
   // A hit module failed to load or run here: the pictures' targets become plain buttons instead.
   on('ui.fault', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
-    if (e.element === 'hit-top' || e.element === 'hit-view') hitFailed = true
     note(`fault ${e.element}: ${String((e as { reason?: unknown }).reason ?? '').slice(0, 120)}`)
     return next(e)
   })
@@ -3773,9 +3619,8 @@ export const register: Register = on => {
     // The viewer: what each tab lists, as lines; the body shows BODY_ROWS of them from where it is scrolled.
     const BODY_ROWS = tab === 'search' ? 11 : 12
     const ROW = CELL_H
-    const timeW = wide ? 62 : 40
-    const logTextPx = W - 2 * PADX - (timeW + 8) - 11 - (44 + 8) - 18 - (12 + 8) - (52 + 8)
-    const logCols = Math.max(12, Math.floor(logTextPx / (12 * ADV)))
+    const timeW = (wide ? 8 : 5) * CELL_W
+    const logCols = Math.max(12, vwCols - (wide ? 8 : 5) - 3 - 7 - 3 - 3 - 9)
     // A line opened reads over as many rows as it takes, up to the viewer's (the rest of a longer one is in the chat).
     const vRowsOf = (l: LogLine) => (openLog.has(logKey(l)) ? wrapRows(fullOf(l), logCols, BODY_ROWS) : [cutTo(oneLine(shortOf(l)), logCols)])
     const vCut = (l: LogLine) => fullOf(l) !== shortOf(l) || textW(oneLine(shortOf(l))) > logCols
@@ -3797,14 +3642,14 @@ export const register: Register = on => {
           segs: [
             { t: wide ? clock(l.at) : clock(l.at).slice(0, 5), w: timeW, role: 'faint' },
             { dot: m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}` },
-            { t: who, w: 44, role: 'dim' },
+            { t: who, w: 6 * CELL_W, role: 'dim' },
             { icon: [kind, running ? 'green' : l.kind === 'you' ? 'text' : 'dim'] },
             { t: first, flex: true, role: tone, i: l.kind === 'think' },
             ...(vCut(l) ? [{ t: open ? '▾' : '›', role: 'dim', run: { k: 'log', toggle: k, hold: upto[upto.length - 1]?.at ?? null }, label: open ? 'Fold the line' : 'Show the whole line', w: 12 } as Seg] : []),
           ] as Seg[],
           right: [{ t: dur, role: running ? 'green' : 'faint' }],
         },
-        ...rowsOf.slice(1).map(t => ({ segs: [{ t, flex: true, role: tone, i: l.kind === 'think' }], indent: timeW + 8 + 11 + 44 + 8 + 18 })),
+        ...rowsOf.slice(1).map(t => ({ segs: [{ t, flex: true, role: tone, i: l.kind === 'think' }], indent: timeW + 15 * CELL_W })),
       ]
     }
     // Activity: the log's lines up to where it is scrolled, as many as fill the body.
@@ -3922,8 +3767,7 @@ export const register: Register = on => {
       { segs: [{ t: `Claude Crew ${VERSION}`, role: 'faint' }] },
     ]
     const listed = tab === 'activity' ? actLines : tab === 'claude' ? detailLines() : tab === 'files' ? fileLines() : tab === 'search' ? searchLines() : settingLines()
-    const lineH = tab === 'settings' ? 24 : ROW
-    const fit = Math.floor((BODY_ROWS * ROW) / lineH)
+    const fit = BODY_ROWS
     const top0 = tab === 'activity' ? 0 : Math.max(0, Math.min(ps.top ?? 0, listed.length - fit))
     const bodyLines = listed.slice(top0, top0 + fit)
     const scroll =
@@ -3956,95 +3800,41 @@ export const register: Register = on => {
       run: x.id === 'claude' ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: x.id as NonNullable<Crew['pane']>['tab'], top: 0 }),
     }))
 
-    // The top picture: header, crew, Touched, the tab row; as tall as the crew needs, in whole rows.
+    // Drawn as the design draws it: pictures for what is only read (the header, each Claude's row, the
+    // last task's card), and real Buttons for everything pressed (Details, files, tabs, scrolling, the log's
+    // lines, settings), laid out beside and under the pictures, never over them.
     const mode = c.theme ?? 'auto'
-    const P1 = picture()
-    let x = PADX
-    x += P1.line(x, 2, 24, wide ? '✻ Claude Crew' : '✻', 12.5, 'brand', { b: true }) + 12
-    for (const [t, role, b] of counts) x += P1.line(x, 2, 24, t, 12.5, role, { b }) + 12
-    let rx = W - PADX
-    if (budgetText) rx -= P1.line(rx, 2, 24, budgetText, 12.5, 'dim', { end: true }) + 8
-    if (totalCost > 0 || c.budget > 0) P1.line(rx, 2, 24, fmtUsd(totalCost), 12.5, costRole, { end: true })
-    let y = drawCrew(P1, rowsP, 36, W, wide, openDetails)
-    if (recap) y = drawRecap(P1, recap, y, W, wide)
-    const raw = y - 6 + 10 + 104 + 10 + 34
-    const topRows = Math.ceil(raw / ROW)
-    y += topRows * ROW - raw - 6 + 10
-    y = drawTouched(P1, y, W, wide, { title: 'Touched', sum: touchedSum, folders: touchFolders, empty: 'No files yet. Folders show here as the Claudes open files.', openDir: sessionDir ? openDir(sessionDir, 'the project folder') : undefined, more: paneAct({ tab: 'files', top: 0 }) })
-    drawTabs(P1, y + 10, W, wide, tabs, scroll)
-    const topH = topRows * ROW
-    const P2 = picture()
-    bodyLines.forEach((l, i) => drawLine(P2, l, i * lineH, lineH, W))
-    const bodyH = BODY_ROWS * ROW
-    paneHits.top = P1.hits
-    paneHits.view = P2.hits
-    const say = (l: VLine) => [...l.segs, ...(l.right ?? [])].map(g => g.t ?? '').filter(Boolean).join(' ')
-    const topAlt = [`Claude Crew. ${counts.map(k => k[0]).join(', ')}${totalCost > 0 ? `. ${fmtUsd(totalCost)} so far` : ''}.`, ...rowsP.map(r => `${r.name}: ${r.status}${r.object ? ` · ${r.object}` : ''}${r.state === 'you' ? ` · ${r.ask}` : r.state === 'done' ? '' : ` · ${r.progress}`}`), `Touched: ${touchedSum || 'nothing yet'}.`].join(' ')
-    const hitLive = !!Client && !hitFailed && !isTerminal
-    const band = (key: 'top' | 'view', svg: string, rows: number, alt: string, hits: Hit[]) => (
-      <Box key={key} flexDirection="column">
-        <Box flexDirection="column" width={vwCols} height={rows} overflow="hidden">
-          <Svg source={svg} alt={alt} width={W} height={rows * ROW} />
-          {hitLive ? (
-            // The hit module, over the picture in the layout (an absolute Box would pass the pointer on).
-            <Box marginTop={-rows} width={vwCols} height={rows} overflow="hidden">
-              <Client key={`hit-${key}`} module="./hit.tsx" props={{ cw: CELL_W, ch: CELL_H, vw: W, vh: rows * ROW }} width="100%" height="100%" />
-            </Box>
-          ) : null}
-        </Box>
-        {hitLive ? null : (
-          // Where no hit module runs: the picture's targets as plain buttons under it.
-          <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-            {hits.map((t, i) => (
-              <Button key={`fb-${key}-${i}`} plain dimColor onPress={(press: { surface: unknown }) => void doAction($, t.run, press?.surface)}>
-                {t.label}
-              </Button>
-            ))}
-          </Box>
-        )}
-      </Box>
-    )
-    if (!isTerminal) {
-      draws[e.surface] = (draws[e.surface] ?? 0) + 1
-      return paintPane(
-        <Box flexDirection="column">
-          {band('top', P1.done(W, topH, mode), topRows, topAlt, P1.hits)}
-          {tab === 'search' ? (
-            <Box key="search-row" flexDirection="row" height={1}>
-              <Text dimColor>{'⌕ '}</Text>
-              {hitLive ? (
-                <Client key="search" module="./search.tsx" props={{ q: sq.q }} width={Math.max(10, vwCols - 2)} height={1} />
-              ) : (
-                <Input key="search-input" placeholder="Search files and the log..." value={sq.q} submitLabel="" onInput={(v: string) => void searchFor($, v)} onSubmit={(v: string) => void searchFor($, v, true)} />
-              )}
-            </Box>
-          ) : null}
-          {band('view', P2.done(W, bodyH, mode), BODY_ROWS, bodyLines.map(say).join('. ') || 'Nothing here yet.', P2.hits)}
-        </Box>,
-        mode,
-      )
-    }
-
-    // The terminal: the same bands as text, each target a button.
-    const TONE: Record<string, string> = { text: '#E6EDF3', dim: '#8B949E', faint: '#6E7681', amber: '#E3B341', green: '#3FB950', red: '#F85149', brand: '#D97757', line: '#30363D', cx: CX }
+    const TONE: Record<string, string> = { text: '#E6EDF3', dim: '#8B949E', faint: '#8B949E', amber: '#E3B341', green: '#3FB950', red: '#F85149', brand: '#D97757', line: '#30363D', cx: '#8B949E' }
     const toneOf = (role: string) => TONE[role] ?? (/^h\d$/.test(role) ? PALETTE[Number(role.slice(1))] : '#E6EDF3')
+    const press = (act: Act) => (p: { surface: unknown }) => void doAction($, act, p?.surface)
     const segEl = (g: Seg, k: string) => {
-      const t = `${g.dot ? '● ' : ''}${g.icon ? `${KIND_GLYPH[g.icon[0]] ?? '•'} ` : ''}${g.sprite ? '● ' : ''}${g.bar !== undefined ? `${'▮'.repeat(Math.round(g.bar * 8))}${'▯'.repeat(8 - Math.round(g.bar * 8))}` : ''}${g.t ?? ''}`
-      if (!t) return null
-      const body = g.w ? cutTo(t, Math.max(1, Math.floor(g.w / CELL_W))).padEnd(Math.floor(g.w / CELL_W)) : t
-      const act = g.run
-      return act ? (
-        <Button key={k} plain dimColor={g.role !== 'text'} onPress={(press: { surface: unknown }) => void doAction($, act, press?.surface)}>
-          {body}
-        </Button>
-      ) : (
-        <Text key={k} color={toneOf(g.dot ?? g.sprite ?? g.role ?? 'text')} bold={g.b} italic={g.i} wrap="truncate">
+      const lead = `${g.dot ? '● ' : ''}${g.icon ? `${KIND_GLYPH[g.icon[0]] ?? '•'} ` : ''}${g.sprite ? '● ' : ''}${g.bar !== undefined ? `${'▮'.repeat(Math.round(g.bar * 8))}${'▯'.repeat(8 - Math.round(g.bar * 8))} ` : ''}`
+      const t = `${lead}${g.t ?? ''}`
+      if (!t && !g.parts) return null
+      const cells = g.w ? Math.floor(g.w / CELL_W) : 0
+      const body = cells ? cutTo(t, Math.max(1, cells)).padEnd(cells) : t
+      const tone = toneOf(g.dot ?? g.sprite ?? g.role ?? 'text')
+      if (g.run) {
+        const act = g.run
+        // A Button holds its words as Text, so a file keeps its colours: its name, its +/− and its errors.
+        return (
+          <Button key={k} plain onPress={press(act)}>
+            {(g.parts ?? [[body, g.role ?? 'text']]).map(([pt, role], i) => (
+              <Text key={`${k}p${i}`} color={toneOf(role)} bold={g.b} underline={g.u}>
+                {pt}
+              </Text>
+            ))}
+          </Button>
+        )
+      }
+      return (
+        <Text key={k} color={tone} bold={g.b} italic={g.i} wrap="truncate">
           {body}
         </Text>
       )
     }
     const lineEl = (l: VLine, k: string) => (
-      <Box key={k} flexDirection="row">
+      <Box key={k} flexDirection="row" height={1} overflow="hidden">
         {l.indent ? <Text>{' '.repeat(Math.round(l.indent / CELL_W))}</Text> : null}
         {l.segs.map((g, i) => (
           <Box key={`${k}s${i}`} flexDirection="row" flexShrink={g.flex ? 1 : 0}>
@@ -4061,39 +3851,132 @@ export const register: Register = on => {
         ))}
       </Box>
     )
+
+    // The header: the brand, the counts by state, and the one cost.
+    const head = picture()
+    {
+      let x = PADX
+      x += head.line(x, 0, 24, wide ? '✻ Claude Crew' : '✻', 12.5, 'brand', { b: true }) + 12
+      for (const [t, role, b] of counts) x += head.line(x, 0, 24, t, 12.5, role, { b }) + 12
+      let rx = W - PADX
+      if (budgetText) rx -= head.line(rx, 0, 24, budgetText, 12.5, 'dim', { end: true }) + 8
+      if (totalCost > 0 || c.budget > 0) head.line(rx, 0, 24, fmtUsd(totalCost), 12.5, costRole, { end: true })
+    }
+    const headLine: VLine = { segs: [{ t: '✻ Claude Crew', b: true, role: 'brand' }, ...counts.map(([t, role, b]) => ({ t, role, b }))], right: totalCost > 0 || c.budget > 0 ? [{ t: `${fmtUsd(totalCost)}${budgetText ? ` ${budgetText}` : ''}`, role: costRole }] : [] }
+
+    // The Claudes: each row a picture, its Details a Button beside it on the line it belongs to.
+    const DET = 8
+    const rowW = Math.round((vwCols - DET) * CELL_W)
+    const detailsBtn = (r: PaneRow) => (
+      <Button key={`details:${r.id}`} plain onPress={press(openDetails(r.id))}>
+        <Text color={r.focused ? '#E6EDF3' : '#8B949E'} underline>
+          {r.focused ? 'Hide' : 'Details'}
+        </Text>
+      </Button>
+    )
+    const rowEl = (r: PaneRow) => {
+      const P = picture()
+      const lines = r.state === 'you' ? wrapRows(r.ask, askCols(rowW), 6).length : 0
+      const tall = rowH(r, lines)
+      drawCrew(P, [r], 0, rowW, wide, openDetails)
+      const alt = `${r.name}: ${r.status}${r.object ? ` · ${r.object}` : ''}${r.state === 'you' ? ` · ${r.ask}` : r.state === 'done' ? '' : ` · ${r.progress}`}`
+      if (r.state === 'done') return <Svg key={`row-${r.id}`} source={P.done(rowW, tall, mode)} alt={alt} width={rowW} height={tall} />
+      const rows = Math.ceil((tall + 4) / ROW)
+      const at = r.state === 'you' ? Math.floor((29 + 18 * lines + 8) / ROW) : 1
+      return (
+        <Box key={`row-${r.id}`} flexDirection="row" height={rows}>
+          <Svg source={P.done(rowW, rows * ROW, mode)} alt={alt} width={rowW} height={rows * ROW} />
+          <Box flexDirection="column" width={DET} paddingTop={at} paddingLeft={1}>
+            {detailsBtn(r)}
+          </Box>
+        </Box>
+      )
+    }
+    const recapEls = recap
+      ? (() => {
+          const P = picture()
+          const tall = drawRecap(P, recap, 0, W, wide) - 6
+          return [
+            <Svg key="recap" source={P.done(W, tall, mode)} alt={[recap.title, recap.goal, ...recap.facts.map(f => `${f[0]}: ${f[1]}`)].join('. ')} width={W} height={tall} />,
+            <Box key="recap-act" flexDirection="row" paddingLeft={4}>
+              {segEl(recap.copy ? { t: 'Copy as Markdown', role: 'dim', u: true, run: recap.copy } : { t: '▶ Try a pretend session', role: 'dim', u: true, run: recap.demo }, 'recap-btn')}
+            </Box>,
+          ]
+        })()
+      : []
     const SR: Record<GlanceRow['state'], string> = { work: 'green', wait: 'dim', idle: 'dim', you: 'amber', done: 'dim' }
     const crewLines: VLine[] = rowsP.flatMap(r => {
       const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * 2 * CELL_W
-      const details: Seg = { t: r.focused ? 'Shown below' : 'Details', role: 'dim', run: openDetails(r.id) }
+      const details: Seg = { t: r.focused ? 'Hide' : 'Details', role: 'dim', run: openDetails(r.id) }
       const one: VLine = { indent, segs: [{ dot: hueRole(r.hue), t: r.name, b: r.state !== 'done', role: r.state === 'done' ? 'dim' : 'text' }, { icon: [r.kind, SR[r.state]], t: r.status, b: true, role: SR[r.state] }, { t: r.object, flex: true, role: r.state === 'done' ? 'dim' : 'text' }], right: [{ t: r.time, role: 'dim' }] }
       if (r.state === 'done') return [one]
       if (r.state === 'you') return [one, ...wrapRows(r.ask, Math.max(16, cols - 6), 6).map(t => ({ indent: indent + 2 * CELL_W, segs: [{ t }] })), { indent: indent + 2 * CELL_W, segs: [{ t: r.where, role: 'dim', flex: true }], right: [details] }]
       const pips = r.total ? `${'●'.repeat(Math.min(5, r.done))}${'○'.repeat(Math.max(0, Math.min(5, r.total) - r.done))}` : ''
-      return [one, { indent: indent + 2 * CELL_W, segs: [{ t: [pips, r.progress].filter(Boolean).join(' '), role: 'dim', flex: true }], right: [...(wide && r.model ? [{ t: r.model, role: 'faint' }] : []), details] }]
+      return [one, { indent: indent + 2 * CELL_W, segs: [{ t: [pips, r.progress].filter(Boolean).join(' '), role: r.stuck ? 'amber' : 'dim', flex: true }], right: [...(wide && r.model ? [{ t: r.model, role: 'faint' }] : []), details] }]
     })
     const recapLines: VLine[] = recap
       ? recap.copy
-        ? [{ segs: [{ t: `✓ ${recap.title}`, b: true, role: 'green' }, { t: recap.goal, role: 'dim', flex: true }], right: [{ t: recap.ago, role: 'dim' }] }, ...recap.facts.map(([k, v, role]) => ({ indent: 2 * CELL_W, segs: [{ t: k, w: 9 * CELL_W, role: 'dim' }, { t: v, role, flex: true }] })), { indent: 2 * CELL_W, segs: [{ t: 'Copy as Markdown', role: 'dim', run: recap.copy }] }]
-        : [{ segs: [{ t: recap.title, role: 'dim', flex: true }] }, { segs: [{ t: '▶ Try a pretend session', role: 'dim', run: recap.demo }] }]
+        ? [{ segs: [{ t: `✓ ${recap.title}`, b: true, role: 'green' }, { t: recap.goal, role: 'dim', flex: true }], right: [{ t: recap.ago, role: 'dim' }] }, ...recap.facts.map(([k, v, role]) => ({ indent: 2 * CELL_W, segs: [{ t: k, w: 9 * CELL_W, role: 'dim' }, { t: v, role, flex: true }] })), { indent: 2 * CELL_W, segs: [{ t: 'Copy as Markdown', role: 'dim', u: true, run: recap.copy }] }]
+        : [{ segs: [{ t: recap.title, role: 'dim', flex: true }] }, { segs: [{ t: '▶ Try a pretend session', role: 'dim', u: true, run: recap.demo }] }]
       : []
+
+    // Touched: a line per folder, each file a Button in its colours, as many as the line holds, then +N more.
+    const folderCols = wide ? 15 : 12
     const touchLines: VLine[] = [
-      { segs: [{ t: 'Touched', b: true }, { t: touchedSum, role: 'dim', flex: true }], right: sessionDir ? [{ t: 'Open folder', role: 'dim', run: openDir(sessionDir, 'the project folder') }] : [] },
-      ...(touchFolders.length ? touchFolders : []).map(d => ({ segs: [{ t: d.name, w: 14 * CELL_W, role: 'dim' }, ...d.files.slice(0, wide ? 4 : 2).map(f => ({ t: `${f.name}${f.errs ? ` ✕${f.errs}` : ''}${f.add ? ` +${fmtK(f.add)}` : ''}${f.del ? ` −${fmtK(f.del)}` : ''}`, role: f.errs ? 'red' : 'text', run: f.run }))] })),
-      ...(touchFolders.length ? [] : [{ segs: [{ t: 'No files yet.', role: 'dim' }] }]),
+      { segs: [{ t: 'Touched', b: true }, { t: touchedSum, role: 'dim', flex: true }], right: sessionDir ? [{ t: 'Open folder', role: 'dim', u: true, run: openDir(sessionDir, 'the project folder') }] : [] },
+      ...touchFolders.map(d => {
+        let room = vwCols - folderCols - 2
+        const files: Seg[] = []
+        for (const [i, f] of d.files.entries()) {
+          const parts: [string, string][] = [...(f.on ? ([['● ', f.on]] as [string, string][]) : []), [f.name, f.errs ? 'red' : f.read ? 'dim' : 'text'], ...(f.errs ? ([[` ✕${f.errs}`, 'red']] as [string, string][]) : []), ...(f.add ? ([[` +${fmtK(f.add)}`, 'green']] as [string, string][]) : []), ...(f.del ? ([[` −${fmtK(f.del)}`, 'dim']] as [string, string][]) : [])]
+          const w = parts.reduce((n, [t]) => n + textW(t), 0) + 2
+          // Room for this file, and for "+N more" after it when more are left.
+          if (room < w + (i < d.files.length - 1 ? 10 : 0)) break
+          files.push({ parts, t: parts.map(p => p[0]).join(''), run: f.run })
+          room -= w
+        }
+        if (files.length < d.files.length) files.push({ t: `+${fmtK(d.files.length - files.length)} more`, role: 'dim', u: true, run: paneAct({ tab: 'files', top: 0 }) })
+        return { segs: [{ t: d.name, w: folderCols * CELL_W, role: 'dim' }, ...files] }
+      }),
+      ...(touchFolders.length ? [] : [{ segs: [{ t: 'No files yet. Folders show here as the Claudes open files.', role: 'dim', flex: true }] }]),
     ]
-    const tabLine: VLine = { segs: tabs.map(t => ({ t: t.on ? `[${t.t}]` : t.t, role: t.on ? 'text' : 'dim', run: t.run })), right: [{ t: '▲', role: 'dim', run: scroll.up }, { t: '▼', role: 'dim', run: scroll.down }, { t: '⤓', role: 'dim', run: scroll.latest }] }
-    const headLine: VLine = { segs: [{ t: '✻ Claude Crew', b: true, role: 'brand' }, ...counts.map(([t, role, b]) => ({ t, role, b }))], right: totalCost > 0 || c.budget > 0 ? [{ t: `${fmtUsd(totalCost)}${budgetText ? ` ${budgetText}` : ''}`, role: costRole }] : [] }
+    while (touchLines.length < 4) touchLines.push({ segs: [] })
+
+    // The tabs (the one shown bold), then scrolling: each a Button, readable at rest.
+    const tabLine: VLine = {
+      segs: tabs.map(t => ({ t: t.t, role: t.on ? 'text' : 'dim', b: t.on, u: t.on, run: t.run, gap: 2 })),
+      right: [
+        { t: '▲ older', role: scroll.canUp ? 'text' : 'dim', run: scroll.up },
+        { t: '▼ newer', role: scroll.canDown ? 'text' : 'dim', run: scroll.down },
+        { t: '⤓ latest', role: scroll.held ? 'text' : 'dim', run: scroll.latest },
+      ],
+    }
+    const searchEl = tab === 'search' ? (
+      <Box key="search-row" flexDirection="row">
+        <Text color="#8B949E">{'⌕ '}</Text>
+        <Box flexGrow={1}>
+          <Input key="search-input" placeholder="Search files and the log..." value={sq.q} submitLabel="" onInput={(v: string) => void searchFor($, v)} onSubmit={(v: string) => void searchFor($, v, true)} />
+        </Box>
+      </Box>
+    ) : null
+    const view = listed.slice(top0, top0 + BODY_ROWS)
+    draws[e.surface] = (draws[e.surface] ?? 0) + 1
     return paintPane(
       <Box flexDirection="column">
-        {lineEl(headLine, 'head')}
-        <Text>{' '}</Text>
-        {[...crewLines, ...recapLines].map((l, i) => lineEl(l, `crew${i}`))}
-        <Text>{' '}</Text>
-        {touchLines.map((l, i) => lineEl(l, `touch${i}`))}
-        <Text>{' '}</Text>
-        {lineEl(tabLine, 'tabs')}
-        {tab === 'search' ? <Input key="search-input" placeholder="Search files and the log..." value={sq.q} submitLabel="" onInput={(v: string) => void searchFor($, v)} onSubmit={(v: string) => void searchFor($, v, true)} /> : null}
-        {listed.slice(top0, top0 + (tab === 'settings' ? 8 : 8)).map((l, i) => lineEl(l, `body${i}`))}
+        {isTerminal ? lineEl(headLine, 'head') : <Svg key="head" source={head.done(W, 24, mode)} alt={`Claude Crew. ${counts.map(k => k[0]).join(', ')}${totalCost > 0 ? `. ${fmtUsd(totalCost)} so far` : ''}.`} width={W} height={24} />}
+        <Box key="crew" flexDirection="column" marginTop={isTerminal ? 1 : 0}>
+          {isTerminal ? [...crewLines, ...recapLines].map((l, i) => lineEl(l, `crew${i}`)) : [...rowsP.map(rowEl), ...recapEls]}
+        </Box>
+        <Box key="touched" flexDirection="column" marginTop={1}>
+          {touchLines.map((l, i) => lineEl(l, `touch${i}`))}
+        </Box>
+        <Box key="tabs" flexDirection="column" marginTop={1}>
+          {lineEl(tabLine, 'tabs')}
+        </Box>
+        {searchEl}
+        <Box key="view" flexDirection="column" height={BODY_ROWS} overflow="hidden">
+          {view.map((l, i) => lineEl(l, `body${i}`))}
+        </Box>
       </Box>,
       mode,
     )

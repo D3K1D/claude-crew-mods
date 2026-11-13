@@ -16,20 +16,14 @@ const walk = (x: unknown, out: El[] = []) => {
   for (const k of (x as El).children ?? []) walk(k, out)
   return out
 }
-const pictures = (tree: unknown) => walk(tree).filter(e => e.type === 'Svg').map(e => ({ source: String(e.props?.source ?? ''), height: Number(e.props?.height ?? 0), width: Number(e.props?.width ?? 0) }))
-/** The viewer's rows: the words on each baseline, left to right. */
-const rowsOf = (src: string) => {
-  const by = new Map<number, { x: number; t: string }[]>()
-  for (const m of src.matchAll(/<text x="([\d.]+)" y="([\d.]+)"[^>]*>([^<]*)<\/text>/g)) {
-    const y = Math.round(Number(m[2]) / 19)
-    by.set(y, [...(by.get(y) ?? []), { x: Number(m[1]), t: m[3].replace(/&amp;/g, '&') }])
-  }
-  return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([, gs]) => gs.sort((a, b) => a.x - b.x).map(g => g.t).join(' '))
+const textOf = (x: unknown): string => (typeof x === 'string' || typeof x === 'number' ? String(x) : ((x as El)?.children ?? []).map(textOf).join(''))
+/** The viewer's rows (the Box keyed "view"), each as its words. */
+const rowsOf = (tree: unknown) => {
+  const view = walk(tree).find(e => e.type === 'Box' && e.props?.key === 'view')
+  return walk(view).filter(e => e.type === 'Box' && e.props?.height === 1).map(r => textOf(r).replace(/\s+/g, ' ').trim()).filter(Boolean)
 }
-const spotOf = (src: string, word: string) => {
-  const m = [...src.matchAll(/<text x="([\d.]+)" y="([\d.]+)"[^>]*>([^<]*)<\/text>/g)].find(x => x[3] === word)
-  return m ? { x: Number(m[1]), y: Number(m[2]) } : undefined
-}
+/** The key of the last Button that says `label` (the newest line's). */
+const keyOf = (tree: unknown, label: string) => walk(tree).filter(e => e.type === 'Button' && textOf(e).trim() === label).map(e => String(e.props?.key)).at(-1)
 
 const MSG = Array.from({ length: 8 }, (_, i) => `point ${i + 1} is that the inventory panel should keep its size when items come and go`).join('; ')
 
@@ -50,31 +44,20 @@ test('a long message opens whole in the log, and folds again', async ($, on) => 
 
   for (const cols of [87, 140]) {
     const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'desktop', ...PANE(cols) })
-    const vwCols = cols - 1
-    const click = async (pic: { width: number; height: number }, x: number, y: number) => {
-      await ui.resize({ columns: vwCols, rows: pic.height / 19, in: 'hit-view' })
-      const c = { x: Math.floor((x / pic.width) * vwCols), y: Math.floor(y / 19) }
-      await ui.pointer({ type: 'down', x: c.x, y: c.y, button: 'left', in: 'hit-view' } as never)
-      await ui.pointer({ type: 'up', x: c.x, y: c.y, button: 'left', in: 'hit-view' } as never)
-    }
-    let view = pictures(await ui.drawn())[1]
-    const opener = spotOf(view.source, '›')
+    const opener = keyOf(await ui.drawn(), '›')
     expect(!!opener, `${cols}: the message has a ›`).toBe(true)
-    await click(view, opener!.x + 3, opener!.y - 4)
-    view = pictures(await ui.drawn())[1]
-    const opened = rowsOf(view.source)
+    await ui.press({ key: opener! })
+    const opened = rowsOf(await ui.drawn())
     const words = opened.join(' ').replace(/\s+/g, ' ')
     expect(MSG.split(' ').every(w => words.includes(w)) && words.includes('point 8 is that'), `${cols}: opened, every word of it shows: ${opened.join(' / ').slice(0, 900)}`).toBe(true)
     expect(opened.length <= 12, `${cols}: within the viewer's 12 rows`).toBe(true)
     // Live: Claude keeps working while it's open, new lines coming in. It stays whole and in place.
     for (const f of ['e', 'f', 'g']) await $.tool.call({ tool: 'Read', tool_use_id: `r-${cols}-${f}`, file_path: `C:/work/game/src/${f}-${cols}.ts` } as never)
-    view = pictures(await ui.drawn())[1]
-    expect(rowsOf(view.source).join('\n') === opened.join('\n'), `${cols}: live, the log holds still while it's open`).toBe(true)
-    const folder = spotOf(view.source, '▾')
+    expect(rowsOf(await ui.drawn()).join('\n') === opened.join('\n'), `${cols}: live, the log holds still while it's open`).toBe(true)
+    const folder = keyOf(await ui.drawn(), '▾')
     expect(!!folder, `${cols}: opened, its mark is ▾`).toBe(true)
-    await click(view, folder!.x + 3, folder!.y - 4)
-    view = pictures(await ui.drawn())[1]
-    expect(!rowsOf(view.source).some(r => r.includes('▾')), `${cols}: folded again`).toBe(true)
+    await ui.press({ key: folder! })
+    expect(!rowsOf(await ui.drawn()).some(r => r.includes('▾')), `${cols}: folded again`).toBe(true)
     await ui.unmount()
   }
 })
