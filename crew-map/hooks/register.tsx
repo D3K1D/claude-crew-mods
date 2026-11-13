@@ -1,13 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Agent, Change, CodexRun, Crew, Frame, LogLine, MapNode, MapView, PlanTask, Problem, Replay, ShellRun, Summary, TestRun } from '../types'
+import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapView, PlanTask, Problem, Replay, ShellRun, Summary, TestRun } from '../types'
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.6.1'
+const VERSION = '1.6.2'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -552,6 +552,43 @@ let write: ((fn: (c: Crew) => Crew) => Promise<unknown>) | undefined
 let writeQueue: Promise<unknown> = Promise.resolve()
 /** The 1 s clock: one, kept so a second session start replaces it rather than adding another. */
 let ticker: { cancel(): void } | undefined
+// ── Nested chats: the chats started from this one, read from the desktop app's own session list ──
+const LIST_TOOL = 'mcp__ccd_session_mgmt__list_sessions'
+const START_TOOL = 'mcp__ccd_session__start_session'
+let refreshChats: (() => Promise<void>) | undefined
+let chatPoller: { cancel(): void } | undefined
+/** True while the pane itself reads the list, so its own call is not logged as Claude's. */
+let pollingChats = false
+/**
+ * The chats under this one, from list_sessions' `{ linked: true }` answer (this chat's family, less
+ * itself): this chat is the one that started those whose starter the list doesn't hold.
+ */
+const chatsOf = (text: string): Chat[] | undefined => {
+  let rows: unknown
+  try {
+    rows = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(rows)) return undefined
+  const str = (o: Record<string, unknown>, k: string) => (typeof o[k] === 'string' ? (o[k] as string) : '')
+  const all = (rows.filter(r => r && typeof r === 'object') as Record<string, unknown>[])
+    .filter(r => str(r, 'sessionId') && r.isArchived !== true)
+    .map(r => ({ id: str(r, 'sessionId'), title: str(r, 'title') || str(r, 'name') || 'A chat', name: str(r, 'name'), parent: str(r, 'startedBy'), cwd: str(r, 'cwd').replace(/\\/g, '/'), branch: str(r, 'branch'), running: r.isRunning === true, at: Date.parse(str(r, 'lastActivityAt')) || 0, depth: 1 }))
+  const ids = new Set(all.map(x => x.id))
+  const self = [...new Set(all.filter(x => x.parent && !ids.has(x.parent)).map(x => x.parent))]
+  if (self.length !== 1) return []
+  const mine: Chat[] = []
+  const add = (p: string, depth: number) => {
+    if (depth > 4) return
+    for (const x of all.filter(y => y.parent === p).sort((a, b) => a.title.localeCompare(b.title))) {
+      mine.push({ ...x, depth })
+      add(x.id, depth + 1)
+    }
+  }
+  add(self[0], 1)
+  return mine
+}
 let readCrew: (() => Promise<Crew>) | undefined
 let after: ((ms: number, fn: () => void) => void) | undefined
 let every: ((ms: number, fn: () => void) => { cancel: () => void }) | undefined
@@ -2635,6 +2672,32 @@ export const register: Register = on => {
           }))
       })()
     })
+    // The chats started from this one: read from the app's own list every 15 seconds, only where the
+    // session lets that read run without asking anyone (the desktop app; elsewhere it stops at once).
+    refreshChats = async () => {
+      if (pollingChats) return
+      pollingChats = true
+      try {
+        const may = await Promise.resolve()
+          .then(() => $.tool.check({ tool: LIST_TOOL, input: { linked: true } }))
+          .catch(() => undefined)
+        if (may?.decision !== 'allow') {
+          chatPoller?.cancel()
+          chatPoller = undefined
+          return
+        }
+        const r = (await Promise.resolve()
+          .then(() => $.tool.call({ tool: LIST_TOOL, linked: true, limit: 50 } as never))
+          .catch(() => undefined)) as { text?: string; isError?: boolean } | undefined
+        const chats = r && !r.isError && typeof r.text === 'string' ? chatsOf(r.text) : undefined
+        if (chats) await write?.(d => (JSON.stringify(d.chats ?? []) === JSON.stringify(chats) ? d : { ...d, chats }))
+      } finally {
+        pollingChats = false
+      }
+    }
+    chatPoller?.cancel()
+    chatPoller = $.clock.every(15_000, () => void refreshChats?.())
+    void refreshChats()
     deskMax = 0
     deskLowSince = 0
     void readChatCost($)
@@ -2913,9 +2976,24 @@ export const register: Register = on => {
     return r
   })
 
+  // Claude's own look at the chat list keeps the nested chats current too; a chat it starts shows soon after.
+  on('tool.call', { tool: LIST_TOOL }, async ($, e, next) => {
+    const r = await next(e)
+    const a = e as unknown as Record<string, unknown>
+    if (!pollingChats && a.linked === true && !a.group && 'text' in r && typeof r.text === 'string' && !r.isError) {
+      const chats = chatsOf(r.text)
+      if (chats) await write?.(d => ({ ...d, chats }))
+    }
+    return r
+  })
+  on('tool.call', { tool: START_TOOL }, async ($, e, next) => {
+    const r = await next(e)
+    after?.(1500, () => void refreshChats?.())
+    return r
+  })
   on('tool.call', async ($, e, next) => {
-    // A call without a tool name is none of the pane's business.
-    if (typeof e.tool !== 'string' || !e.tool) return next(e)
+    // A call without a tool name is none of the pane's business, nor the pane's own read of the chat list.
+    if (typeof e.tool !== 'string' || !e.tool || (pollingChats && e.tool === LIST_TOOL)) return next(e)
     const a = e as unknown as Record<string, unknown>
     const id = e.agentId ?? 'main'
     const node = nodeOf(e.tool, a)
@@ -3500,7 +3578,26 @@ export const register: Register = on => {
       byParent(a.id).forEach(walk)
     }
     deskAgents.filter(a => a.id === 'main' || !deskAgents.some(p => p.id === (a.parent ?? 'main'))).forEach(walk)
-    const glance = [...ordered.map(rowOfAgent), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
+    // A chat started from this one: its title, working or idle, and where it works; nested under this chat.
+    const chatList = src.chats ?? []
+    const rowOfChat = (ch: Chat): GlanceRow => ({
+      id: `chat-${ch.id}`,
+      name: ch.title,
+      hue: PALETTE[[...ch.id].reduce((n, x) => n + x.charCodeAt(0), 0) % PALETTE.length],
+      state: ch.running ? 'work' : 'idle',
+      kind: ch.running ? 'msg' : 'idle',
+      status: ch.running ? 'Working' : 'Idle',
+      object: ch.running ? 'in its own chat' : ch.at ? `last active ${shortTime(Date.now() - ch.at)} ago` : '',
+      time: '',
+      total: 0,
+      done: 0,
+      progress: `Chat · ${[ch.branch, baseName(ch.cwd)].filter(Boolean).join(' · ')}`,
+      model: '',
+      depth: ch.depth,
+      request: [],
+      where: '',
+    })
+    const glance = [...ordered.map(rowOfAgent), ...chatList.map(rowOfChat), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
     const glanceList = [...glance.filter(r => r.state === 'you'), ...glance.filter(r => r.state !== 'you')]
     // Room: the rows shown, at least; while anyone works, two lines for each of the most Claudes lately.
     const desksH = Math.max(glanceList.reduce((n, r) => n + glanceBase(r), 0), anyAtWork ? Math.max(1, deskMax) * 2 : 0)
@@ -3675,6 +3772,17 @@ export const register: Register = on => {
       const run = focusRow.id.startsWith('cx-') ? codexRuns.find(x => `cx-${x.id}` === focusRow.id) : undefined
       const textCols = Math.max(16, Math.floor((W - 2 * PADX) / (12 * ADV)))
       const out: VLine[] = []
+      const chat = focusRow.id.startsWith('chat-') ? chatList.find(x => `chat-${x.id}` === focusRow.id) : undefined
+      if (chat) {
+        // A nested chat: its whole title, who started it, where it works, and when it last did anything.
+        const by = chatList.find(x => x.id === chat.parent)
+        out.push({ segs: [{ t: 'Chat', b: true }, { t: [chat.running ? 'working' : 'idle', chat.at ? `last active ${shortTime(Date.now() - chat.at)} ago` : ''].filter(Boolean).join(' · '), role: 'dim', flex: true }] })
+        for (const t of wrapRows(chat.title, textCols, 3)) out.push({ segs: [{ t }] })
+        out.push({ segs: [{ t: `Started by ${by ? by.title : 'this chat'}`, role: 'dim', flex: true }] })
+        for (const t of wrapRows([chat.cwd, chat.branch ? `branch ${chat.branch}` : ''].filter(Boolean).join(' · '), textCols, 2)) out.push({ segs: [{ t, role: 'dim' }] })
+        out.push({ segs: [{ t: 'Open it from the sidebar, under this chat.', role: 'dim' }] })
+        return out
+      }
       const parent = a ? src.agents.find(x => x.id === (a.parent ?? 'main')) : undefined
       const caller = run ? src.agents.find(x => x.id === run.caller) : undefined
       const head = [focusRow.model || (run ? trunc(run.model, 14) : ''), a && a.id !== 'main' && parent ? `helping ${parent.name}` : caller ? `run by ${caller.name}` : '', focusRow.time].filter(Boolean).join(' · ')

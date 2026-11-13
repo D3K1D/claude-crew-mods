@@ -196,6 +196,21 @@ export type Crew = {
   cardsOpen?: Record<string, boolean>
   /** The viewer: which tab shows (a Claude's details: 'claude' with its id), and how far its list is scrolled. */
   pane?: { tab?: 'activity' | 'files' | 'search' | 'settings' | 'claude'; focus?: string; top?: number }
+  /** The chats started from this one (and theirs), as the desktop app lists them: nested under it, by depth. */
+  chats?: Chat[]
+}
+
+/** A chat started from this one with the app's start_session, or from one of those. */
+export type Chat = {
+  id: string
+  title: string
+  name: string
+  parent: string
+  cwd: string
+  branch: string
+  running: boolean
+  at: number
+  depth: number
 }
 
 /**
