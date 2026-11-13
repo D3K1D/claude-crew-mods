@@ -72,7 +72,7 @@ await call('Bash', { command: 'npm test', description: 'Run the auth tests' }, a
 {
   const row = rowOf(tree, 'Claude')
   check('a permission prompt marks the Claude as needing you, with what it asks', /Claude Needs you .*Allow running Run the auth tests\? Answer in the chat\./.test(row), row)
-  check('...in amber, its card amber', glyphs(tree, 'top').find(g => g.t === 'Needs you')?.role === 'amber' && find(tree, x => x.type === 'Svg').some(x => /class="f-amberbg s-amber"/.test(x.props.source)))
+  check('...in amber, its card amber', glyphs(tree, 'top').find(g => g.t === 'Needs you')?.role === 'amber' && find(tree, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-') && x.props.borderColor === '#E3B341').length === 1)
   check('...the header counts it', words(tree, 'top').includes('⏸ 1 needs you'))
   check('...and the log says what it needs', crew().log.some(l => l.text === '⏸ needs you: allow running Run the auth tests'))
 }

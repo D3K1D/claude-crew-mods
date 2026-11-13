@@ -60,7 +60,7 @@ await fire('session.start', {}, async () => ({}))
 // ── Before any work: one Claude, idle; the crew's room says what will show there, with the demo.
 let t = await render()
 check('desktop: the header and the row are pictures; no Client, nothing laid over a picture', pics(t).length >= 2 && find(t, x => x.type === 'Client').length === 0 && find(t, x => x.type === 'Box' && (x.props.marginTop ?? 0) < 0).length === 0)
-check("a row beside its Details is whole rows tall, so the Button sits on the row's line", find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-')).every(b => find(b, y => y.type === 'Svg')[0].props.height === b.props.height * 19))
+check("each Claude's card is a Box with a border and fill, holding its picture and its Details Button", find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-')).every(b => b.props.borderStyle === 'round' && !!b.props.backgroundColor && find(b, y => y.type === 'Svg').length === 1 && find(b, y => y.type === 'Button').length === 1))
 {
   // The viewer runs to the bottom of the pane: what the pane has, less what is above it; never under 8.
   const at = rows => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 87, scroll: { bodyRows: rows } }, viewport: { columns: 87 } }, async () => ({})).then(viewHeight)
@@ -114,7 +114,9 @@ check('header: needs you (bold amber), working (green), and the cost', at('⏸ 1
 const names = ['Architect', 'Claude', 'Scout', 'Scout 2', 'Helper', 'Codex']
 const ys = names.map(n => at(n)?.y ?? -1)
 check('rows: needing you pinned on top, then in tree order (each helper under who started it), Codex under who ran it', ys.every((y, i) => y > 0 && (i === 0 || y > ys[i - 1])), ys.join(','))
-const xs = names.map(n => at(n)?.x ?? -1)
+// A card's depth is how far its Box is in from the pane's edge.
+const cardOf = n => find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-') && find(x, y => y.type === 'Svg' && String(y.props.alt).startsWith(n + ':')).length)[0]
+const xs = names.map(n => cardOf(n)?.props.marginLeft ?? -1)
 check('...indented by depth: the one needing you flush left, helpers in, theirs further', xs[0] < xs[2] && xs[1] < xs[2] && xs[2] < xs[3] && xs[4] === xs[2] && xs[5] > xs[4], xs.join(','))
 check('needing you: amber "Needs you" and the whole request', at('Needs you')?.role === 'amber' && has(t, 'Allow running Clear the old build folder? Answer in the chat.', 'top'))
 check('a helper writing code: the state in green, bold, and on which file', at('Writing code')?.role === 'green' && at('Writing code')?.bold && has(t, 'fixture.js', 'top'))

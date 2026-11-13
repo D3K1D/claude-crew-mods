@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.6.3'
+const VERSION = '1.6.4'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -2396,16 +2396,18 @@ const askCols = (W: number) => Math.max(16, Math.floor((W - 2 * PADX - 2 - 11 - 
  * icon and words in the state's colour, what on, its time; under them its step pips and progress, its
  * model, and Details. Returns where it ends.
  */
-const drawCrew = (P: Pic, rows: PaneRow[], y0: number, W: number, wide: boolean, onDetails: (id: string) => Act) => {
+const drawCrew = (P: Pic, rows: PaneRow[], y0: number, W: number, wide: boolean, onDetails: (id: string) => Act, bare = false) => {
   let y = y0
   const SR: Record<GlanceRow['state'], string> = { work: 'green', wait: 'dim', idle: 'dim', you: 'amber', done: 'dim' }
   for (const r of rows) {
     const sr = SR[r.state]
     const request = r.state === 'you' ? wrapRows(r.ask, askCols(W), 6) : []
     const h = rowH(r, request.length)
-    const x0 = PADX + (r.state === 'you' ? 0 : Math.min(3, r.depth) * (wide ? 20 : 12))
-    const x1 = W - PADX
-    if (r.state === 'you') P.rect(x0 + 0.5, y + 0.5, x1 - x0 - 1, h - 1, 8, 'amberbg', 'amber')
+    const x0 = bare ? 0 : PADX + (r.state === 'you' ? 0 : Math.min(3, r.depth) * (wide ? 20 : 12))
+    const x1 = bare ? W : W - PADX
+    if (bare) {
+      // The card is the Box around the picture.
+    } else if (r.state === 'you') P.rect(x0 + 0.5, y + 0.5, x1 - x0 - 1, h - 1, 8, 'amberbg', 'amber')
     else if (r.state !== 'done') P.rect(x0 + 0.5, y + 0.5, x1 - x0 - 1, h - 1, 8, 'panel', r.focused ? 'dim' : 'line')
     const ix = x0 + 11
     const t1 = y + (r.state === 'done' ? 2 : 5)
@@ -2423,7 +2425,7 @@ const drawCrew = (P: Pic, rows: PaneRow[], y0: number, W: number, wide: boolean,
     const size = r.state === 'done' ? 12.5 : 13.5
     x += P.line(x, t1, 20, fitPx(r.status, right - x, size), size, sr, { b: true }) + 7
     if (r.object && right - x > 30) P.line(x, t1, 20, fitPx(r.object, right - x, 12.5), 12.5, r.state === 'done' ? 'dim' : 'text')
-    // Details is a Button beside the row, not drawn in it.
+    // Details is a Button in the card's Box, beside the picture, not drawn in it.
     const details = (_top: number, _lh: number) => -12
     if (r.state === 'you') {
       request.forEach((l, i) => P.line(ix + 24, t1 + 22 + 18 * i, 18, l, 12.5, 'text'))
@@ -3719,7 +3721,7 @@ export const register: Register = on => {
     // Every Claude shows; the viewer takes the rest of the pane, down to its bottom (8 rows at least).
     const ROW = CELL_H
     const DET = 10
-    const rowW = Math.round((vwCols - DET) * CELL_W)
+    const rowW = Math.round((vwCols - 4 - DET) * CELL_W)
     const askLines = (r: PaneRow) => (r.state === 'you' ? wrapRows(r.ask, askCols(rowW), 6).length : 0)
     const aboveRows = isTerminal
       ? 1 +
@@ -4002,19 +4004,26 @@ export const register: Register = on => {
         </Text>
       </Button>
     )
+    const light = mode === 'light'
+    const CARD = { fill: light ? '#F6F8FA' : '#121821', line: light ? '#D0D7DE' : '#30363D', edge: light ? '#59636E' : '#8B949E', amber: light ? '#9A6700' : '#E3B341', amberFill: light ? '#FBF6EA' : '#221E14' }
     const rowEl = (r: PaneRow) => {
       const P = picture()
       const lines = askLines(r)
-      const tall = rowH(r, lines)
-      drawCrew(P, [r], 0, rowW, wide, openDetails)
       const alt = `${r.name}: ${r.status}${r.object ? ` · ${r.object}` : ''}${r.state === 'you' ? ` · ${r.ask}` : r.state === 'done' ? '' : ` · ${r.progress}`}`
-      if (r.state === 'done') return <Svg key={`row-${r.id}`} source={P.done(rowW, tall, mode)} alt={alt} width={rowW} height={tall} />
-      const rows = Math.ceil((tall + 4) / ROW)
-      const at = r.state === 'you' ? Math.floor((29 + 18 * lines + 8) / ROW) : 1
+      if (r.state === 'done') {
+        const tall = rowH(r, 0)
+        drawCrew(P, [r], 0, W, wide, openDetails)
+        return <Svg key={`row-${r.id}`} source={P.done(W, tall, mode)} alt={alt} width={W} height={tall} />
+      }
+      // In from the pane's edge by its depth; the picture, then Details, inside the card's border.
+      const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * (wide ? 3 : 2)
+      const picW = Math.max(160, Math.round((vwCols - 2 - indent - 2 - DET) * CELL_W))
+      const tall = rowH(r, lines) - 4
+      drawCrew(P, [r], -2, picW, wide, openDetails, true)
       return (
-        <Box key={`row-${r.id}`} flexDirection="row" height={rows}>
-          <Svg source={P.done(rowW, rows * ROW, mode)} alt={alt} width={rowW} height={rows * ROW} />
-          <Box flexDirection="column" width={DET} paddingTop={at} paddingLeft={1}>
+        <Box key={`row-${r.id}`} flexDirection="row" marginLeft={1 + indent} marginRight={1} borderStyle="round" borderColor={r.state === 'you' ? CARD.amber : r.focused ? CARD.edge : CARD.line} backgroundColor={r.state === 'you' ? CARD.amberFill : CARD.fill}>
+          <Svg source={P.done(picW, tall, mode)} alt={alt} width={picW} height={tall} />
+          <Box flexDirection="column" justifyContent="flex-end" alignItems="flex-end" width={DET} flexShrink={0}>
             {detailsBtn(r)}
           </Box>
         </Box>

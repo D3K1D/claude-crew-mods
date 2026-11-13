@@ -51,7 +51,7 @@ The mod hooks Claude Code's events:
 - **every helper spawn**
 - **every turn's start and end:** goal, status, tokens
 
-What is only read (the header, each Claude's row, the last task's card) is drawn as a picture laid out to the pixel, so nothing is clipped. Everything you press (Details, files, tabs, scrolling, the log's lines, settings) is a real button beside or under the pictures, never over them.
+What is only read (the header, what each Claude's card says, the last task's card) is drawn as a picture laid out to the pixel, so nothing is clipped. Each Claude's card is a box holding its picture and its Details button. Everything you press (Details, files, tabs, scrolling, the log's lines, settings) is a real button beside or under the pictures, never over them.
 
 A warning also pops up when two Claudes edit the same file within a minute of each other.
 
