@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.7.0'
+const VERSION = '1.7.1'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -3466,12 +3466,22 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // /crew: Claude opens this chat's website in the browser pane (a mod can't open it itself); without
-  // the website, the pane opens as before.
+  // /crew: Claude opens this chat's website in the browser pane (a mod can't open the pane itself), asked
+  // once the command has finished, when the chat can take a prompt; the link stays in case it doesn't.
+  // Without the website, the pane opens as before.
   on('command.run', { command: 'crew' }, async $ => {
     if (webUrl) {
-      void $.prompt.submit({ text: `Open my Claude Crew website in the browser pane: call preview_start with the url ${webUrl}`, asUser: true })
-      return { text: `Claude Crew: asking Claude to open ${webUrl} in the browser pane.` }
+      const url = webUrl
+      $.clock.after(400, () =>
+        void $.prompt
+          .submit({ text: `Open my Claude Crew website in the browser pane: call preview_start with the url ${url}`, asUser: true })
+          .then(
+            r => $.store.set('crewOpen', { at: new Date().toISOString(), result: JSON.stringify(r ?? null).slice(0, 300) }),
+            err => $.store.set('crewOpen', { at: new Date().toISOString(), error: String(err).slice(0, 300) }),
+          )
+          .catch(() => undefined),
+      )
+      return { text: `Claude Crew for this chat: ${url} (opening it beside the chat; click it if it doesn't open)` }
     }
     if ((await $.store.get('intro').catch(() => undefined)) !== 'off') await playIntro?.()
     await $.ui.open({ id: PANE, title: 'Claude Crew' })
@@ -4057,7 +4067,7 @@ export const register: Register = on => {
             <Text>{'running at '}</Text>
             <Link href={webUrl} />
           </Box>
-          <Text color="#8B949E">{'Type /crew and Claude opens it in the browser pane, beside the chat.'}</Text>
+          <Text color="#8B949E">{'Type /crew to open it beside the chat, or click the address.'}</Text>
           <Text color={needs ? '#E3B341' : '#8B949E'}>{status}</Text>
         </Box>,
         c.theme ?? 'auto',

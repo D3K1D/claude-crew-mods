@@ -19,10 +19,11 @@ const hooks = {}
 const children = []
 const timers = []
 const prompts = []
+const later = []
 const $ = {
   command: { register: async () => {} },
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {}, invalidate: () => {} },
-  clock: { every: (ms, fn) => (timers.push({ ms, fn }), { cancel() {} }), after: () => ({ cancel() {} }) },
+  clock: { every: (ms, fn) => (timers.push({ ms, fn }), { cancel() {} }), after: (ms, fn) => (later.push(fn), { cancel() {} }) },
   fs: { read: async () => 'line\n', exists: async () => false },
   model: { complete: async () => ({ isAnswered: true, text: '' }) },
   store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
@@ -152,10 +153,13 @@ try {
   await wait(150)
   check('an id the mod never gave does nothing', globalThis.__store.get('crew')?.pane?.tab === 'files')
 
-  // /crew asks Claude to open it in the browser pane.
+  // /crew asks Claude to open it in the browser pane once the command is done, and shows the address.
   const r = await hooks['command.run']($, { command: 'crew', args: '' }, async () => ({}))
-  check('/crew asks Claude to open the website in the browser pane', prompts.some(p => p.text.includes(url) && p.text.includes('preview_start') && p.asUser), JSON.stringify(prompts))
-  check('and says so', String(r?.text).includes(url))
+  check('/crew shows the address, to click if it does not open', String(r?.text).includes(url), String(r?.text))
+  check('and asks nothing while the command still runs', !prompts.length, JSON.stringify(prompts))
+  await later.splice(0).reduce((p, fn) => p.then(fn), Promise.resolve())
+  await wait(20)
+  check('then asks Claude to open it in the browser pane', prompts.some(p => p.text.includes(url) && p.text.includes('preview_start') && p.asUser), JSON.stringify(prompts))
 
   // Keep the page's address for a look in a real browser (tests/.build/web-url.txt), then stop.
   writeFileSync(join(here, '..', '.build', 'web-url.txt'), url)

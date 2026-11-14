@@ -6,7 +6,7 @@ A live view of what Claude and its helper Claudes are doing, for when you give C
 /plugin install crew-map --marketplace D3K1D/claude-crew-mods
 ```
 
-Each chat gets its own Claude Crew website, run by the mod on your computer (only your computer can open it). Type `/crew` and Claude opens it in the browser pane beside the chat. The mod's own pane on the desktop shows the website's address and a one-line status; in a terminal it draws the whole view as text. If the website can't start (it needs Node), the desktop pane draws the whole view instead. The repository's [README](../README.md) covers other ways to install it and troubleshooting.
+Each chat gets its own Claude Crew website, run by the mod on your computer (only your computer can open it). Type `/crew` and Claude opens it in the browser pane beside the chat (if it doesn't, click the address `/crew` shows). The mod's own pane on the desktop shows the website's address and a one-line status; in a terminal it draws the whole view as text. If the website can't start (it needs Node), the desktop pane draws the whole view instead. The repository's [README](../README.md) covers other ways to install it and troubleshooting.
 
 **The website.** The same view as the pane, drawn as a web page: real buttons in Claude Crew's own colours, hover, and a **drag line** between the Claudes and the log (drag it up for more log, down for more Claudes; double-click to reset). The log scrolls as far back as the last 400 lines. Every press on the page goes back to the mod and does what the pane's buttons do. The page reaches the mod at `127.0.0.1` with a random token in its address, and refuses requests that name any other host. The website stops when the chat ends.
 
