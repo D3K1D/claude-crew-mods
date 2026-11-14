@@ -7,7 +7,9 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.7.1'
+const VERSION = '1.7.2'
+/** How /crew's request to Claude starts: the log and the last task leave that turn out. */
+const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -1009,6 +1011,7 @@ const LOG_STEP = 3
  */
 const SYSTEM_TAG = /^\s*<(task-notification|agent-message|system-reminder|ci-monitor-event|local-command-stdout|local-command-stderr|local-command-caveat|command-name|command-message|command-args|bash-notification|bash-input|bash-stdout|user-memory-input|[a-z][\w-]*-(?:notification|event|reminder))[\s>]/i
 const systemNote = (full: string) => {
+  if (full.startsWith(OPEN_ASK)) return 'opening Claude Crew'
   const text = full.length > 8000 ? full.slice(0, 8000) : full
   const tag = text.match(SYSTEM_TAG)?.[1]?.toLowerCase()
   if (!tag) return ''
@@ -3327,6 +3330,7 @@ const startWeb = ($: EngineInterface) => {
     webPush = undefined
     webWatchers = 0
     if (was) $.ui.invalidate('ui.render')
+    else void Promise.resolve().then(() => $.ui.open({ id: PANE, title: 'Claude Crew' })).catch(() => undefined)
   })()
 }
 
@@ -3457,8 +3461,8 @@ export const register: Register = on => {
     // Once per session: a reload or a worker restart starts the module again, not the session.
     introOff = (await $.store.get('intro').catch(() => undefined)) === 'off'
     if (!introOff && !(await read($, intro)).played) await playIntro()
-    void $.ui.open({ id: PANE, title: 'Claude Crew' })
-    // This chat's website: started once, and sent the view while anyone has it open.
+    // This chat's website: started once, and sent the view while anyone has it open. The pane opens
+    // by itself only when the website can't start.
     if (!webUrl) startWeb($)
     webTimer?.cancel()
     webTimer = $.clock.every(800, () => void publishWeb($))
@@ -3474,7 +3478,7 @@ export const register: Register = on => {
       const url = webUrl
       $.clock.after(400, () =>
         void $.prompt
-          .submit({ text: `Open my Claude Crew website in the browser pane: call preview_start with the url ${url}`, asUser: true })
+          .submit({ text: `${OPEN_ASK} and show me that pane: call preview_start with the url ${url}, then mcp__ccd_view__show_pane for the browser pane.`, asUser: true })
           .then(
             r => $.store.set('crewOpen', { at: new Date().toISOString(), result: JSON.stringify(r ?? null).slice(0, 300) }),
             err => $.store.set('crewOpen', { at: new Date().toISOString(), error: String(err).slice(0, 300) }),

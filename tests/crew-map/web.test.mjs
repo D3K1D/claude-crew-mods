@@ -159,7 +159,10 @@ try {
   check('and asks nothing while the command still runs', !prompts.length, JSON.stringify(prompts))
   await later.splice(0).reduce((p, fn) => p.then(fn), Promise.resolve())
   await wait(20)
-  check('then asks Claude to open it in the browser pane', prompts.some(p => p.text.includes(url) && p.text.includes('preview_start') && p.asUser), JSON.stringify(prompts))
+  check('then asks Claude to open it in the browser pane, and show the pane', prompts.some(p => p.text.includes(url) && p.text.includes('preview_start') && p.text.includes('show_pane') && p.asUser), JSON.stringify(prompts))
+  // That turn is not a task: the log calls it a note, and the last task stays the person's.
+  await hooks['turn.start']($, { text: prompts[0]?.text ?? '', turnId: 'T9' }, async () => ({ turnId: 'T9' }))
+  check("/crew's turn keeps the person's goal", globalThis.__store.get('crew')?.agents.find(a => a.id === 'main')?.goal === 'Fix the loader', globalThis.__store.get('crew')?.agents.find(a => a.id === 'main')?.goal)
 
   // Keep the page's address for a look in a real browser (tests/.build/web-url.txt), then stop.
   writeFileSync(join(here, '..', '.build', 'web-url.txt'), url)
