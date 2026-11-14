@@ -60,7 +60,7 @@ await fire('session.start', {}, async () => ({}))
 // ── Before any work: one Claude, idle; the crew's room says what will show there, with the demo.
 let t = await render()
 check('desktop: the header and the row are pictures; no Client, nothing laid over a picture', pics(t).length >= 2 && find(t, x => x.type === 'Client').length === 0 && find(t, x => x.type === 'Box' && (x.props.marginTop ?? 0) < 0).length === 0)
-check("each Claude's card is a Box with a border and fill, holding its picture and its Details Button", find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-')).every(b => b.props.borderStyle === 'round' && !!b.props.backgroundColor && find(b, y => y.type === 'Svg').length === 1 && find(b, y => y.type === 'Button').length === 1))
+check("each Claude's card is a Box with a border (its fill only with a theme picked: auto can't fill a Box), holding its picture and its Details Button", find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-')).every(b => b.props.borderStyle === 'round' && !b.props.backgroundColor && find(b, y => y.type === 'Svg').length === 1 && find(b, y => y.type === 'Button').length === 1))
 {
   // The viewer runs to the bottom of the pane: what the pane has, less what is above it; never under 8.
   const at = rows => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 87, scroll: { bodyRows: rows } }, viewport: { columns: 87 } }, async () => ({})).then(viewHeight)

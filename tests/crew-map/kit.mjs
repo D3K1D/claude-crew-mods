@@ -20,14 +20,22 @@ const inView = t => {
   if (v) find(v, () => true).forEach(x => set.add(x))
   return set
 }
-export const pics = t => find(t, x => x.type === 'Svg').map(x => x.props)
+/** The pictures that are pieces of a one-row line (read with their row, not as bands of their own). */
+const rowPics = t => new Set(find(t, x => x.type === 'Box' && x.props?.height === 1).flatMap(r => find(r, y => y.type === 'Svg')))
+export const pics = t => {
+  const inRows = rowPics(t)
+  return find(t, x => x.type === 'Svg' && !inRows.has(x)).map(x => x.props)
+}
+/** The words a picture draws, in order: place, size, colour role, bold, set by its end. */
+const wordsIn = src =>
+  [...src.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)" font-size="([\d.]+)" class="f-(\w+)"([^>]*)>([^<]*)<\/text>/g)].map(m => ({
+    x: +m[1], y: +m[2], size: +m[3], role: m[4], bold: m[5].includes('700'), end: m[5].includes('end'), t: unxml(m[6]),
+  }))
 /** The words drawn in the pictures (with place and colour role, each picture placed under the last), and the text. */
 const svgGlyphs = t => {
   let off = 0
   return pics(t).flatMap(p => {
-    const out = [...p.source.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)" font-size="([\d.]+)" class="f-(\w+)"([^>]*)>([^<]*)<\/text>/g)].map(m => ({
-      x: +m[1], y: +m[2] + off, size: +m[3], role: m[4], bold: m[5].includes('700'), end: m[5].includes('end'), t: unxml(m[6]),
-    }))
+    const out = wordsIn(p.source).map(g => ({ ...g, y: g.y + off }))
     off += Number(p.height) || 0
     return out
   })
@@ -36,7 +44,12 @@ const svgGlyphs = t => {
 const textRows = (root, skip = new Set()) => {
   const rows = find(root, x => x.type === 'Box' && x.props?.height === 1 && !skip.has(x))
   // A lone mark (a coloured dot, an action's glyph) is not a word; the › and ▾ that open and fold a line are.
-  return rows.map(r => find(r, x => x.type === 'Text').map(x => ({ t: text(x).trim(), role: ROLE_OF[x.props?.color] ?? 'text', bold: !!x.props?.bold })).filter(g => g.t && !/^[^\p{L}\p{N}›▾]$/u.test(g.t)))
+  // A row's words in order: its Text, and the words its pictures draw (a line's read-only runs are pictures).
+  return rows.map(r =>
+    find(r, x => x.type === 'Text' || x.type === 'Svg')
+      .flatMap(x => (x.type === 'Svg' ? wordsIn(String(x.props.source)).map(g => ({ t: g.t.trim(), role: g.role, bold: g.bold })) : [{ t: text(x).trim(), role: ROLE_OF[x.props?.color] ?? 'text', bold: !!x.props?.bold }]))
+      .filter(g => g.t && !/^[^\p{L}\p{N}›▾]$/u.test(g.t)),
+  )
 }
 export const glyphs = (t, band) => {
   if (band === 'view') return textRows(viewOf(t) ?? {}).flat()

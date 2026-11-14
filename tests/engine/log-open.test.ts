@@ -20,7 +20,12 @@ const textOf = (x: unknown): string => (typeof x === 'string' || typeof x === 'n
 /** The viewer's rows (the Box keyed "view"), each as its words. */
 const rowsOf = (tree: unknown) => {
   const view = walk(tree).find(e => e.type === 'Box' && e.props?.key === 'view')
-  return walk(view).filter(e => e.type === 'Box' && e.props?.height === 1).map(r => textOf(r).replace(/\s+/g, ' ').trim()).filter(Boolean)
+  // A row's words: its Text, and the words its pictures draw (a line's read-only runs are pictures).
+  const said = (e: El) => (e.type === 'Svg' ? [...String(e.props?.source ?? '').matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1].replace(/&amp;/g, '&')).join(' ') : e.type === 'Text' ? textOf(e) : '')
+  return walk(view)
+    .filter(e => e.type === 'Box' && e.props?.height === 1)
+    .map(r => walk(r).map(said).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
 }
 /** The key of the last Button that says `label` (the newest line's). */
 const keyOf = (tree: unknown, label: string) => walk(tree).filter(e => e.type === 'Button' && textOf(e).trim() === label).map(e => String(e.props?.key)).at(-1)

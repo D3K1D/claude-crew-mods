@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.6.4'
+const VERSION = '1.6.5'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -3965,7 +3965,86 @@ export const register: Register = on => {
         </Text>
       )
     }
-    const lineEl = (l: VLine, k: string) => (
+    // On the desktop a line of the viewer is pictures and buttons: every run of words, icons and dots
+    // that is only read is one picture, drawn to the pixel; each thing pressed is the app's Button in a
+    // room of whole columns beside it, never on it. Widths are whole columns, so they line up.
+    const LINE_PX = 12
+    const LINE_COLS = vwCols - 1
+    const leadCols = (g: Seg) => (g.dot ? 2 : 0) + (g.icon ? 2 : 0) + (g.sprite ? 3 : 0) + (g.bar !== undefined ? 10 : 0)
+    const btnText = (g: Seg) => (g.parts ? g.parts.map(p => p[0]).join('') : `${g.dot ? '● ' : ''}${g.t ?? ''}`)
+    const segCols = (g: Seg) => (g.run ? textW(btnText(g)) + 1 : g.w ? Math.floor(g.w / CELL_W) : leadCols(g) + (g.t ? Math.ceil(pxW(g.t, g.size ?? LINE_PX) / CELL_W) : 0))
+    const drawSeg = (P: Pic, g: Seg, x: number, room: number) => {
+      const end = x + room
+      if (g.dot) {
+        P.dot(x + 4.5, ROW / 2, 3.5, g.dot)
+        x += 2 * CELL_W
+      }
+      if (g.icon) {
+        P.icon(x, (ROW - 13) / 2, 13, g.icon[0], g.icon[1], g.icon[0] === 'think' ? 2.4 : 1.8)
+        x += 2 * CELL_W
+      }
+      if (g.sprite) {
+        P.sprite(x, (ROW - 12) / 2, g.sprite)
+        x += 3 * CELL_W
+      }
+      if (g.bar !== undefined) {
+        P.rect(x, ROW / 2 - 4, 72, 8, 4, 'line')
+        if (g.bar > 0) P.rect(x, ROW / 2 - 4, Math.max(8, 72 * Math.min(1, g.bar)), 8, 4, g.role === 'red' || g.role === 'amber' ? g.role : 'dim')
+        x += 10 * CELL_W
+      }
+      if (g.t) {
+        const size = g.size ?? LINE_PX
+        P.line(x, 0, ROW, fitPx(g.t, Math.max(0, end - x), size), size, g.role ?? 'text', { b: g.b, i: g.i, u: g.u })
+      }
+    }
+    const linePic = (l: VLine, k: string) => {
+      const indent = l.indent ? Math.round(l.indent / CELL_W) : 0
+      const left = l.segs.filter(g => g.t || g.parts || g.dot || g.icon || g.sprite || g.bar !== undefined)
+      const right = (l.right ?? []).filter(g => g.t || g.parts)
+      const fixed = indent + [...left, ...right].reduce((n, g) => n + (g.flex ? 0 : segCols(g)) + 1, 0)
+      const room = Math.max(0, LINE_COLS - fixed)
+      const flexAt = left.findIndex(g => g.flex)
+      // Each item: a seg in its columns (and a column after it), or empty room.
+      const items: { g?: Seg; cols: number }[] = indent ? [{ cols: indent }] : []
+      left.forEach((g, i) => items.push({ g, cols: (i === flexAt ? room : segCols(g)) + 1 }))
+      if (flexAt < 0 && room) items.push({ cols: room })
+      right.forEach(g => items.push({ cols: 1 }, { g, cols: segCols(g) }))
+      // Runs of read-only items become one picture; a button stands alone.
+      const out: JSX.Element[] = []
+      let run: { g?: Seg; cols: number }[] = []
+      const flush = () => {
+        if (!run.length) return
+        const cols = run.reduce((n, it) => n + it.cols, 0)
+        if (run.some(it => it.g)) {
+          const P = picture()
+          let x = 0
+          for (const it of run) {
+            if (it.g) drawSeg(P, it.g, x, it.cols * CELL_W - (it.g.flex ? CELL_W : 0))
+            x += it.cols * CELL_W
+          }
+          const alt = run.map(it => (it.g ? [it.g.t].filter(Boolean).join('') : '')).filter(Boolean).join(' ')
+          out.push(<Svg key={`${k}p${out.length}`} source={P.done(Math.round(cols * CELL_W), ROW, mode)} alt={alt || ' '} width={Math.round(cols * CELL_W)} height={ROW} />)
+        } else out.push(<Box key={`${k}e${out.length}`} width={cols} flexShrink={0} />)
+        run = []
+      }
+      items.forEach((it, i) => {
+        if (it.g?.run) {
+          flush()
+          out.push(
+            <Box key={`${k}b${i}`} width={it.cols} flexShrink={0}>
+              {segEl(it.g, `${k}g${i}`)}
+            </Box>,
+          )
+        } else run.push(it)
+      })
+      flush()
+      return (
+        <Box key={k} flexDirection="row" height={1} overflow="hidden">
+          {out}
+        </Box>
+      )
+    }
+    const lineEl = (l: VLine, k: string) => (!isTerminal ? linePic(l, k) : (
       <Box key={k} flexDirection="row" height={1} overflow="hidden">
         {l.indent ? <Text mono size="footnote">{' '.repeat(Math.round(l.indent / CELL_W))}</Text> : null}
         {l.segs.map((g, i) => (
@@ -3982,7 +4061,7 @@ export const register: Register = on => {
           </Box>
         ))}
       </Box>
-    )
+    ))
 
     // The header: the brand, the counts by state, and the one cost.
     const head = picture()
@@ -4004,8 +4083,9 @@ export const register: Register = on => {
         </Text>
       </Button>
     )
-    const light = mode === 'light'
-    const CARD = { fill: light ? '#F6F8FA' : '#121821', line: light ? '#D0D7DE' : '#30363D', edge: light ? '#59636E' : '#8B949E', amber: light ? '#9A6700' : '#E3B341', amberFill: light ? '#FBF6EA' : '#221E14' }
+    // The card's colours in the dark theme; the theme pass turns them light. With the theme left to the app
+    // (auto) a Box can't follow it for a fill (no theme colour is a panel's), so the card is an outline then.
+    const CARD = { fill: '#121821', line: '#30363D', edge: '#8B949E', amber: '#E3B341', amberFill: '#221E14' }
     const rowEl = (r: PaneRow) => {
       const P = picture()
       const lines = askLines(r)
@@ -4021,7 +4101,7 @@ export const register: Register = on => {
       const tall = rowH(r, lines) - 4
       drawCrew(P, [r], -2, picW, wide, openDetails, true)
       return (
-        <Box key={`row-${r.id}`} flexDirection="row" marginLeft={1 + indent} marginRight={1} borderStyle="round" borderColor={r.state === 'you' ? CARD.amber : r.focused ? CARD.edge : CARD.line} backgroundColor={r.state === 'you' ? CARD.amberFill : CARD.fill}>
+        <Box key={`row-${r.id}`} flexDirection="row" marginLeft={1 + indent} marginRight={1} borderStyle="round" borderColor={r.state === 'you' ? CARD.amber : r.focused ? CARD.edge : CARD.line} {...(mode === 'auto' ? {} : { backgroundColor: r.state === 'you' ? CARD.amberFill : CARD.fill })}>
           <Svg source={P.done(picW, tall, mode)} alt={alt} width={picW} height={tall} />
           <Box flexDirection="column" justifyContent="flex-end" alignItems="flex-end" width={DET} flexShrink={0}>
             {detailsBtn(r)}
