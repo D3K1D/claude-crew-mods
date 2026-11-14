@@ -205,4 +205,10 @@ events.onmessage = ev => {
 events.onerror = () => {
   if (events.readyState !== EventSource.OPEN) $('gone').hidden = false
 }
-events.onopen = () => ($('gone').hidden = true)
+// Back after Claude reopened (or the mod reloaded): load the page afresh, in case the mod was updated.
+let lost = false
+events.addEventListener('error', () => (lost = true))
+events.onopen = () => {
+  if (lost) location.reload()
+  $('gone').hidden = true
+}

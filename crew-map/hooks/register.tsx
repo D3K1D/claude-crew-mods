@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.7.3'
+const VERSION = '1.7.4'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -2902,7 +2902,14 @@ const publishWeb = async ($: EngineInterface) => {
 const startWeb = ($: EngineInterface) => {
   void (async () => {
     try {
-      const server = $.process.spawn({ argv: ['node', `${$.plugin.root}/web/server.mjs`] })
+      // The address this chat's website had last time (kept per chat in the store), so after Claude
+      // reopens, the chat's browser pane finds its website where it was.
+      const sid = await Promise.resolve()
+        .then(() => $.session.id())
+        .catch(() => '')
+      const kept = ((await $.store.get('webAddress').catch(() => undefined)) ?? {}) as Record<string, { port: number; token: string; at: number }>
+      const was = sid ? kept[sid] : undefined
+      const server = $.process.spawn({ argv: ['node', `${$.plugin.root}/web/server.mjs`, ...(was ? [String(was.port), was.token] : [])] })
       let buf = ''
       for await (const piece of server as AsyncIterable<{ text: string }>) {
         buf += piece.text
@@ -2913,6 +2920,12 @@ const startWeb = ($: EngineInterface) => {
             const [port, token] = line.slice(6).split(' ')
             const base = `http://127.0.0.1:${port}/${token}`
             webUrl = `${base}/`
+            if (sid) {
+              const keep = Object.entries({ ...kept, [sid]: { port: Number(port), token, at: Date.now() } })
+                .sort((x, y) => y[1].at - x[1].at)
+                .slice(0, 40)
+              void $.store.set('webAddress', Object.fromEntries(keep)).catch(() => undefined)
+            }
             webPost = (path, body = '') => $.http.fetch(`${base}/${path}`, { method: 'POST', body }).catch(() => undefined)
             $.ui.invalidate('ui.render')
           } else if (line.startsWith('WATCH ')) {

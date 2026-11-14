@@ -19,7 +19,11 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
-const token = randomBytes(12).toString('hex')
+// The address this chat had before (port and token, from the mod), so a page left open, or the browser
+// pane the app brings back, finds it again; a new one when there was none, or the port is taken.
+const [wantPort, wantToken] = process.argv.slice(2)
+const want = Number(wantPort) >= 1024 && Number(wantPort) <= 65535 ? Number(wantPort) : 0
+let token = want && /^[0-9a-f]{24}$/.test(wantToken ?? '') ? wantToken : randomBytes(12).toString('hex')
 const FILES = {
   '': ['index.html', 'text/html; charset=utf-8'],
   'app.css': ['app.css', 'text/css; charset=utf-8'],
@@ -108,4 +112,10 @@ const srv = http.createServer((req, res) => {
   res.writeHead(404)
   res.end()
 })
-srv.listen(0, '127.0.0.1', () => say(`READY ${srv.address().port} ${token}`))
+srv.on('listening', () => say(`READY ${srv.address().port} ${token}`))
+srv.on('error', err => {
+  if (err.code !== 'EADDRINUSE' || srv.address()) throw err
+  token = randomBytes(12).toString('hex')
+  srv.listen(0, '127.0.0.1')
+})
+srv.listen(want, '127.0.0.1')
