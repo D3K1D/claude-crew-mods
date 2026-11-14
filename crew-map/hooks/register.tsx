@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.6.5'
+const VERSION = '1.7.0'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -2583,6 +2583,753 @@ const lastCtx = new Map<string, string>()
 let mainModel = ''
 /** A model's context window: the measured one for the main model, a million for a [1m] model, else 200k. */
 const windowOf = (model: string) => (/\[1m\]|-1m\b/i.test(model) ? 1_000_000 : model && model === mainModel && mainWindow ? mainWindow : 200_000)
+/**
+ * What the pane shows, worked out once for any surface: the counts and cost, each Claude's row, the last
+ * task, Touched, the tabs and the lines of the one shown. The pane draws it; the website gets it as data.
+ */
+const paneModel = async ($: EngineInterface, cols: number, isTerminal: boolean, bodyRows: number, surface: string) => {
+    // Every value the pane draws from, read side by side (one round trip, not nine in a row).
+    const [c, , codexPublished, , sq] = await Promise.all([
+      read($, crew),
+      // Read so the pane redraws each second while a timer runs.
+      read($, tick),
+      // Codex runs as the codex-bridge mod publishes them (another plugin's value: read only, typed loosely here).
+      $.state.get({ plugin: 'codex-bridge', key: 'runs' } as never).catch(() => ({})),
+      read($, intro),
+      read($, search),
+    ])
+    const published = (codexPublished as unknown as { value?: CodexRun[] }).value ?? []
+    const codexRuns = [...published, ...(c.demoCodex ?? [])]
+    editor = c.editor || 'code'
+    const nameFor = (id: string) => c.agents.find(a => a.id === id)?.name ?? (id === 'main' ? 'Claude' : 'a subagent')
+    const live = c.agents.filter(a => a.state === 'busy' || a.state === 'thinking')
+    // A finished helper keeps its window a moment, then folds into the log's title row (a click opens it again).
+    const unfolded = c.unfolded ?? {}
+    const isOpen = (a: Agent) =>
+      a.id === 'main' || a.state === 'busy' || a.state === 'thinking' || !!a.needs || (unfolded[a.id] ?? (a.state === 'done' && Date.now() - (a.doneAt || 0) < WINDOW_LINGER_MS))
+    // In the order they started: a window or desk never moves (waiting on you shows in amber instead).
+    const shown = c.agents.filter(isOpen)
+    const finished = c.agents.filter(a => a.id !== 'main' && (a.state === 'done' || a.state === 'idle'))
+    const folded = finished.filter(a => !isOpen(a))
+    const waitingOnYou = c.agents.filter(a => a.needs)
+    const files = Object.values(c.nodes).filter(n => n.kind === 'file').length
+    const secs = c.startedAt ? Math.floor((Date.now() - c.startedAt) / 1000) : 0
+    const uptime = `up ${String(Math.floor(secs / 3600)).padStart(2, '0')}:${String(Math.floor(secs / 60) % 60).padStart(2, '0')}`
+
+    const worked = Object.entries(c.changes ?? {}).sort((x, y) => y[1].at - x[1].at)
+    const totalAdded = worked.reduce((n, [, ch]) => n + ch.added, 0)
+    const totalRemoved = worked.reduce((n, [, ch]) => n + ch.removed, 0)
+    const vwCols = Math.max(40, Math.min(300, cols - 1))
+    const replaying = false
+    const rpAt = 0
+    // Codex speaks in the log too: what it was asked, what it ran and changed, and what it sent back.
+    const codexLog: LogLine[] = codexRuns.flatMap(r => [
+      { at: r.startedAt, who: 'Codex', hue: -1, kind: 'info' as const, text: `← ${nameFor(r.caller)}${r.thread ? ` [${r.thread}]` : ''}: ${trunc(oneLine(r.task), 90)}` },
+      ...r.events
+        .filter(ev => ev.kind === 'cmd' || ev.kind === 'file' || ev.kind === 'say')
+        .slice(-12)
+        .map(ev => ({
+          at: ev.at,
+          who: 'Codex',
+          hue: -1,
+          kind: (ev.kind === 'say' ? 'think' : 'act') as LogLine['kind'],
+          text: ev.kind === 'cmd' ? `${SHELL_MARK}${cmdGist(ev.text)}${ev.ok === false ? ' ✗ failed' : ''}` : ev.kind === 'file' ? `✎ ${relPath(ev.text)}` : ev.text,
+        })),
+      ...(r.endedAt
+        ? [
+            {
+              at: r.endedAt,
+              who: 'Codex',
+              hue: -1,
+              kind: 'info' as const,
+              text: `→ ${nameFor(r.caller)}: ${r.status}${r.files.length ? ` · ${r.files.length} file${r.files.length === 1 ? '' : 's'} changed` : ''}${r.notesUpdated ? ' · notes updated' : ''}`,
+            },
+          ]
+        : []),
+    ])
+    // The log: its lines, scrolled (held at a line while new ones come in below), and the ones opened whole.
+    const lv = c.logView ?? {}
+    const openLog = new Set(lv.open ?? [])
+    const shortOf = (l: LogLine) => {
+      const m = messageOf(l)
+      return m ? (m.from ? `${m.from}: ${m.body}` : m.body) : l.kind === 'think' ? l.text : l.text.replace(/^$ /, SHELL_MARK)
+    }
+    const fullOf = (l: LogLine) => (l.kind === 'think' && l.full ? l.full : shortOf(l))
+    const allLog = [...c.log, ...codexLog].sort((x, y) => x.at - y.at)
+    const held = typeof lv.anchor === 'number'
+    let upto = held ? allLog.filter(l => l.at <= (lv.anchor as number)) : allLog
+    if (!upto.length) upto = allLog.slice(0, 1)
+    const newerCount = allLog.length - upto.length
+    const demoOn = c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done')
+    // The chat's cost as Claude Code totals it, else what the crew counted of it.
+    const totalCost = c.chatCost ?? c.spent?.cost ?? c.agents.reduce((n, a) => n + (a.cost ?? 0), 0)
+    const sm = c.summary
+    const workedGroups: { g: string; rows: (typeof worked)[number][] }[] = []
+    for (const w of worked) {
+      const g = groupOf(w[0])
+      const at = workedGroups.find(x => x.g === g)
+      if (at) at.rows.push(w)
+      else workedGroups.push({ g, rows: [w] })
+    }
+    // ── Desks, at a glance: one row per Claude at work (and each Codex run) ──
+    // Line one: its little Claude, name, and what it is doing in plain words (the biggest text), its time.
+    // Line two: how far along (a pip per step, "Step 2 of 3 · …") and its model. Colour says its state
+    // only. One needing you is pinned on top, amber, with its whole request; one done is a dim line.
+    const src = replaying ? crewAt(c, rpAt, replayShown.stamp) : c
+    const deskAgents = replaying ? src.agents.filter(a => a.id === 'main' || a.state === 'busy' || a.state === 'thinking') : shown
+    const nowOf = (a: Agent): [string, string] => {
+      const w = waitOf(a, src, Date.now())
+      if (w) return [w.what, w.label]
+      if (a.tool === COMPACT && a.state === 'busy') return ['compacting', 'freeing up room']
+      if (a.state === 'busy' && a.node && src.nodes[a.node] && !isSpecial(a.node)) return [baseName(a.node), verbOf(a)]
+      // A command: Claude's own words for it, as it runs (not "ran …").
+      if (a.state === 'busy' && (a.tool === 'Bash' || a.tool === 'PowerShell'))
+        return [(a.actions[0]?.startsWith(SHELL_MARK) ? a.actions[0].slice(SHELL_MARK.length) : cmdGist(a.detail)).replace(/^ran /, ''), 'running']
+      if (a.state === 'busy') return [a.detail ? trunc(oneLine(a.detail), 40) : verbOf(a), verbOf(a)]
+      if (a.state === 'thinking') return ['thinking', 'planning its next step']
+      if (a.state === 'done') return ['done', a.cost ? fmtUsd(a.cost) : 'finished']
+      return ['—', a.id === 'main' ? 'waiting for a prompt' : 'idle']
+    }
+    // Codex in a row while it runs, and a little after (as a helper's lingers); the rest counted.
+    const codexAtDesks = replaying ? [] : codexRuns.filter(r => r.status === 'running' || Date.now() - (r.endedAt || 0) < WINDOW_LINGER_MS)
+    const CODEX_DESKS = 3
+    const deskCount = deskAgents.length + Math.min(CODEX_DESKS, codexAtDesks.length) + (codexAtDesks.length > CODEX_DESKS ? 1 : 0)
+    // It keeps room for the most there have been, so the cards below hold still as helpers come and go,
+    // and gives the room back once there have been fewer for a minute.
+    const anyAtWork = src.agents.some(a => a.state === 'busy' || a.state === 'thinking') || codexAtDesks.some(r => r.status === 'running')
+    if (deskCount >= deskMax || !anyAtWork) {
+      deskMax = deskCount
+      deskLowSince = 0
+    } else if (!deskLowSince) deskLowSince = Date.now()
+    else if (Date.now() - deskLowSince > DESK_ROOM_MS) {
+      deskMax = deskCount
+      deskLowSince = 0
+    }
+    // The picture's width: the pane inside the area's frame, less the Details button beside it.
+    const glanceW = Math.max(200, Math.floor(((isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9) * CELL_W))
+    const showModel = cols >= 70
+    // How deep a Claude sits: the main one 0, its helpers 1, theirs 2…
+    const depthOf = (a: Agent) => {
+      if (a.id === 'main') return 0
+      let d = 1
+      for (let p = a.parent; p && p !== 'main' && d < 4; p = src.agents.find(x => x.id === p)?.parent) d++
+      return d
+    }
+    const rowOfAgent = (a: Agent): GlanceRow => {
+      const now = Date.now()
+      const wait0 = waitOf(a, src, now)
+      const wait = wait0?.kind === 'command' && a.state === 'busy' ? undefined : wait0
+      const runFrom = wait0 && !wait ? Math.min(...[...(src.shells ?? []), ...(src.tests ?? [])].filter(x => x.agentId === a.id && x.status === 'running').map(x => x.startedAt), now) : 0
+      const at = a.state === 'busy' || a.state === 'thinking'
+      const state: GlanceRow['state'] = a.needs ? 'you' : a.state === 'done' ? 'done' : wait ? (wait.kind === 'you' ? 'idle' : 'wait') : at ? 'work' : 'idle'
+      const [what] = nowOf(a)
+      const kind =
+        state === 'you' || state === 'done' || state === 'wait' || state === 'idle'
+          ? state
+          : a.state === 'thinking' || a.tool === COMPACT
+            ? 'think'
+            : kindOf(a.tool)
+      const tests = kind === 'shell' && /\b(test|tests|jest|vitest|pytest|mocha|spec)\b/i.test(`${what} ${a.detail}`)
+      const status =
+        state === 'you' ? 'Needs you' : state === 'done' ? 'Done' : state === 'wait' ? 'Waiting' : state === 'idle' ? 'Idle' : a.tool === COMPACT ? 'Compacting' : tests ? 'Running tests' : workWords(a, kind)
+      const goal = a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : ''
+      const object =
+        state === 'you'
+          ? ''
+          : state === 'done'
+            ? a.job || goal
+            : state === 'wait'
+              ? `for ${wait?.what ?? ''}`
+              : state === 'idle'
+                ? a.id === 'main'
+                  ? 'your turn'
+                  : ''
+                : a.state === 'thinking'
+                  ? // How long its model step has run, and what it last said.
+                    [stepStart.has(a.id) ? elapsed(now - (stepStart.get(a.id) ?? 0)) : '', a.thoughts[0] ? oneLine(a.thoughts[0]) : ''].filter(Boolean).join(' · ')
+                  : runFrom && now - runFrom >= 1000
+                    ? // A test run by what it is for (JS tests (jest): auth), else the command in Claude's words; and how long.
+                      `${(t => (t ? t.purpose || testPurpose(t.command, '') : ''))((src.tests ?? []).find(x => x.agentId === a.id && x.status === 'running')) || wait0?.what || what} · ${elapsed(now - runFrom)}`
+                    : what
+      const tasks = tasksOf(a, src)
+      const total = tasks.length || a.todosTotal
+      const done = tasks.length ? tasks.filter(t => t.status === 'completed').length : a.todosDone
+      const step = doingOf(a, src) || tasks.find(t => t.status !== 'completed')?.subject || ''
+      const progress = total
+        ? `Step ${fmtK(Math.min(total, done + 1))} of ${fmtK(total)}${step ? ` · ${step}` : ''}`
+        : state === 'idle' && a.id === 'main'
+          ? 'Nothing running · ask Claude something to start'
+          : state === 'idle'
+            ? 'idle'
+            : `${fmtK(a.calls)} action${a.calls === 1 ? '' : 's'} so far`
+      const parent = src.agents.find(x => x.id === (a.parent ?? 'main'))
+      const ask = a.needs ? `${a.needs.what.charAt(0).toUpperCase()}${a.needs.what.slice(1)}? Answer in the chat.` : ''
+      return {
+        id: a.id,
+        name: a.name,
+        hue: colorOf(a),
+        state,
+        kind,
+        status,
+        object,
+        time: at && a.since ? shortTime(now - a.since) : state === 'done' && a.since ? shortTime((a.doneAt || now) - a.since) : '',
+        total,
+        done,
+        progress: a.stuck && state !== 'done' ? `Stuck? It ${a.stuck}.` : progress,
+        stuck: !!a.stuck && state !== 'done',
+        model: shortModel(agentModel.get(a.id) ?? (a.id === 'main' ? mainModel : '')),
+        depth: depthOf(a),
+        request: ask ? wrapRows(ask, Math.max(20, Math.floor((glanceW - 30 - 10) / (13.5 * 0.6))), 2) : [],
+        ask,
+        where: a.needs && a.id !== 'main' && parent ? `helping ${parent.name}` : '',
+      }
+    }
+    const rowOfCodex = (r: CodexRun): GlanceRow => {
+      const last = [...r.events].reverse().find(ev => ev.kind === 'cmd' || ev.kind === 'file')
+      const running = r.status === 'running'
+      const kind = !running ? 'done' : last?.kind === 'cmd' ? 'shell' : last?.kind === 'file' ? 'edit' : 'think'
+      const caller = src.agents.find(a => a.id === r.caller)
+      return {
+        id: `cx-${r.id}`,
+        name: 'Codex',
+        hue: CX,
+        state: running ? 'work' : 'done',
+        kind,
+        status: running ? KIND_WORDS[kind] : 'Done',
+        object: last ? (last.kind === 'cmd' ? cmdGist(last.text).replace(/^ran /, '') : baseName(last.text)) : r.activity || oneLine(r.task),
+        time: running && r.startedAt ? shortTime(Date.now() - r.startedAt) : '',
+        total: 0,
+        done: 0,
+        progress: `${fmtK(r.commands)} command${r.commands === 1 ? '' : 's'} · ${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'}${r.thread ? ` · ${r.thread}` : ''}`,
+        model: r.model ? trunc(r.model, 14) : '',
+        depth: caller ? depthOf(caller) + 1 : 1,
+        request: [],
+        where: '',
+      }
+    }
+    // In tree order (each Claude, then the ones it started), the ones needing you pinned on top.
+    const byParent = (id: string) => deskAgents.filter(a => a.id !== 'main' && (a.parent ?? 'main') === id)
+    const ordered: Agent[] = []
+    const walk = (a: Agent) => {
+      if (ordered.includes(a)) return
+      ordered.push(a)
+      byParent(a.id).forEach(walk)
+    }
+    deskAgents.filter(a => a.id === 'main' || !deskAgents.some(p => p.id === (a.parent ?? 'main'))).forEach(walk)
+    // A chat started from this one: its title, working or idle, and where it works; nested under this chat.
+    const chatList = src.chats ?? []
+    const rowOfChat = (ch: Chat): GlanceRow => ({
+      id: `chat-${ch.id}`,
+      name: ch.title,
+      hue: PALETTE[[...ch.id].reduce((n, x) => n + x.charCodeAt(0), 0) % PALETTE.length],
+      state: ch.running ? 'work' : 'idle',
+      kind: ch.running ? 'msg' : 'idle',
+      status: ch.running ? 'Working' : 'Idle',
+      object: ch.running ? 'in its own chat' : ch.at ? `last active ${shortTime(Date.now() - ch.at)} ago` : '',
+      time: '',
+      total: 0,
+      done: 0,
+      progress: `Chat · ${[ch.branch, baseName(ch.cwd)].filter(Boolean).join(' · ')}`,
+      model: '',
+      depth: ch.depth,
+      request: [],
+      where: '',
+    })
+    const glance = [...ordered.map(rowOfAgent), ...chatList.map(rowOfChat), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
+    const glanceList = [...glance.filter(r => r.state === 'you'), ...glance.filter(r => r.state !== 'you')]
+    // Room: the rows shown, at least; while anyone works, two lines for each of the most Claudes lately.
+    const desksH = Math.max(glanceList.reduce((n, r) => n + glanceBase(r), 0), anyAtWork ? Math.max(1, deskMax) * 2 : 0)
+    // ── Folder cards: each folder the work touched, its files as chips (green edited, red with errors) ──
+    // Built from the session's record of touched files (it keeps edits, and the order files were first
+    // reached), not from the tree's capped nodes: an edited file never drops off, a folder never moves.
+    const q = sq.q.trim().toLowerCase()
+    type CardFile = { id: string; label: string; touchedAt: number }
+    const cardRel = (id: string) => (id.startsWith('demo/') ? id.slice(5) : sessionDir && id.toLowerCase().startsWith(`${sessionDir.toLowerCase()}/`) ? id.slice(sessionDir.length + 1) : id)
+    const matchesQ = (f: CardFile) => !!q && (cardRel(f.id).toLowerCase().includes(q) || f.label.toLowerCase().includes(q))
+    const cardFiles: CardFile[] = []
+    const seenFile = new Set<string>()
+    for (const [id, ch] of Object.entries(src.changes ?? {}))
+      if (!isSpecial(id) && !seenFile.has(id)) {
+        seenFile.add(id)
+        cardFiles.push({ id, label: src.nodes[id]?.label || baseName(id), touchedAt: src.nodes[id]?.touchedAt || ch.at || 0 })
+      }
+    for (const n of Object.values(src.nodes))
+      if (n.kind === 'file' && !isSpecial(n.id) && !seenFile.has(n.id)) {
+        seenFile.add(n.id)
+        cardFiles.push({ id: n.id, label: n.label || baseName(n.id), touchedAt: n.touchedAt || 0 })
+      }
+    const onFile = new Map<string, Agent[]>()
+    for (const a of src.agents) if ((a.state === 'busy' || a.needs) && a.node) onFile.set(a.node, [...(onFile.get(a.node) ?? []), a])
+    const groups = new Map<string, { files: CardFile[]; first: number }>()
+    // A folder's place is its first file's: new folders join at the end, none ever moves.
+    cardFiles.forEach((f, i) => {
+      const g = groupOf(f.id)
+      if (g === OUTSIDE && src.hideOutside) return
+      const cur = groups.get(g) ?? { files: [], first: i }
+      cur.files.push(f)
+      groups.set(g, cur)
+    })
+    const outsideCount = src.hideOutside ? cardFiles.filter(f => groupOf(f.id) === OUTSIDE).length : 0
+    const folders = [...groups.entries()].sort((x, y) => x[1].first - y[1].first)
+    const perRow = cols >= 170 ? 3 : cols >= 100 ? 2 : 1
+    const cardW = perRow === 1 ? cols - 1 : Math.floor((cols - (perRow - 1)) / perRow)
+    const CHIPS = perRow === 1 ? 8 : 10
+    const visibleFiles = [...groups.values()].flatMap(g => g.files)
+    const matches = q ? visibleFiles.filter(matchesQ).length : 0
+    const errsOf = (id: string) => (src.problems ?? []).filter(pr => pr.path === id).length
+    const natural = (x: CardFile, y: CardFile) => x.label.localeCompare(y.label, undefined, { numeric: true, sensitivity: 'base' }) || x.id.localeCompare(y.id)
+    // ── The pane, as the design draws it: header, crew, Touched, and the viewer with its tabs ──
+    const now = Date.now()
+    const wide = cols >= 70
+    const ps = c.pane ?? {}
+    const paneAct = (p: Omit<Extract<Act, { k: 'pane' }>, 'k'>): Act => ({ k: 'pane', ...p })
+    const focusRow = ps.tab === 'claude' ? glanceList.find(r => r.id === ps.focus) : undefined
+    const tab = ps.tab === 'claude' && !focusRow ? 'activity' : ps.tab ?? 'activity'
+    const rowsP: PaneRow[] = glanceList.map(r => ({ ...r, ask: r.ask ?? r.request.join(' '), focused: tab === 'claude' && r.id === ps.focus }))
+    const W = Math.round(vwCols * CELL_W)
+    const count = (s: GlanceRow['state']) => rowsP.filter(r => r.state === s).length
+    const standby = !rowsP.some(r => r.state === 'work' || r.state === 'wait' || r.state === 'you')
+    const openDetails = (id: string) => (tab === 'claude' && ps.focus === id ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: 'claude', focus: id, top: 0 }))
+    const openFile = (id: string, name: string): Act => {
+      const at = (src.problems ?? []).find(p => p.path === id)?.line
+      return { k: 'file', path: id, name, edits: (c.changes[id]?.edits ?? 0) > 0, ...(at ? { line: at } : {}) }
+    }
+    const openDir = (path: string, name: string): Act => ({ k: 'dir', path, name })
+    const label = (g: string) => (g === OUTSIDE ? 'outside the project' : g === '.' ? 'project top' : `${g}/`)
+    const dirPathOf = (g: string) => (g === OUTSIDE || g.startsWith('demo') ? '' : g === '.' ? sessionDir : `${sessionDir}/${g}`)
+
+    // Header: counts by state (only those there are), then the one cost and the budget.
+    const n = { you: count('you'), work: count('work'), wait: count('wait'), done: count('done'), idle: count('idle') }
+    const counts: [string, string, boolean][] = standby
+      ? [[`◌ ${fmtK(Math.max(1, n.idle))} idle`, 'dim', false], ...(wide ? ([['· nothing running', 'dim', false]] as [string, string, boolean][]) : [])]
+      : ([
+          [n.you ? (wide ? `⏸ ${fmtK(n.you)} needs you` : `⏸ ${fmtK(n.you)}`) : '', 'amber', true],
+          [n.work ? (wide ? `● ${fmtK(n.work)} working` : `● ${fmtK(n.work)}`) : '', 'green', false],
+          [n.wait ? (wide ? `◌ ${fmtK(n.wait)} waiting` : `◌ ${fmtK(n.wait)}`) : '', 'dim', false],
+          [n.done ? (wide ? `✓ ${fmtK(n.done)} done` : `✓ ${fmtK(n.done)}`) : '', 'dim', false],
+        ] as [string, string, boolean][]).filter(x => x[0])
+    const costRole = c.budget > 0 && totalCost >= c.budget ? 'red' : c.budget > 0 && totalCost >= c.budget * 0.8 ? 'amber' : 'text'
+    const budgetText = c.budget > 0 ? (wide ? `of ${fmtUsd(c.budget)}` : `/ ${fmtUsd(c.budget)}`) : ''
+
+    // The last task while nobody works; before any work, what shows here and the demo.
+    const spendersNow = c.agents.filter(a => (a.cost ?? 0) > 0).sort((x, y) => y.cost - x.cost)
+    const recap: Recap | undefined =
+      standby && sm
+        ? {
+            title: `Last task done in ${elapsed(sm.ms)}`,
+            goal: sm.goal ? oneLine(promptOf(sm.goal)) : '',
+            ago: `${shortTime(now - sm.at)} ago`,
+            facts: [
+              ['Changed', sm.files.length ? `${fmtK(sm.files.length)} file${sm.files.length === 1 ? '' : 's'} · +${fmtK(sm.files.reduce((k, f) => k + f.added, 0))} −${fmtK(sm.files.reduce((k, f) => k + f.removed, 0))}` : 'no files', 'text'],
+              ['Tests', sm.tests.runs ? (sm.tests.failed ? `✕ ${fmtK(sm.tests.failed)} failed · last ${sm.tests.last}` : `✓ ${sm.tests.last}`) : 'none run', sm.tests.runs ? (sm.tests.failed ? 'red' : 'green') : 'dim'],
+              ['Cost', [fmtUsd(sm.cost), spendersNow.slice(0, wide ? 3 : 1).map(a => `${a.name} ${fmtUsd(a.cost)}`).join(', ') + (spendersNow.length > (wide ? 3 : 1) ? `, ${fmtK(spendersNow.length - (wide ? 3 : 1))} more` : '')].filter(Boolean).join(' · '), 'text'],
+              ['Crew', `${sm.claudes.slice(0, wide ? 4 : 2).join(', ')}${sm.claudes.length > (wide ? 4 : 2) ? ` and ${fmtK(sm.claudes.length - (wide ? 4 : 2))} more` : ''}${sm.codex ? ` · ${fmtK(sm.codex)} Codex run${sm.codex === 1 ? '' : 's'}` : ''}`, 'text'],
+            ],
+            copy: { k: 'copy' },
+          }
+        : standby && !c.log.length
+          ? { title: 'Nothing yet. Each Claude gets a row here as it starts.', goal: '', ago: '', facts: [], demo: { k: 'demo' } }
+          : undefined
+
+    // Touched: the three folders worked in most lately (in the order first reached), their files as buttons.
+    const lastIn = (files: CardFile[]) => Math.max(0, ...files.map(f => Math.max(f.touchedAt, src.changes[f.id]?.at ?? 0)))
+    const touchFolders: TouchFolder[] = [...folders]
+      .sort((x, y) => lastIn(y[1].files) - lastIn(x[1].files))
+      .slice(0, 3)
+      .sort((x, y) => x[1].first - y[1].first)
+      .map(([g, info]) => ({
+        name: label(g),
+        files: [...info.files]
+          .map(f => ({ f, ch: src.changes[f.id], who: onFile.get(f.id) ?? [], errs: errsOf(f.id) }))
+          .sort((x, y) => +!!y.who.length - +!!x.who.length || y.errs - x.errs || +!!y.ch?.edits - +!!x.ch?.edits || (y.ch?.at ?? 0) - (x.ch?.at ?? 0))
+          .map(({ f, ch, who, errs }) => ({ name: f.label, errs, add: ch?.edits ? ch.added : 0, del: ch?.edits ? ch.removed : 0, on: who.length ? hueRole(colorOf(who[0])) : '', read: !ch?.edits, run: openFile(f.id, f.label) })),
+      }))
+    const problemsN = (src.problems ?? []).length
+    // One count of the files the work touched (edited, read, or named by an error), the same in Touched and Files.
+    const filesN = cardFiles.length
+    const touchedSum = filesN
+      ? `${fmtK(filesN)} file${filesN === 1 ? '' : 's'}${wide && (totalAdded || totalRemoved) ? ` · +${fmtK(totalAdded)} −${fmtK(totalRemoved)}` : ''}${problemsN ? ` · ${fmtK(problemsN)} problem${problemsN === 1 ? '' : 's'}` : ''}`
+      : ''
+
+    // The viewer: what each tab lists, as lines; the body shows BODY_ROWS of them from where it is scrolled.
+    // Every Claude shows; the viewer takes the rest of the pane, down to its bottom (8 rows at least).
+    const ROW = CELL_H
+    const DET = 10
+    const rowW = Math.round((vwCols - 4 - DET) * CELL_W)
+    const askLines = (r: PaneRow) => (r.state === 'you' ? wrapRows(r.ask, askCols(rowW), 6).length : 0)
+    const aboveRows = isTerminal
+      ? 1 +
+        1 +
+        rowsP.reduce((n, r) => n + (r.state === 'done' ? 1 : r.state === 'you' ? 2 + wrapRows(r.ask, Math.max(16, cols - 6), 6).length : 2), 0) +
+        (recap ? (recap.copy ? 2 + recap.facts.length : 2) : 0)
+      : Math.ceil(
+          (24 +
+            rowsP.reduce((n, r) => n + (r.state === 'done' ? rowH(r, 0) : Math.ceil((rowH(r, askLines(r)) + 4) / ROW) * ROW), 0) +
+            (recap ? recapH(recap) - 6 + ROW : 0)) /
+            ROW,
+        )
+    const paneRows = Math.max(0, Math.floor(bodyRows))
+    if (`${surface} ${cols}x${paneRows}` !== paneSize) {
+      paneSize = `${surface} ${cols}x${paneRows}`
+      diagDirty = true
+    }
+    const BODY_ROWS = Math.max(8, (paneRows || aboveRows + 1 + 4 + 2 + 1 + 12) - aboveRows - 1 - 4 - 2 - (tab === 'search' ? 1 : 0) - 1)
+    const timeW = (wide ? 8 : 5) * CELL_W
+    const logCols = Math.max(12, vwCols - (wide ? 8 : 5) - 3 - 7 - 3 - 3 - 9)
+    // A line opened reads over as many rows as it takes, up to the viewer's (the rest of a longer one is in the chat).
+    const vRowsOf = (l: LogLine) => (openLog.has(logKey(l)) ? wrapRows(fullOf(l), logCols, BODY_ROWS) : [cutTo(oneLine(shortOf(l)), logCols)])
+    const vCut = (l: LogLine) => fullOf(l) !== shortOf(l) || textW(oneLine(shortOf(l))) > logCols
+    const logLinesOf = (l: LogLine): VLine[] => {
+      const m = messageOf(l)
+      const kind = l.kind === 'think' ? 'thought' : m ? 'msg' : LOG_GLYPH[[...l.text][0]] ?? (l.kind === 'info' ? 'plan' : 'tool')
+      const bare = (t: string) => (l.kind === 'think' || m ? t : t.replace(/^[^\p{L}\p{N}"'(\[$~./]+/u, ''))
+      const k = logKey(l)
+      const open = openLog.has(k)
+      const rowsOf = vRowsOf(l).map((t, i) => (i ? t : bare(t)))
+      // Words start with a capital; a path or a file name keeps its own case.
+      const first = rowsOf[0] && !/^\S*[/.\\]/.test(rowsOf[0]) ? `${rowsOf[0].charAt(0).toUpperCase()}${rowsOf[0].slice(1)}` : rowsOf[0] ?? ''
+      const running = l.took === undefined && !!l.call && now - l.at >= 1000 && now - l.at < SHELL_GIVE_UP_MS
+      const dur = l.took !== undefined ? took(l.took) : running ? `● ${took(now - l.at)}` : ''
+      const who = m ? (m.from ? trunc(m.from, 6) : 'You') : trunc(l.who, 6)
+      const tone = l.kind === 'think' || l.kind === 'info' ? 'dim' : 'text'
+      return [
+        {
+          segs: [
+            { t: wide ? clock(l.at) : clock(l.at).slice(0, 5), w: timeW, role: 'faint' },
+            { dot: m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}` },
+            { t: who, w: 6 * CELL_W, role: 'dim' },
+            { icon: [kind, running ? 'green' : l.kind === 'you' ? 'text' : 'dim'] },
+            { t: first, flex: true, role: tone, i: l.kind === 'think' },
+            ...(vCut(l) ? [{ t: open ? '▾' : '›', role: 'dim', run: { k: 'log', toggle: k, hold: upto[upto.length - 1]?.at ?? null }, label: open ? 'Fold the line' : 'Show the whole line', w: 12 } as Seg] : []),
+          ] as Seg[],
+          right: [{ t: dur, role: running ? 'green' : 'faint' }],
+        },
+        ...rowsOf.slice(1).map(t => ({ segs: [{ t, flex: true, role: tone, i: l.kind === 'think' }], indent: timeW + 15 * CELL_W })),
+      ]
+    }
+    // Activity: the log's lines up to where it is scrolled, as many as fill the body.
+    let actLines: VLine[] = []
+    let actFirst = upto.length
+    for (let i = upto.length - 1; i >= 0; i--) {
+      const ls = logLinesOf(upto[i])
+      if (actLines.length && actLines.length + ls.length > BODY_ROWS) break
+      actLines.unshift(...ls)
+      actFirst = i
+    }
+    // A line opened but pushed out by the newer ones under it: the body starts at it instead, so it reads from its first row.
+    const openAt = upto.map(l => openLog.has(logKey(l))).lastIndexOf(true)
+    if (openAt >= 0 && openAt < actFirst && actFirst - openAt <= 3) {
+      actLines = upto.slice(openAt).flatMap(logLinesOf).slice(0, BODY_ROWS)
+      actFirst = openAt
+    }
+    const actLast = upto.length - 1
+    // One Claude's details: model, who it helps, time; cost, tokens and context; what it was asked; its steps; its own lines.
+    const detailLines = (): VLine[] => {
+      if (!focusRow) return []
+      const a = src.agents.find(x => x.id === focusRow.id)
+      const run = focusRow.id.startsWith('cx-') ? codexRuns.find(x => `cx-${x.id}` === focusRow.id) : undefined
+      const textCols = Math.max(16, Math.floor((W - 2 * PADX) / (12 * ADV)))
+      const out: VLine[] = []
+      const chat = focusRow.id.startsWith('chat-') ? chatList.find(x => `chat-${x.id}` === focusRow.id) : undefined
+      if (chat) {
+        // A nested chat: its whole title, who started it, where it works, and when it last did anything.
+        const by = chatList.find(x => x.id === chat.parent)
+        out.push({ segs: [{ t: 'Chat', b: true }, { t: [chat.running ? 'working' : 'idle', chat.at ? `last active ${shortTime(Date.now() - chat.at)} ago` : ''].filter(Boolean).join(' · '), role: 'dim', flex: true }] })
+        for (const t of wrapRows(chat.title, textCols, 3)) out.push({ segs: [{ t }] })
+        out.push({ segs: [{ t: `Started by ${by ? by.title : 'this chat'}`, role: 'dim', flex: true }] })
+        for (const t of wrapRows([chat.cwd, chat.branch ? `branch ${chat.branch}` : ''].filter(Boolean).join(' · '), textCols, 2)) out.push({ segs: [{ t, role: 'dim' }] })
+        out.push({ segs: [{ t: 'Open it from the sidebar, under this chat.', role: 'dim' }] })
+        return out
+      }
+      const parent = a ? src.agents.find(x => x.id === (a.parent ?? 'main')) : undefined
+      const caller = run ? src.agents.find(x => x.id === run.caller) : undefined
+      const head = [focusRow.model || (run ? trunc(run.model, 14) : ''), a && a.id !== 'main' && parent ? `helping ${parent.name}` : caller ? `run by ${caller.name}` : '', focusRow.time].filter(Boolean).join(' · ')
+      out.push({ segs: [{ t: focusRow.name, b: true }, { t: head, role: 'dim', flex: true }] })
+      if (a) {
+        // How full its context is: a bar and the share of its window (red once it compacts soon), and how often it was compacted.
+        const ctx = a.ctx && a.ctx.window ? Math.round((a.ctx.tokens / a.ctx.window) * 100) : -1
+        const packed = a.compactions ? ` · compacted ${fmtK(a.compactions)}×` : ''
+        out.push({
+          segs: [
+            { t: `${fmtUsd(a.cost ?? 0)} · ${fmtK(a.tokens ?? 0)} tokens · context`, role: 'dim' },
+            ...(ctx >= 0
+              ? [{ bar: ctx / 100, role: ctx >= 85 ? 'red' : ctx >= 60 ? 'amber' : 'dim' }, { t: `${ctx}% of ${fmtK(a.ctx!.window)}${ctx >= 85 ? ' · compacts soon' : ''}${packed}`, role: ctx >= 85 ? 'red' : 'dim', flex: true }]
+              : [{ t: `—${packed}`, role: 'dim', flex: true }]),
+          ],
+        })
+      } else if (run) out.push({ segs: [{ t: `${fmtK(run.commands)} command${run.commands === 1 ? '' : 's'} · ${fmtK(run.files.length)} file${run.files.length === 1 ? '' : 's'}${run.thread ? ` · ${run.thread}` : ''}`, role: 'dim' }] })
+      const asked = run ? oneLine(run.task) : a ? [a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : '', a.job ?? ''].sort((x, y) => y.length - x.length)[0] : ''
+      for (const t of asked ? wrapRows(asked, textCols, 8) : []) out.push({ segs: [{ t }] })
+      for (const t of a ? tasksOf(a, src).slice(0, 12) : []) {
+        const mark = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○'
+        const words = wrapRows(t.active && t.status === 'in_progress' ? t.active : t.subject, textCols - 2, 3)
+        words.forEach((w, i) => out.push({ segs: [{ t: `${i ? ' ' : mark} ${w}`, role: t.status === 'in_progress' ? 'text' : 'dim' }] }))
+      }
+      const mine = allLog.filter(l => (run ? l.who === 'Codex' : l.who === focusRow.name && l.hue === (a?.hue ?? -2))).slice(-30).reverse()
+      for (const l of mine) out.push(...logLinesOf(l).slice(0, 1))
+      return out
+    }
+    // Every file the work touched, under its folder (in the order the work first reached them); a folder's
+    // name opens it; files outside the project can be hidden, and are counted when they are.
+    const fileLines = (filter: (path: string, name: string) => boolean = () => true): VLine[] => {
+      const out: VLine[] = []
+      for (const [g, info] of folders) {
+        const list = info.files.filter(f => filter(f.id, f.label)).sort(natural)
+        if (!list.length) continue
+        const dp = dirPathOf(g)
+        out.push({
+          segs: [{ icon: ['folder', 'dim'], t: label(g), role: 'dim', b: true, flex: true, ...(dp ? { run: openDir(dp, label(g).replace(/\/$/, '')) } : {}) }],
+          right: g === OUTSIDE && sessionDir ? [{ t: 'hide them', role: 'dim', u: true, run: { k: 'set', hideOutside: true } }] : [],
+        })
+        for (const f of list) {
+          const ch = src.changes[f.id]
+          out.push({
+            segs: [{ t: f.label, flex: true, role: errsOf(f.id) ? 'red' : ch?.edits ? 'text' : 'dim', run: openFile(f.id, f.label) }],
+            right: [...(ch?.edits ? [{ t: `+${fmtK(ch.added)}`, role: 'green', gap: 5 }, { t: `−${fmtK(ch.removed)}`, role: 'dim' }] : [{ t: errsOf(f.id) ? `✕${errsOf(f.id)}` : 'read', role: errsOf(f.id) ? 'red' : 'faint' }]), { t: ch ? trunc(ch.by, 8) : '', w: 60, role: ch ? `h${ch.hue % PALETTE.length}` : 'dim' }],
+            indent: 18,
+          })
+        }
+      }
+      if (outsideCount) out.push({ segs: [{ t: `${fmtK(outsideCount)} file${outsideCount === 1 ? '' : 's'} outside the project, hidden`, role: 'faint', flex: true }], right: [{ t: 'show them', role: 'dim', u: true, run: { k: 'set', hideOutside: false } }] })
+      return out.length ? out : [{ segs: [{ t: 'No files yet: they show here as the Claudes open them.', role: 'dim' }] }]
+    }
+    const searchLines = (): VLine[] => {
+      const qq = sq.q.trim().toLowerCase()
+      if (!qq) return [{ segs: [{ t: 'Type to find files, and lines in the log.', role: 'dim' }] }]
+      const files = fileLines((p, nm) => relPath(p).toLowerCase().includes(qq) || nm.toLowerCase().includes(qq))
+      const hits = allLog.filter(l => oneLine(fullOf(l)).toLowerCase().includes(qq)).slice(-40).reverse()
+      const fileCount = cardFiles.filter(f => relPath(f.id).toLowerCase().includes(qq) || f.label.toLowerCase().includes(qq)).length
+      return [
+        { segs: [{ t: `${fmtK(fileCount)} file${fileCount === 1 ? '' : 's'} and ${fmtK(hits.length)} log line${hits.length === 1 ? '' : 's'} match`, role: 'dim' }] },
+        ...(fileCount ? files : []),
+        ...hits.flatMap(l => logLinesOf(l).slice(0, 1)),
+      ]
+    }
+    const setW = wide ? 120 : 104
+    const choice = (t: string, picked: boolean, run: Act): Seg => ({ t, role: picked ? 'text' : 'dim', b: picked, u: picked, run, gap: 12 })
+    const settingLines = (): VLine[] => [
+      { segs: [{ t: 'Theme', w: setW, role: 'dim', gap: 12 }, ...THEMES.map(m => choice(THEME_LABEL[m], (c.theme ?? 'auto') === m, { k: 'set', theme: m }))] },
+      {
+        segs: [
+          { t: 'Budget', w: setW, role: 'dim', gap: 12 },
+          ...[0, 5, 10, 25, 50, 100].map(v =>
+            choice(v ? `$${v}` : 'none', (c.budget || 0) === v, { k: 'set', budget: v }),
+          ),
+          ...(wide ? [{ t: 'warns at 50, 80, 100%', role: 'faint', flex: true }] : []),
+        ],
+      },
+      { segs: [{ t: 'Open files in', w: setW, role: 'dim', gap: 12 }, ...([['code', 'VS Code'], ['cursor', 'Cursor'], ['system', 'default app']] as const).map(([v, t]) => choice(t, (c.editor || 'code') === v, { k: 'set', editor: v }))] },
+      { segs: [{ t: 'Outside files', w: setW, role: 'dim', gap: 12 }, choice('shown', !src.hideOutside, { k: 'set', hideOutside: false }), choice('hidden', !!src.hideOutside, { k: 'set', hideOutside: true })] },
+      {
+        segs: [
+          { t: 'Intro on open', w: setW, role: 'dim', gap: 12 },
+          choice('on', !introOff, { k: 'set', intro: 'on' }),
+          choice('off', introOff, { k: 'set', intro: 'off' }),
+          { t: '▶ play it now', role: 'dim', run: { k: 'intro' } },
+        ],
+      },
+      { segs: [{ t: 'Demo', w: setW, role: 'dim', gap: 12 }, { t: demoOn ? 'a pretend session is playing' : '▶ try a pretend session', role: 'dim', u: !demoOn, run: { k: 'demo' } }] },
+      { segs: [] },
+      { segs: [{ t: `Claude Crew ${VERSION}`, role: 'faint' }] },
+    ]
+    const listed = tab === 'activity' ? actLines : tab === 'claude' ? detailLines() : tab === 'files' ? fileLines() : tab === 'search' ? searchLines() : settingLines()
+    const fit = BODY_ROWS
+    const top0 = tab === 'activity' ? 0 : Math.max(0, Math.min(ps.top ?? 0, listed.length - fit))
+    const bodyLines = listed.slice(top0, top0 + fit)
+    const scroll =
+      tab === 'activity'
+        ? {
+            up: actFirst > 0 ? ({ k: 'log', anchor: upto[Math.max(0, actLast - LOG_STEP)]?.at ?? null } as Act) : NONE,
+            down: held ? ({ k: 'log', anchor: upto.length - 1 + LOG_STEP >= allLog.length - 1 ? null : allLog[upto.length - 1 + LOG_STEP].at } as Act) : NONE,
+            latest: { k: 'log', anchor: null } as Act,
+            canUp: actFirst > 0,
+            canDown: held && newerCount > 0,
+            held,
+          }
+        : {
+            up: paneAct({ top: Math.max(0, top0 - 3) }),
+            down: paneAct({ top: Math.min(Math.max(0, listed.length - fit), top0 + 3) }),
+            latest: paneAct({ top: 0 }),
+            canUp: top0 > 0,
+            canDown: top0 + fit < listed.length,
+            held: top0 > 0,
+          }
+    const tabs: Tab[] = [
+      { id: 'activity', t: 'Activity', label: 'Activity' },
+      { id: 'files', t: `Files ${fmtK(filesN)}`, label: 'All files' },
+      { id: 'search', t: '⌕', label: 'Search' },
+      { id: 'settings', t: '⚙', label: 'Settings' },
+      ...(focusRow ? [{ id: 'claude', t: `${trunc(focusRow.name, 12)} ✕`, label: `Close ${focusRow.name}'s details` }] : []),
+    ].map(x => ({
+      ...x,
+      on: x.id === tab,
+      run: x.id === 'claude' ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: x.id as NonNullable<Crew['pane']>['tab'], top: 0 }),
+    }))
+    // The website's log: each line whole (the page cuts it to fit and opens it), oldest first.
+    const webLog = allLog.slice(-400).map(l => {
+      const m = messageOf(l)
+      const kind = l.kind === 'think' ? 'thought' : m ? 'msg' : LOG_GLYPH[[...l.text][0]] ?? (l.kind === 'info' ? 'plan' : 'tool')
+      const said = oneLine(shortOf(l))
+      const t = l.kind === 'think' || m ? said : said.replace(/^[^\p{L}\p{N}"'(\[$~./]+/u, '')
+      const running = l.took === undefined && !!l.call && now - l.at >= 1000 && now - l.at < SHELL_GIVE_UP_MS
+      const full = oneLine(fullOf(l))
+      return {
+        key: logKey(l),
+        time: clock(l.at),
+        dot: m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}`,
+        who: m ? m.from || 'You' : l.who,
+        kind,
+        running,
+        text: t && !/^\S*[/.\\]/.test(t) ? `${t.charAt(0).toUpperCase()}${t.slice(1)}` : t,
+        full: full !== said ? fullOf(l) : '',
+        dim: l.kind === 'think' || l.kind === 'info',
+        thought: l.kind === 'think',
+        dur: l.took !== undefined ? took(l.took) : running ? took(now - l.at) : '',
+      }
+    })
+    return { c, sq, cols, isTerminal, vwCols, totalCost, wide, paneAct, tab, rowsP, W, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, ROW, DET, askLines, BODY_ROWS, listed, top0, scroll, tabs, webLog }
+}
+
+/** The chat's Claude Crew website: the server this mod runs for it, its address, and who has it open. */
+let webUrl = ''
+let webPush: ((body: string) => Promise<unknown>) | undefined
+let webWatchers = 0
+let webSent = ''
+let webBusy = false
+let webTimer: { cancel(): void } | undefined
+/** What each press on the page does, by the id the page sends back (only ids the mod handed out). */
+const webActs = new Map<string, Act>()
+const actId = (a: Act) => {
+  const id = (hash(JSON.stringify(a)) >>> 0).toString(36)
+  if (webActs.size > 4000) webActs.clear()
+  webActs.set(id, a)
+  return id
+}
+/** The website's view: the pane's model as data, each press an id. */
+const webView = async ($: EngineInterface) => {
+  const m = await paneModel($, 160, false, 700, 'web')
+  const seg = (g: Seg) => ({
+    t: g.t ?? '',
+    role: g.role,
+    b: g.b || undefined,
+    i: g.i || undefined,
+    u: g.u || undefined,
+    w: g.w ? Math.round(g.w / CELL_W) : undefined,
+    flex: g.flex || undefined,
+    dot: g.dot,
+    icon: g.icon,
+    bar: g.bar,
+    parts: g.parts,
+    act: g.run && g.run.k !== 'none' ? actId(g.run) : undefined,
+    label: g.label,
+  })
+  const line = (l: VLine) => ({ segs: l.segs.map(seg), right: (l.right ?? []).map(seg), indent: l.indent ? Math.round(l.indent / CELL_W) : 0 })
+  const sm = m.c.summary
+  return {
+    v: VERSION,
+    theme: m.c.theme ?? 'auto',
+    icons: KIND_ICON,
+    head: { counts: m.counts, cost: m.totalCost > 0 || m.c.budget > 0 ? fmtUsd(m.totalCost) : '', costRole: m.costRole, budget: m.budgetText },
+    rows: m.rowsP.map(r => ({
+      id: r.id,
+      name: r.name,
+      hue: hueRole(r.hue),
+      state: r.state,
+      kind: r.kind,
+      status: r.status,
+      object: r.object,
+      time: r.time,
+      total: r.total,
+      done: r.done,
+      progress: r.progress,
+      stuck: !!r.stuck,
+      model: r.model,
+      depth: r.depth,
+      ask: r.ask,
+      where: r.where,
+      focused: r.focused,
+      details: actId(m.openDetails(r.id)),
+    })),
+    recap: m.recap
+      ? { title: m.recap.title, goal: m.recap.goal, ago: m.recap.ago, facts: m.recap.facts, copy: m.recap.copy && sm ? summaryMarkdown(sm) : '', demo: m.recap.demo ? actId(m.recap.demo) : '' }
+      : null,
+    touched: {
+      sum: m.touchedSum,
+      open: sessionDir ? actId(m.openDir(sessionDir, 'the project folder')) : '',
+      more: actId(m.paneAct({ tab: 'files', top: 0 })),
+      folders: m.touchFolders.map(d => ({
+        name: d.name,
+        files: d.files.slice(0, 12).map(f => ({ name: f.name, errs: f.errs, add: f.add ? `+${fmtK(f.add)}` : '', del: f.del ? `−${fmtK(f.del)}` : '', on: f.on, read: !!f.read, act: actId(f.run) })),
+        more: Math.max(0, d.files.length - 12),
+      })),
+    },
+    tabs: m.tabs.map(t => ({ t: t.t, label: t.label, on: t.on, act: actId(t.run) })),
+    tab: m.tab,
+    q: m.sq.q,
+    log: m.tab === 'activity' ? m.webLog : [],
+    lines: m.tab === 'activity' ? [] : m.listed.slice(0, 600).map(line),
+  }
+}
+/** Sends the website the view when it changed, while anyone has the page open. */
+const publishWeb = async ($: EngineInterface) => {
+  if (!webPush || !webWatchers || webBusy) return
+  webBusy = true
+  try {
+    const s = JSON.stringify(await webView($))
+    if (s !== webSent) {
+      webSent = s
+      await webPush(s)
+    }
+  } catch (err) {
+    note(`web view: ${String(err).slice(0, 160)}`)
+  } finally {
+    webBusy = false
+  }
+}
+/** Starts this chat's website (a small Node server beside the mod) and answers what is pressed on it. */
+const startWeb = ($: EngineInterface) => {
+  void (async () => {
+    try {
+      const server = $.process.spawn({ argv: ['node', `${$.plugin.root}/web/server.mjs`] })
+      let buf = ''
+      for await (const piece of server as AsyncIterable<{ text: string }>) {
+        buf += piece.text
+        for (let nl = buf.indexOf('\n'); nl >= 0; nl = buf.indexOf('\n')) {
+          const line = buf.slice(0, nl).trim()
+          buf = buf.slice(nl + 1)
+          if (line.startsWith('READY ')) {
+            const [port, token] = line.slice(6).split(' ')
+            const base = `http://127.0.0.1:${port}/${token}`
+            webUrl = `${base}/`
+            webPush = body => $.http.fetch(`${base}/push`, { method: 'POST', body }).catch(() => undefined)
+            $.ui.invalidate('ui.render')
+          } else if (line.startsWith('WATCH ')) {
+            webWatchers = Number(line.slice(6)) || 0
+            webSent = ''
+            void publishWeb($)
+          } else if (line.startsWith('ACT ')) {
+            let msg: { id?: unknown; search?: unknown; next?: unknown } = {}
+            try {
+              msg = JSON.parse(line.slice(4))
+            } catch {}
+            const act = typeof msg.id === 'string' ? webActs.get(msg.id) : undefined
+            if (act) await doAction($, act, undefined)
+            else if (typeof msg.search === 'string') await searchFor($, msg.search.slice(0, 200), msg.next === true)
+            void publishWeb($)
+          }
+        }
+      }
+    } catch (err) {
+      note(`web server: ${String(err).slice(0, 160)}`)
+    }
+    const was = webUrl
+    webUrl = ''
+    webPush = undefined
+    webWatchers = 0
+    if (was) $.ui.invalidate('ui.render')
+  })()
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     write = fn => {
@@ -2609,7 +3356,7 @@ export const register: Register = on => {
     demo?.cancel()
     demo = undefined
 
-    await $.command.register({ name: 'crew', description: 'Open the Claude Crew pane: the live map of agents at work' })
+    await $.command.register({ name: 'crew', description: "Open this chat's Claude Crew website in the browser pane" })
     await update($, crew, c => {
       // A reload drops in-flight calls and the demo; migrate older state shapes too.
       const old: Partial<Crew> = Array.isArray(c?.agents) ? c : {}
@@ -2711,11 +3458,21 @@ export const register: Register = on => {
     introOff = (await $.store.get('intro').catch(() => undefined)) === 'off'
     if (!introOff && !(await read($, intro)).played) await playIntro()
     void $.ui.open({ id: PANE, title: 'Claude Crew' })
+    // This chat's website: started once, and sent the view while anyone has it open.
+    if (!webUrl) startWeb($)
+    webTimer?.cancel()
+    webTimer = $.clock.every(800, () => void publishWeb($))
 
     return next(e)
   })
 
+  // /crew: Claude opens this chat's website in the browser pane (a mod can't open it itself); without
+  // the website, the pane opens as before.
   on('command.run', { command: 'crew' }, async $ => {
+    if (webUrl) {
+      void $.prompt.submit({ text: `Open my Claude Crew website in the browser pane: call preview_start with the url ${webUrl}`, asUser: true })
+      return { text: `Claude Crew: asking Claude to open ${webUrl} in the browser pane.` }
+    }
     if ((await $.store.get('intro').catch(() => undefined)) !== 'off') await playIntro?.()
     await $.ui.open({ id: PANE, title: 'Claude Crew' })
     return { text: 'Claude Crew pane opened.' }
@@ -3250,23 +4007,10 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const renderStart = Date.now()
-    // Every value the pane draws from, read side by side (one round trip, not nine in a row).
-    const [c, , codexPublished, playing, sq] = await Promise.all([
-      read($, crew),
-      // Read so the pane redraws each second while a timer runs.
-      read($, tick),
-      // Codex runs as the codex-bridge mod publishes them (another plugin's value: read only, typed loosely here).
-      $.state.get({ plugin: 'codex-bridge', key: 'runs' } as never).catch(() => ({})),
-      read($, intro),
-      read($, search),
-    ])
-    const published = (codexPublished as unknown as { value?: CodexRun[] }).value ?? []
-    const codexRuns = [...published, ...(c.demoCodex ?? [])]
-    editor = c.editor || 'code'
-    const nameFor = (id: string) => c.agents.find(a => a.id === id)?.name ?? (id === 'main' ? 'Claude' : 'a subagent')
     const { Box, Text, Button, Client, Svg, Select, Input } = $.ui.resolve(e) as unknown as Record<string, (props: unknown) => unknown>
     const cols = Math.max(40, e.props?.bodyColumns ?? e.viewport?.columns ?? 80)
     const isTerminal = e.surface === 'terminal'
+    const playing = await read($, intro)
     if (!isTerminal && Date.now() < playing.until)
       return (
         <Box flexDirection="column">
@@ -3294,644 +4038,34 @@ export const register: Register = on => {
         </Box>
       )
 
-    const live = c.agents.filter(a => a.state === 'busy' || a.state === 'thinking')
-    // A finished helper keeps its window a moment, then folds into the log's title row (a click opens it again).
-    const unfolded = c.unfolded ?? {}
-    const isOpen = (a: Agent) =>
-      a.id === 'main' || a.state === 'busy' || a.state === 'thinking' || !!a.needs || (unfolded[a.id] ?? (a.state === 'done' && Date.now() - (a.doneAt || 0) < WINDOW_LINGER_MS))
-    // In the order they started: a window or desk never moves (waiting on you shows in amber instead).
-    const shown = c.agents.filter(isOpen)
-    const finished = c.agents.filter(a => a.id !== 'main' && (a.state === 'done' || a.state === 'idle'))
-    const folded = finished.filter(a => !isOpen(a))
-    const waitingOnYou = c.agents.filter(a => a.needs)
-    const files = Object.values(c.nodes).filter(n => n.kind === 'file').length
-    const secs = c.startedAt ? Math.floor((Date.now() - c.startedAt) / 1000) : 0
-    const uptime = `up ${String(Math.floor(secs / 3600)).padStart(2, '0')}:${String(Math.floor(secs / 60) % 60).padStart(2, '0')}`
-
-    const worked = Object.entries(c.changes ?? {}).sort((x, y) => y[1].at - x[1].at)
-    const totalAdded = worked.reduce((n, [, ch]) => n + ch.added, 0)
-    const totalRemoved = worked.reduce((n, [, ch]) => n + ch.removed, 0)
-    const vwCols = Math.max(40, Math.min(300, cols - 1))
-    const replaying = false
-    const rpAt = 0
-    // Codex speaks in the log too: what it was asked, what it ran and changed, and what it sent back.
-    const codexLog: LogLine[] = codexRuns.flatMap(r => [
-      { at: r.startedAt, who: 'Codex', hue: -1, kind: 'info' as const, text: `← ${nameFor(r.caller)}${r.thread ? ` [${r.thread}]` : ''}: ${trunc(oneLine(r.task), 90)}` },
-      ...r.events
-        .filter(ev => ev.kind === 'cmd' || ev.kind === 'file' || ev.kind === 'say')
-        .slice(-12)
-        .map(ev => ({
-          at: ev.at,
-          who: 'Codex',
-          hue: -1,
-          kind: (ev.kind === 'say' ? 'think' : 'act') as LogLine['kind'],
-          text: ev.kind === 'cmd' ? `${SHELL_MARK}${cmdGist(ev.text)}${ev.ok === false ? ' ✗ failed' : ''}` : ev.kind === 'file' ? `✎ ${relPath(ev.text)}` : ev.text,
-        })),
-      ...(r.endedAt
-        ? [
-            {
-              at: r.endedAt,
-              who: 'Codex',
-              hue: -1,
-              kind: 'info' as const,
-              text: `→ ${nameFor(r.caller)}: ${r.status}${r.files.length ? ` · ${r.files.length} file${r.files.length === 1 ? '' : 's'} changed` : ''}${r.notesUpdated ? ' · notes updated' : ''}`,
-            },
-          ]
-        : []),
-    ])
-    const codexWins = codexRuns.filter(r => r.status === 'running' || Date.now() - r.endedAt < 10 * 60_000).slice(0, 2)
-    const codexWindow = (r: CodexRun) => {
-      const tone = { running: '#56D4DD', done: '#7EE787', failed: '#FF7B72', stopped: '#E3B341' }[r.status]
-      const mark = { running: '●', done: '✓', failed: '✗', stopped: '■' }[r.status]
-      const asker = c.agents.find(a => a.id === r.caller)
-      const secs = Math.round(((r.endedAt || Date.now()) - r.startedAt) / 1000)
-      const took = elapsed(secs * 1000)
-      return (
-        <Box flexDirection="column" borderStyle="round" borderColor={CX} paddingX={1} width={winWidth}>
+    // The website runs: the pane on the desktop only says where, and how to open it beside the chat.
+    if (!isTerminal && webUrl) {
+      const c = await read($, crew)
+      const atWork = c.agents.filter(a => a.state === 'busy' || a.state === 'thinking').length
+      const needs = c.agents.filter(a => a.needs).length
+      const total = c.chatCost ?? c.spent?.cost ?? 0
+      const status = [`${fmtK(c.agents.length)} Claude${c.agents.length === 1 ? '' : 's'}`, needs ? `${fmtK(needs)} need${needs === 1 ? 's' : ''} you` : '', atWork ? `${fmtK(atWork)} working` : 'nothing running', total > 0 ? fmtUsd(total) : ''].filter(Boolean).join(' · ')
+      const { Link } = $.ui.resolve(e) as unknown as Record<string, (props: unknown) => unknown>
+      return paintPane(
+        <Box flexDirection="column">
           <Box flexDirection="row">
-            <Box flexShrink={1} flexDirection="row">
-              <Text bold color={CX} wrap="truncate">{`◎ Codex${r.thread ? ` · ${r.thread}` : ''}`}</Text>
-              <Text dimColor wrap="truncate">{` ${r.model} · ${r.effort}`}</Text>
-            </Box>
-            <Box flexGrow={1} />
-            <Box flexShrink={2}>
-              <Text color={tone} wrap="truncate">{` ${mark} ${r.status === 'running' ? r.activity || 'working' : r.status}`}</Text>
-            </Box>
+            <Text bold color="#D97757">{'✻ Claude Crew'}</Text>
+            <Text color="#8B949E">{" · this chat's crew is a website"}</Text>
           </Box>
-          {field(
-            'from',
-            <Box flexDirection="row" flexShrink={1}>
-              <Text bold color={asker ? colorOf(asker) : '#D97757'}>
-                {nameFor(r.caller)}
-              </Text>
-              <Text dimColor wrap="truncate">{` · ${took} · ${r.mode}${r.resumed ? ' · same thread' : ''}`}</Text>
-            </Box>,
-          )}
-          {(() => {
-            const [t1, t2] = twoLines(oneLine(r.task), Math.max(10, winCols - 8))
-            return (
-              <Box flexDirection="column">
-                {field('task', <Text wrap="truncate">{t1}</Text>)}
-                {field('', <Text wrap="truncate">{t2 || ' '}</Text>)}
-              </Box>
-            )
-          })()}
-          {[0, 1, 2, 3].map(i => {
-            const ev = r.events.slice(-4)[i]
-            if (!ev) return <Text>{' '}</Text>
-            return (
-              <Box flexDirection="row">
-                <Text color={ev.kind === 'cmd' ? '#FFA657' : ev.kind === 'file' ? '#7EE787' : ev.kind === 'error' ? '#FF7B72' : CX}>
-                  {`${{ say: '›', think: '·', cmd: '▸', file: '✎', plan: '☐', info: '•', error: '!' }[ev.kind] ?? '•'} `}
-                </Text>
-                <Box flexShrink={1}>
-                  <Text wrap="truncate" dimColor={ev.kind === 'think'}>
-                    {`${ev.kind === 'cmd' ? (ev.ok === undefined ? cmdGist(ev.text).replace(/^ran /, 'running ') : cmdGist(ev.text)) : oneLine(ev.text)}${ev.kind === 'cmd' ? (ev.ok === undefined ? '  …' : ev.ok ? '  ✓' : '  ✗') : ''}`}
-                  </Text>
-                </Box>
-              </Box>
-            )
-          })}
-          {[0, 1].map(i => {
-            if (i === 1 && r.files.length > 2) return <Text dimColor>{`  ✎ +${fmtK(r.files.length - 1)} more`}</Text>
-            const f = r.files[i]
-            if (!f) return <Text>{' '}</Text>
-            return (
-              <Box flexDirection="row">
-                <Text color="#7EE787">{'  ✎ '}</Text>
-                <Button key={`open:${r.id}:${f}`} plain onPress={() => void openAndSay($, 'file', f, baseName(f), true)}>
-                  {trunc(f.startsWith('demo/') ? f.slice(5) : shortPath(f), winCols - 8)}
-                </Button>
-              </Box>
-            )
-          })}
-          <Text dimColor wrap="truncate">
-            {r.status !== 'running'
-              ? `${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'} changed · ${fmtK(r.commands)} command${r.commands === 1 ? '' : 's'}${r.failedCommands ? ` (${fmtK(r.failedCommands)} failed)` : ''}${r.notesUpdated ? ' · notes updated' : ''}`
-              : ' '}
-          </Text>
-        </Box>
+          <Box flexDirection="row">
+            <Text color="#3FB950">{'● '}</Text>
+            <Text>{'running at '}</Text>
+            <Link href={webUrl} />
+          </Box>
+          <Text color="#8B949E">{'Type /crew and Claude opens it in the browser pane, beside the chat.'}</Text>
+          <Text color={needs ? '#E3B341' : '#8B949E'}>{status}</Text>
+        </Box>,
+        c.theme ?? 'auto',
       )
     }
-    // The log: its lines, scrolled (held at a line while new ones come in below), and the ones opened whole.
-    const lv = c.logView ?? {}
-    const openLog = new Set(lv.open ?? [])
-    const shortOf = (l: LogLine) => {
-      const m = messageOf(l)
-      return m ? (m.from ? `${m.from}: ${m.body}` : m.body) : l.kind === 'think' ? l.text : l.text.replace(/^$ /, SHELL_MARK)
-    }
-    const fullOf = (l: LogLine) => (l.kind === 'think' && l.full ? l.full : shortOf(l))
-    const allLog = [...c.log, ...codexLog].sort((x, y) => x.at - y.at)
-    const held = typeof lv.anchor === 'number'
-    let upto = held ? allLog.filter(l => l.at <= (lv.anchor as number)) : allLog
-    if (!upto.length) upto = allLog.slice(0, 1)
-    const newerCount = allLog.length - upto.length
-    const demoOn = c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done')
-    // The chat's cost as Claude Code totals it, else what the crew counted of it.
-    const totalCost = c.chatCost ?? c.spent?.cost ?? c.agents.reduce((n, a) => n + (a.cost ?? 0), 0)
-    const sm = c.summary
-    const workedGroups: { g: string; rows: (typeof worked)[number][] }[] = []
-    for (const w of worked) {
-      const g = groupOf(w[0])
-      const at = workedGroups.find(x => x.g === g)
-      if (at) at.rows.push(w)
-      else workedGroups.push({ g, rows: [w] })
-    }
-    // ── Desks, at a glance: one row per Claude at work (and each Codex run) ──
-    // Line one: its little Claude, name, and what it is doing in plain words (the biggest text), its time.
-    // Line two: how far along (a pip per step, "Step 2 of 3 · …") and its model. Colour says its state
-    // only. One needing you is pinned on top, amber, with its whole request; one done is a dim line.
-    const src = replaying ? crewAt(c, rpAt, replayShown.stamp) : c
-    const deskAgents = replaying ? src.agents.filter(a => a.id === 'main' || a.state === 'busy' || a.state === 'thinking') : shown
-    const nowOf = (a: Agent): [string, string] => {
-      const w = waitOf(a, src, Date.now())
-      if (w) return [w.what, w.label]
-      if (a.tool === COMPACT && a.state === 'busy') return ['compacting', 'freeing up room']
-      if (a.state === 'busy' && a.node && src.nodes[a.node] && !isSpecial(a.node)) return [baseName(a.node), verbOf(a)]
-      // A command: Claude's own words for it, as it runs (not "ran …").
-      if (a.state === 'busy' && (a.tool === 'Bash' || a.tool === 'PowerShell'))
-        return [(a.actions[0]?.startsWith(SHELL_MARK) ? a.actions[0].slice(SHELL_MARK.length) : cmdGist(a.detail)).replace(/^ran /, ''), 'running']
-      if (a.state === 'busy') return [a.detail ? trunc(oneLine(a.detail), 40) : verbOf(a), verbOf(a)]
-      if (a.state === 'thinking') return ['thinking', 'planning its next step']
-      if (a.state === 'done') return ['done', a.cost ? fmtUsd(a.cost) : 'finished']
-      return ['—', a.id === 'main' ? 'waiting for a prompt' : 'idle']
-    }
-    // Codex in a row while it runs, and a little after (as a helper's lingers); the rest counted.
-    const codexAtDesks = replaying ? [] : codexRuns.filter(r => r.status === 'running' || Date.now() - (r.endedAt || 0) < WINDOW_LINGER_MS)
-    const CODEX_DESKS = 3
-    const deskCount = deskAgents.length + Math.min(CODEX_DESKS, codexAtDesks.length) + (codexAtDesks.length > CODEX_DESKS ? 1 : 0)
-    // It keeps room for the most there have been, so the cards below hold still as helpers come and go,
-    // and gives the room back once there have been fewer for a minute.
-    const anyAtWork = src.agents.some(a => a.state === 'busy' || a.state === 'thinking') || codexAtDesks.some(r => r.status === 'running')
-    if (deskCount >= deskMax || !anyAtWork) {
-      deskMax = deskCount
-      deskLowSince = 0
-    } else if (!deskLowSince) deskLowSince = Date.now()
-    else if (Date.now() - deskLowSince > DESK_ROOM_MS) {
-      deskMax = deskCount
-      deskLowSince = 0
-    }
-    // The picture's width: the pane inside the area's frame, less the Details button beside it.
-    const glanceW = Math.max(200, Math.floor(((isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9) * CELL_W))
-    const showModel = cols >= 70
-    // How deep a Claude sits: the main one 0, its helpers 1, theirs 2…
-    const depthOf = (a: Agent) => {
-      if (a.id === 'main') return 0
-      let d = 1
-      for (let p = a.parent; p && p !== 'main' && d < 4; p = src.agents.find(x => x.id === p)?.parent) d++
-      return d
-    }
-    const rowOfAgent = (a: Agent): GlanceRow => {
-      const now = Date.now()
-      const wait0 = waitOf(a, src, now)
-      const wait = wait0?.kind === 'command' && a.state === 'busy' ? undefined : wait0
-      const runFrom = wait0 && !wait ? Math.min(...[...(src.shells ?? []), ...(src.tests ?? [])].filter(x => x.agentId === a.id && x.status === 'running').map(x => x.startedAt), now) : 0
-      const at = a.state === 'busy' || a.state === 'thinking'
-      const state: GlanceRow['state'] = a.needs ? 'you' : a.state === 'done' ? 'done' : wait ? (wait.kind === 'you' ? 'idle' : 'wait') : at ? 'work' : 'idle'
-      const [what] = nowOf(a)
-      const kind =
-        state === 'you' || state === 'done' || state === 'wait' || state === 'idle'
-          ? state
-          : a.state === 'thinking' || a.tool === COMPACT
-            ? 'think'
-            : kindOf(a.tool)
-      const tests = kind === 'shell' && /\b(test|tests|jest|vitest|pytest|mocha|spec)\b/i.test(`${what} ${a.detail}`)
-      const status =
-        state === 'you' ? 'Needs you' : state === 'done' ? 'Done' : state === 'wait' ? 'Waiting' : state === 'idle' ? 'Idle' : a.tool === COMPACT ? 'Compacting' : tests ? 'Running tests' : workWords(a, kind)
-      const goal = a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : ''
-      const object =
-        state === 'you'
-          ? ''
-          : state === 'done'
-            ? a.job || goal
-            : state === 'wait'
-              ? `for ${wait?.what ?? ''}`
-              : state === 'idle'
-                ? a.id === 'main'
-                  ? 'your turn'
-                  : ''
-                : a.state === 'thinking'
-                  ? // How long its model step has run, and what it last said.
-                    [stepStart.has(a.id) ? elapsed(now - (stepStart.get(a.id) ?? 0)) : '', a.thoughts[0] ? oneLine(a.thoughts[0]) : ''].filter(Boolean).join(' · ')
-                  : runFrom && now - runFrom >= 1000
-                    ? // A test run by what it is for (JS tests (jest): auth), else the command in Claude's words; and how long.
-                      `${(t => (t ? t.purpose || testPurpose(t.command, '') : ''))((src.tests ?? []).find(x => x.agentId === a.id && x.status === 'running')) || wait0?.what || what} · ${elapsed(now - runFrom)}`
-                    : what
-      const tasks = tasksOf(a, src)
-      const total = tasks.length || a.todosTotal
-      const done = tasks.length ? tasks.filter(t => t.status === 'completed').length : a.todosDone
-      const step = doingOf(a, src) || tasks.find(t => t.status !== 'completed')?.subject || ''
-      const progress = total
-        ? `Step ${fmtK(Math.min(total, done + 1))} of ${fmtK(total)}${step ? ` · ${step}` : ''}`
-        : state === 'idle' && a.id === 'main'
-          ? 'Nothing running · ask Claude something to start'
-          : state === 'idle'
-            ? 'idle'
-            : `${fmtK(a.calls)} action${a.calls === 1 ? '' : 's'} so far`
-      const parent = src.agents.find(x => x.id === (a.parent ?? 'main'))
-      const ask = a.needs ? `${a.needs.what.charAt(0).toUpperCase()}${a.needs.what.slice(1)}? Answer in the chat.` : ''
-      return {
-        id: a.id,
-        name: a.name,
-        hue: colorOf(a),
-        state,
-        kind,
-        status,
-        object,
-        time: at && a.since ? shortTime(now - a.since) : state === 'done' && a.since ? shortTime((a.doneAt || now) - a.since) : '',
-        total,
-        done,
-        progress: a.stuck && state !== 'done' ? `Stuck? It ${a.stuck}.` : progress,
-        stuck: !!a.stuck && state !== 'done',
-        model: shortModel(agentModel.get(a.id) ?? (a.id === 'main' ? mainModel : '')),
-        depth: depthOf(a),
-        request: ask ? wrapRows(ask, Math.max(20, Math.floor((glanceW - 30 - 10) / (13.5 * 0.6))), 2) : [],
-        ask,
-        where: a.needs && a.id !== 'main' && parent ? `helping ${parent.name}` : '',
-      }
-    }
-    const rowOfCodex = (r: CodexRun): GlanceRow => {
-      const last = [...r.events].reverse().find(ev => ev.kind === 'cmd' || ev.kind === 'file')
-      const running = r.status === 'running'
-      const kind = !running ? 'done' : last?.kind === 'cmd' ? 'shell' : last?.kind === 'file' ? 'edit' : 'think'
-      const caller = src.agents.find(a => a.id === r.caller)
-      return {
-        id: `cx-${r.id}`,
-        name: 'Codex',
-        hue: CX,
-        state: running ? 'work' : 'done',
-        kind,
-        status: running ? KIND_WORDS[kind] : 'Done',
-        object: last ? (last.kind === 'cmd' ? cmdGist(last.text).replace(/^ran /, '') : baseName(last.text)) : r.activity || oneLine(r.task),
-        time: running && r.startedAt ? shortTime(Date.now() - r.startedAt) : '',
-        total: 0,
-        done: 0,
-        progress: `${fmtK(r.commands)} command${r.commands === 1 ? '' : 's'} · ${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'}${r.thread ? ` · ${r.thread}` : ''}`,
-        model: r.model ? trunc(r.model, 14) : '',
-        depth: caller ? depthOf(caller) + 1 : 1,
-        request: [],
-        where: '',
-      }
-    }
-    // In tree order (each Claude, then the ones it started), the ones needing you pinned on top.
-    const byParent = (id: string) => deskAgents.filter(a => a.id !== 'main' && (a.parent ?? 'main') === id)
-    const ordered: Agent[] = []
-    const walk = (a: Agent) => {
-      if (ordered.includes(a)) return
-      ordered.push(a)
-      byParent(a.id).forEach(walk)
-    }
-    deskAgents.filter(a => a.id === 'main' || !deskAgents.some(p => p.id === (a.parent ?? 'main'))).forEach(walk)
-    // A chat started from this one: its title, working or idle, and where it works; nested under this chat.
-    const chatList = src.chats ?? []
-    const rowOfChat = (ch: Chat): GlanceRow => ({
-      id: `chat-${ch.id}`,
-      name: ch.title,
-      hue: PALETTE[[...ch.id].reduce((n, x) => n + x.charCodeAt(0), 0) % PALETTE.length],
-      state: ch.running ? 'work' : 'idle',
-      kind: ch.running ? 'msg' : 'idle',
-      status: ch.running ? 'Working' : 'Idle',
-      object: ch.running ? 'in its own chat' : ch.at ? `last active ${shortTime(Date.now() - ch.at)} ago` : '',
-      time: '',
-      total: 0,
-      done: 0,
-      progress: `Chat · ${[ch.branch, baseName(ch.cwd)].filter(Boolean).join(' · ')}`,
-      model: '',
-      depth: ch.depth,
-      request: [],
-      where: '',
-    })
-    const glance = [...ordered.map(rowOfAgent), ...chatList.map(rowOfChat), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
-    const glanceList = [...glance.filter(r => r.state === 'you'), ...glance.filter(r => r.state !== 'you')]
-    // Room: the rows shown, at least; while anyone works, two lines for each of the most Claudes lately.
-    const desksH = Math.max(glanceList.reduce((n, r) => n + glanceBase(r), 0), anyAtWork ? Math.max(1, deskMax) * 2 : 0)
-    // ── Folder cards: each folder the work touched, its files as chips (green edited, red with errors) ──
-    // Built from the session's record of touched files (it keeps edits, and the order files were first
-    // reached), not from the tree's capped nodes: an edited file never drops off, a folder never moves.
-    const q = sq.q.trim().toLowerCase()
-    type CardFile = { id: string; label: string; touchedAt: number }
-    const cardRel = (id: string) => (id.startsWith('demo/') ? id.slice(5) : sessionDir && id.toLowerCase().startsWith(`${sessionDir.toLowerCase()}/`) ? id.slice(sessionDir.length + 1) : id)
-    const matchesQ = (f: CardFile) => !!q && (cardRel(f.id).toLowerCase().includes(q) || f.label.toLowerCase().includes(q))
-    const cardFiles: CardFile[] = []
-    const seenFile = new Set<string>()
-    for (const [id, ch] of Object.entries(src.changes ?? {}))
-      if (!isSpecial(id) && !seenFile.has(id)) {
-        seenFile.add(id)
-        cardFiles.push({ id, label: src.nodes[id]?.label || baseName(id), touchedAt: src.nodes[id]?.touchedAt || ch.at || 0 })
-      }
-    for (const n of Object.values(src.nodes))
-      if (n.kind === 'file' && !isSpecial(n.id) && !seenFile.has(n.id)) {
-        seenFile.add(n.id)
-        cardFiles.push({ id: n.id, label: n.label || baseName(n.id), touchedAt: n.touchedAt || 0 })
-      }
-    const onFile = new Map<string, Agent[]>()
-    for (const a of src.agents) if ((a.state === 'busy' || a.needs) && a.node) onFile.set(a.node, [...(onFile.get(a.node) ?? []), a])
-    const groups = new Map<string, { files: CardFile[]; first: number }>()
-    // A folder's place is its first file's: new folders join at the end, none ever moves.
-    cardFiles.forEach((f, i) => {
-      const g = groupOf(f.id)
-      if (g === OUTSIDE && src.hideOutside) return
-      const cur = groups.get(g) ?? { files: [], first: i }
-      cur.files.push(f)
-      groups.set(g, cur)
-    })
-    const outsideCount = src.hideOutside ? cardFiles.filter(f => groupOf(f.id) === OUTSIDE).length : 0
-    const folders = [...groups.entries()].sort((x, y) => x[1].first - y[1].first)
-    const perRow = cols >= 170 ? 3 : cols >= 100 ? 2 : 1
-    const cardW = perRow === 1 ? cols - 1 : Math.floor((cols - (perRow - 1)) / perRow)
-    const CHIPS = perRow === 1 ? 8 : 10
-    const visibleFiles = [...groups.values()].flatMap(g => g.files)
-    const matches = q ? visibleFiles.filter(matchesQ).length : 0
-    const errsOf = (id: string) => (src.problems ?? []).filter(pr => pr.path === id).length
-    const natural = (x: CardFile, y: CardFile) => x.label.localeCompare(y.label, undefined, { numeric: true, sensitivity: 'base' }) || x.id.localeCompare(y.id)
-    // ── The pane, as the design draws it: header, crew, Touched, and the viewer with its tabs ──
-    const now = Date.now()
-    const wide = cols >= 70
-    const ps = c.pane ?? {}
-    const paneAct = (p: Omit<Extract<Act, { k: 'pane' }>, 'k'>): Act => ({ k: 'pane', ...p })
-    const focusRow = ps.tab === 'claude' ? glanceList.find(r => r.id === ps.focus) : undefined
-    const tab = ps.tab === 'claude' && !focusRow ? 'activity' : ps.tab ?? 'activity'
-    const rowsP: PaneRow[] = glanceList.map(r => ({ ...r, ask: r.ask ?? r.request.join(' '), focused: tab === 'claude' && r.id === ps.focus }))
-    const W = Math.round(vwCols * CELL_W)
-    const count = (s: GlanceRow['state']) => rowsP.filter(r => r.state === s).length
-    const standby = !rowsP.some(r => r.state === 'work' || r.state === 'wait' || r.state === 'you')
-    const openDetails = (id: string) => (tab === 'claude' && ps.focus === id ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: 'claude', focus: id, top: 0 }))
-    const openFile = (id: string, name: string): Act => {
-      const at = (src.problems ?? []).find(p => p.path === id)?.line
-      return { k: 'file', path: id, name, edits: (c.changes[id]?.edits ?? 0) > 0, ...(at ? { line: at } : {}) }
-    }
-    const openDir = (path: string, name: string): Act => ({ k: 'dir', path, name })
-    const label = (g: string) => (g === OUTSIDE ? 'outside the project' : g === '.' ? 'project top' : `${g}/`)
-    const dirPathOf = (g: string) => (g === OUTSIDE || g.startsWith('demo') ? '' : g === '.' ? sessionDir : `${sessionDir}/${g}`)
 
-    // Header: counts by state (only those there are), then the one cost and the budget.
-    const n = { you: count('you'), work: count('work'), wait: count('wait'), done: count('done'), idle: count('idle') }
-    const counts: [string, string, boolean][] = standby
-      ? [[`◌ ${fmtK(Math.max(1, n.idle))} idle`, 'dim', false], ...(wide ? ([['· nothing running', 'dim', false]] as [string, string, boolean][]) : [])]
-      : ([
-          [n.you ? (wide ? `⏸ ${fmtK(n.you)} needs you` : `⏸ ${fmtK(n.you)}`) : '', 'amber', true],
-          [n.work ? (wide ? `● ${fmtK(n.work)} working` : `● ${fmtK(n.work)}`) : '', 'green', false],
-          [n.wait ? (wide ? `◌ ${fmtK(n.wait)} waiting` : `◌ ${fmtK(n.wait)}`) : '', 'dim', false],
-          [n.done ? (wide ? `✓ ${fmtK(n.done)} done` : `✓ ${fmtK(n.done)}`) : '', 'dim', false],
-        ] as [string, string, boolean][]).filter(x => x[0])
-    const costRole = c.budget > 0 && totalCost >= c.budget ? 'red' : c.budget > 0 && totalCost >= c.budget * 0.8 ? 'amber' : 'text'
-    const budgetText = c.budget > 0 ? (wide ? `of ${fmtUsd(c.budget)}` : `/ ${fmtUsd(c.budget)}`) : ''
-
-    // The last task while nobody works; before any work, what shows here and the demo.
-    const spendersNow = c.agents.filter(a => (a.cost ?? 0) > 0).sort((x, y) => y.cost - x.cost)
-    const recap: Recap | undefined =
-      standby && sm
-        ? {
-            title: `Last task done in ${elapsed(sm.ms)}`,
-            goal: sm.goal ? oneLine(promptOf(sm.goal)) : '',
-            ago: `${shortTime(now - sm.at)} ago`,
-            facts: [
-              ['Changed', sm.files.length ? `${fmtK(sm.files.length)} file${sm.files.length === 1 ? '' : 's'} · +${fmtK(sm.files.reduce((k, f) => k + f.added, 0))} −${fmtK(sm.files.reduce((k, f) => k + f.removed, 0))}` : 'no files', 'text'],
-              ['Tests', sm.tests.runs ? (sm.tests.failed ? `✕ ${fmtK(sm.tests.failed)} failed · last ${sm.tests.last}` : `✓ ${sm.tests.last}`) : 'none run', sm.tests.runs ? (sm.tests.failed ? 'red' : 'green') : 'dim'],
-              ['Cost', [fmtUsd(sm.cost), spendersNow.slice(0, wide ? 3 : 1).map(a => `${a.name} ${fmtUsd(a.cost)}`).join(', ') + (spendersNow.length > (wide ? 3 : 1) ? `, ${fmtK(spendersNow.length - (wide ? 3 : 1))} more` : '')].filter(Boolean).join(' · '), 'text'],
-              ['Crew', `${sm.claudes.slice(0, wide ? 4 : 2).join(', ')}${sm.claudes.length > (wide ? 4 : 2) ? ` and ${fmtK(sm.claudes.length - (wide ? 4 : 2))} more` : ''}${sm.codex ? ` · ${fmtK(sm.codex)} Codex run${sm.codex === 1 ? '' : 's'}` : ''}`, 'text'],
-            ],
-            copy: { k: 'copy' },
-          }
-        : standby && !c.log.length
-          ? { title: 'Nothing yet. Each Claude gets a row here as it starts.', goal: '', ago: '', facts: [], demo: { k: 'demo' } }
-          : undefined
-
-    // Touched: the three folders worked in most lately (in the order first reached), their files as buttons.
-    const lastIn = (files: CardFile[]) => Math.max(0, ...files.map(f => Math.max(f.touchedAt, src.changes[f.id]?.at ?? 0)))
-    const touchFolders: TouchFolder[] = [...folders]
-      .sort((x, y) => lastIn(y[1].files) - lastIn(x[1].files))
-      .slice(0, 3)
-      .sort((x, y) => x[1].first - y[1].first)
-      .map(([g, info]) => ({
-        name: label(g),
-        files: [...info.files]
-          .map(f => ({ f, ch: src.changes[f.id], who: onFile.get(f.id) ?? [], errs: errsOf(f.id) }))
-          .sort((x, y) => +!!y.who.length - +!!x.who.length || y.errs - x.errs || +!!y.ch?.edits - +!!x.ch?.edits || (y.ch?.at ?? 0) - (x.ch?.at ?? 0))
-          .map(({ f, ch, who, errs }) => ({ name: f.label, errs, add: ch?.edits ? ch.added : 0, del: ch?.edits ? ch.removed : 0, on: who.length ? hueRole(colorOf(who[0])) : '', read: !ch?.edits, run: openFile(f.id, f.label) })),
-      }))
-    const problemsN = (src.problems ?? []).length
-    // One count of the files the work touched (edited, read, or named by an error), the same in Touched and Files.
-    const filesN = cardFiles.length
-    const touchedSum = filesN
-      ? `${fmtK(filesN)} file${filesN === 1 ? '' : 's'}${wide && (totalAdded || totalRemoved) ? ` · +${fmtK(totalAdded)} −${fmtK(totalRemoved)}` : ''}${problemsN ? ` · ${fmtK(problemsN)} problem${problemsN === 1 ? '' : 's'}` : ''}`
-      : ''
-
-    // The viewer: what each tab lists, as lines; the body shows BODY_ROWS of them from where it is scrolled.
-    // Every Claude shows; the viewer takes the rest of the pane, down to its bottom (8 rows at least).
-    const ROW = CELL_H
-    const DET = 10
-    const rowW = Math.round((vwCols - 4 - DET) * CELL_W)
-    const askLines = (r: PaneRow) => (r.state === 'you' ? wrapRows(r.ask, askCols(rowW), 6).length : 0)
-    const aboveRows = isTerminal
-      ? 1 +
-        1 +
-        rowsP.reduce((n, r) => n + (r.state === 'done' ? 1 : r.state === 'you' ? 2 + wrapRows(r.ask, Math.max(16, cols - 6), 6).length : 2), 0) +
-        (recap ? (recap.copy ? 2 + recap.facts.length : 2) : 0)
-      : Math.ceil(
-          (24 +
-            rowsP.reduce((n, r) => n + (r.state === 'done' ? rowH(r, 0) : Math.ceil((rowH(r, askLines(r)) + 4) / ROW) * ROW), 0) +
-            (recap ? recapH(recap) - 6 + ROW : 0)) /
-            ROW,
-        )
-    const paneRows = Math.max(0, Math.floor(e.props?.scroll?.bodyRows ?? 0))
-    if (`${e.surface} ${cols}x${paneRows}` !== paneSize) {
-      paneSize = `${e.surface} ${cols}x${paneRows}`
-      diagDirty = true
-    }
-    const BODY_ROWS = Math.max(8, (paneRows || aboveRows + 1 + 4 + 2 + 1 + 12) - aboveRows - 1 - 4 - 2 - (tab === 'search' ? 1 : 0) - 1)
-    const timeW = (wide ? 8 : 5) * CELL_W
-    const logCols = Math.max(12, vwCols - (wide ? 8 : 5) - 3 - 7 - 3 - 3 - 9)
-    // A line opened reads over as many rows as it takes, up to the viewer's (the rest of a longer one is in the chat).
-    const vRowsOf = (l: LogLine) => (openLog.has(logKey(l)) ? wrapRows(fullOf(l), logCols, BODY_ROWS) : [cutTo(oneLine(shortOf(l)), logCols)])
-    const vCut = (l: LogLine) => fullOf(l) !== shortOf(l) || textW(oneLine(shortOf(l))) > logCols
-    const logLinesOf = (l: LogLine): VLine[] => {
-      const m = messageOf(l)
-      const kind = l.kind === 'think' ? 'thought' : m ? 'msg' : LOG_GLYPH[[...l.text][0]] ?? (l.kind === 'info' ? 'plan' : 'tool')
-      const bare = (t: string) => (l.kind === 'think' || m ? t : t.replace(/^[^\p{L}\p{N}"'(\[$~./]+/u, ''))
-      const k = logKey(l)
-      const open = openLog.has(k)
-      const rowsOf = vRowsOf(l).map((t, i) => (i ? t : bare(t)))
-      // Words start with a capital; a path or a file name keeps its own case.
-      const first = rowsOf[0] && !/^\S*[/.\\]/.test(rowsOf[0]) ? `${rowsOf[0].charAt(0).toUpperCase()}${rowsOf[0].slice(1)}` : rowsOf[0] ?? ''
-      const running = l.took === undefined && !!l.call && now - l.at >= 1000 && now - l.at < SHELL_GIVE_UP_MS
-      const dur = l.took !== undefined ? took(l.took) : running ? `● ${took(now - l.at)}` : ''
-      const who = m ? (m.from ? trunc(m.from, 6) : 'You') : trunc(l.who, 6)
-      const tone = l.kind === 'think' || l.kind === 'info' ? 'dim' : 'text'
-      return [
-        {
-          segs: [
-            { t: wide ? clock(l.at) : clock(l.at).slice(0, 5), w: timeW, role: 'faint' },
-            { dot: m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}` },
-            { t: who, w: 6 * CELL_W, role: 'dim' },
-            { icon: [kind, running ? 'green' : l.kind === 'you' ? 'text' : 'dim'] },
-            { t: first, flex: true, role: tone, i: l.kind === 'think' },
-            ...(vCut(l) ? [{ t: open ? '▾' : '›', role: 'dim', run: { k: 'log', toggle: k, hold: upto[upto.length - 1]?.at ?? null }, label: open ? 'Fold the line' : 'Show the whole line', w: 12 } as Seg] : []),
-          ] as Seg[],
-          right: [{ t: dur, role: running ? 'green' : 'faint' }],
-        },
-        ...rowsOf.slice(1).map(t => ({ segs: [{ t, flex: true, role: tone, i: l.kind === 'think' }], indent: timeW + 15 * CELL_W })),
-      ]
-    }
-    // Activity: the log's lines up to where it is scrolled, as many as fill the body.
-    let actLines: VLine[] = []
-    let actFirst = upto.length
-    for (let i = upto.length - 1; i >= 0; i--) {
-      const ls = logLinesOf(upto[i])
-      if (actLines.length && actLines.length + ls.length > BODY_ROWS) break
-      actLines.unshift(...ls)
-      actFirst = i
-    }
-    // A line opened but pushed out by the newer ones under it: the body starts at it instead, so it reads from its first row.
-    const openAt = upto.map(l => openLog.has(logKey(l))).lastIndexOf(true)
-    if (openAt >= 0 && openAt < actFirst && actFirst - openAt <= 3) {
-      actLines = upto.slice(openAt).flatMap(logLinesOf).slice(0, BODY_ROWS)
-      actFirst = openAt
-    }
-    const actLast = upto.length - 1
-    // One Claude's details: model, who it helps, time; cost, tokens and context; what it was asked; its steps; its own lines.
-    const detailLines = (): VLine[] => {
-      if (!focusRow) return []
-      const a = src.agents.find(x => x.id === focusRow.id)
-      const run = focusRow.id.startsWith('cx-') ? codexRuns.find(x => `cx-${x.id}` === focusRow.id) : undefined
-      const textCols = Math.max(16, Math.floor((W - 2 * PADX) / (12 * ADV)))
-      const out: VLine[] = []
-      const chat = focusRow.id.startsWith('chat-') ? chatList.find(x => `chat-${x.id}` === focusRow.id) : undefined
-      if (chat) {
-        // A nested chat: its whole title, who started it, where it works, and when it last did anything.
-        const by = chatList.find(x => x.id === chat.parent)
-        out.push({ segs: [{ t: 'Chat', b: true }, { t: [chat.running ? 'working' : 'idle', chat.at ? `last active ${shortTime(Date.now() - chat.at)} ago` : ''].filter(Boolean).join(' · '), role: 'dim', flex: true }] })
-        for (const t of wrapRows(chat.title, textCols, 3)) out.push({ segs: [{ t }] })
-        out.push({ segs: [{ t: `Started by ${by ? by.title : 'this chat'}`, role: 'dim', flex: true }] })
-        for (const t of wrapRows([chat.cwd, chat.branch ? `branch ${chat.branch}` : ''].filter(Boolean).join(' · '), textCols, 2)) out.push({ segs: [{ t, role: 'dim' }] })
-        out.push({ segs: [{ t: 'Open it from the sidebar, under this chat.', role: 'dim' }] })
-        return out
-      }
-      const parent = a ? src.agents.find(x => x.id === (a.parent ?? 'main')) : undefined
-      const caller = run ? src.agents.find(x => x.id === run.caller) : undefined
-      const head = [focusRow.model || (run ? trunc(run.model, 14) : ''), a && a.id !== 'main' && parent ? `helping ${parent.name}` : caller ? `run by ${caller.name}` : '', focusRow.time].filter(Boolean).join(' · ')
-      out.push({ segs: [{ t: focusRow.name, b: true }, { t: head, role: 'dim', flex: true }] })
-      if (a) {
-        // How full its context is: a bar and the share of its window (red once it compacts soon), and how often it was compacted.
-        const ctx = a.ctx && a.ctx.window ? Math.round((a.ctx.tokens / a.ctx.window) * 100) : -1
-        const packed = a.compactions ? ` · compacted ${fmtK(a.compactions)}×` : ''
-        out.push({
-          segs: [
-            { t: `${fmtUsd(a.cost ?? 0)} · ${fmtK(a.tokens ?? 0)} tokens · context`, role: 'dim' },
-            ...(ctx >= 0
-              ? [{ bar: ctx / 100, role: ctx >= 85 ? 'red' : ctx >= 60 ? 'amber' : 'dim' }, { t: `${ctx}% of ${fmtK(a.ctx!.window)}${ctx >= 85 ? ' · compacts soon' : ''}${packed}`, role: ctx >= 85 ? 'red' : 'dim', flex: true }]
-              : [{ t: `—${packed}`, role: 'dim', flex: true }]),
-          ],
-        })
-      } else if (run) out.push({ segs: [{ t: `${fmtK(run.commands)} command${run.commands === 1 ? '' : 's'} · ${fmtK(run.files.length)} file${run.files.length === 1 ? '' : 's'}${run.thread ? ` · ${run.thread}` : ''}`, role: 'dim' }] })
-      const asked = run ? oneLine(run.task) : a ? [a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : '', a.job ?? ''].sort((x, y) => y.length - x.length)[0] : ''
-      for (const t of asked ? wrapRows(asked, textCols, 8) : []) out.push({ segs: [{ t }] })
-      for (const t of a ? tasksOf(a, src).slice(0, 12) : []) {
-        const mark = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○'
-        const words = wrapRows(t.active && t.status === 'in_progress' ? t.active : t.subject, textCols - 2, 3)
-        words.forEach((w, i) => out.push({ segs: [{ t: `${i ? ' ' : mark} ${w}`, role: t.status === 'in_progress' ? 'text' : 'dim' }] }))
-      }
-      const mine = allLog.filter(l => (run ? l.who === 'Codex' : l.who === focusRow.name && l.hue === (a?.hue ?? -2))).slice(-30).reverse()
-      for (const l of mine) out.push(...logLinesOf(l).slice(0, 1))
-      return out
-    }
-    // Every file the work touched, under its folder (in the order the work first reached them); a folder's
-    // name opens it; files outside the project can be hidden, and are counted when they are.
-    const fileLines = (filter: (path: string, name: string) => boolean = () => true): VLine[] => {
-      const out: VLine[] = []
-      for (const [g, info] of folders) {
-        const list = info.files.filter(f => filter(f.id, f.label)).sort(natural)
-        if (!list.length) continue
-        const dp = dirPathOf(g)
-        out.push({
-          segs: [{ icon: ['folder', 'dim'], t: label(g), role: 'dim', b: true, flex: true, ...(dp ? { run: openDir(dp, label(g).replace(/\/$/, '')) } : {}) }],
-          right: g === OUTSIDE && sessionDir ? [{ t: 'hide them', role: 'dim', u: true, run: { k: 'set', hideOutside: true } }] : [],
-        })
-        for (const f of list) {
-          const ch = src.changes[f.id]
-          out.push({
-            segs: [{ t: f.label, flex: true, role: errsOf(f.id) ? 'red' : ch?.edits ? 'text' : 'dim', run: openFile(f.id, f.label) }],
-            right: [...(ch?.edits ? [{ t: `+${fmtK(ch.added)}`, role: 'green', gap: 5 }, { t: `−${fmtK(ch.removed)}`, role: 'dim' }] : [{ t: errsOf(f.id) ? `✕${errsOf(f.id)}` : 'read', role: errsOf(f.id) ? 'red' : 'faint' }]), { t: ch ? trunc(ch.by, 8) : '', w: 60, role: ch ? `h${ch.hue % PALETTE.length}` : 'dim' }],
-            indent: 18,
-          })
-        }
-      }
-      if (outsideCount) out.push({ segs: [{ t: `${fmtK(outsideCount)} file${outsideCount === 1 ? '' : 's'} outside the project, hidden`, role: 'faint', flex: true }], right: [{ t: 'show them', role: 'dim', u: true, run: { k: 'set', hideOutside: false } }] })
-      return out.length ? out : [{ segs: [{ t: 'No files yet: they show here as the Claudes open them.', role: 'dim' }] }]
-    }
-    const searchLines = (): VLine[] => {
-      const qq = sq.q.trim().toLowerCase()
-      if (!qq) return [{ segs: [{ t: 'Type to find files, and lines in the log.', role: 'dim' }] }]
-      const files = fileLines((p, nm) => relPath(p).toLowerCase().includes(qq) || nm.toLowerCase().includes(qq))
-      const hits = allLog.filter(l => oneLine(fullOf(l)).toLowerCase().includes(qq)).slice(-40).reverse()
-      const fileCount = cardFiles.filter(f => relPath(f.id).toLowerCase().includes(qq) || f.label.toLowerCase().includes(qq)).length
-      return [
-        { segs: [{ t: `${fmtK(fileCount)} file${fileCount === 1 ? '' : 's'} and ${fmtK(hits.length)} log line${hits.length === 1 ? '' : 's'} match`, role: 'dim' }] },
-        ...(fileCount ? files : []),
-        ...hits.flatMap(l => logLinesOf(l).slice(0, 1)),
-      ]
-    }
-    const setW = wide ? 120 : 104
-    const choice = (t: string, picked: boolean, run: Act): Seg => ({ t, role: picked ? 'text' : 'dim', b: picked, u: picked, run, gap: 12 })
-    const settingLines = (): VLine[] => [
-      { segs: [{ t: 'Theme', w: setW, role: 'dim', gap: 12 }, ...THEMES.map(m => choice(THEME_LABEL[m], (c.theme ?? 'auto') === m, { k: 'set', theme: m }))] },
-      {
-        segs: [
-          { t: 'Budget', w: setW, role: 'dim', gap: 12 },
-          ...[0, 5, 10, 25, 50, 100].map(v =>
-            choice(v ? `$${v}` : 'none', (c.budget || 0) === v, { k: 'set', budget: v }),
-          ),
-          ...(wide ? [{ t: 'warns at 50, 80, 100%', role: 'faint', flex: true }] : []),
-        ],
-      },
-      { segs: [{ t: 'Open files in', w: setW, role: 'dim', gap: 12 }, ...([['code', 'VS Code'], ['cursor', 'Cursor'], ['system', 'default app']] as const).map(([v, t]) => choice(t, (c.editor || 'code') === v, { k: 'set', editor: v }))] },
-      { segs: [{ t: 'Outside files', w: setW, role: 'dim', gap: 12 }, choice('shown', !src.hideOutside, { k: 'set', hideOutside: false }), choice('hidden', !!src.hideOutside, { k: 'set', hideOutside: true })] },
-      {
-        segs: [
-          { t: 'Intro on open', w: setW, role: 'dim', gap: 12 },
-          choice('on', !introOff, { k: 'set', intro: 'on' }),
-          choice('off', introOff, { k: 'set', intro: 'off' }),
-          { t: '▶ play it now', role: 'dim', run: { k: 'intro' } },
-        ],
-      },
-      { segs: [{ t: 'Demo', w: setW, role: 'dim', gap: 12 }, { t: demoOn ? 'a pretend session is playing' : '▶ try a pretend session', role: 'dim', u: !demoOn, run: { k: 'demo' } }] },
-      { segs: [] },
-      { segs: [{ t: `Claude Crew ${VERSION}`, role: 'faint' }] },
-    ]
-    const listed = tab === 'activity' ? actLines : tab === 'claude' ? detailLines() : tab === 'files' ? fileLines() : tab === 'search' ? searchLines() : settingLines()
-    const fit = BODY_ROWS
-    const top0 = tab === 'activity' ? 0 : Math.max(0, Math.min(ps.top ?? 0, listed.length - fit))
-    const bodyLines = listed.slice(top0, top0 + fit)
-    const scroll =
-      tab === 'activity'
-        ? {
-            up: actFirst > 0 ? ({ k: 'log', anchor: upto[Math.max(0, actLast - LOG_STEP)]?.at ?? null } as Act) : NONE,
-            down: held ? ({ k: 'log', anchor: upto.length - 1 + LOG_STEP >= allLog.length - 1 ? null : allLog[upto.length - 1 + LOG_STEP].at } as Act) : NONE,
-            latest: { k: 'log', anchor: null } as Act,
-            canUp: actFirst > 0,
-            canDown: held && newerCount > 0,
-            held,
-          }
-        : {
-            up: paneAct({ top: Math.max(0, top0 - 3) }),
-            down: paneAct({ top: Math.min(Math.max(0, listed.length - fit), top0 + 3) }),
-            latest: paneAct({ top: 0 }),
-            canUp: top0 > 0,
-            canDown: top0 + fit < listed.length,
-            held: top0 > 0,
-          }
-    const tabs: Tab[] = [
-      { id: 'activity', t: 'Activity', label: 'Activity' },
-      { id: 'files', t: `Files ${fmtK(filesN)}`, label: 'All files' },
-      { id: 'search', t: '⌕', label: 'Search' },
-      { id: 'settings', t: '⚙', label: 'Settings' },
-      ...(focusRow ? [{ id: 'claude', t: `${trunc(focusRow.name, 12)} ✕`, label: `Close ${focusRow.name}'s details` }] : []),
-    ].map(x => ({
-      ...x,
-      on: x.id === tab,
-      run: x.id === 'claude' ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: x.id as NonNullable<Crew['pane']>['tab'], top: 0 }),
-    }))
-
+    const m = await paneModel($, cols, isTerminal, e.props?.scroll?.bodyRows ?? 0, e.surface)
+    const { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, W, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, ROW, DET, askLines, BODY_ROWS, listed, top0, scroll, tabs } = m
     // Drawn as the design draws it: pictures for what is only read (the header, each Claude's row, the
     // last task's card), and real Buttons for everything pressed (Details, files, tabs, scrolling, the log's
     // lines, settings), laid out beside and under the pictures, never over them.

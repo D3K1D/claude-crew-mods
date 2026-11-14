@@ -1,0 +1,115 @@
+/* Claude Crew, as the canvas design draws it ("Claude Crew as a website"). Dark and light, by the
+   setting in ⚙ (auto follows the system). */
+:root {
+  --bg: #0D1117; --panel: #121821; --line: #30363D; --text: #E6EDF3; --dim: #8B949E; --faint: #6E7681;
+  --amber: #E3B341; --amber-bg: rgba(227, 179, 65, 0.10); --green: #3FB950; --red: #F85149; --brand: #D97757;
+  --hover: rgba(139, 148, 158, 0.28); --eye: #0D1117;
+  --h0: #D97757; --h1: #6CB6FF; --h2: #7EE787; --h3: #D2A8FF; --h4: #56D4DD; --h5: #F778BA; --cx: #8B949E;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #FFFFFF; --panel: #F6F8FA; --line: #D0D7DE; --text: #1F2328; --dim: #59636E; --faint: #6E7781;
+  --amber: #9A6700; --amber-bg: rgba(154, 103, 0, 0.07); --green: #1A7F37; --red: #CF222E; --brand: #BC5A34;
+  --hover: rgba(89, 99, 110, 0.16); --eye: #FFFFFF;
+  --h0: #BC5A34; --h1: #0969DA; --h2: #1A7F37; --h3: #8250DF; --h4: #0A7B83; --h5: #BF3989; --cx: #59636E;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    --bg: #FFFFFF; --panel: #F6F8FA; --line: #D0D7DE; --text: #1F2328; --dim: #59636E; --faint: #6E7781;
+    --amber: #9A6700; --amber-bg: rgba(154, 103, 0, 0.07); --green: #1A7F37; --red: #CF222E; --brand: #BC5A34;
+    --hover: rgba(89, 99, 110, 0.16); --eye: #FFFFFF;
+    --h0: #BC5A34; --h1: #0969DA; --h2: #1A7F37; --h3: #8250DF; --h4: #0A7B83; --h5: #BF3989; --cx: #59636E;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 12.5px/18px 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, Menlo, monospace;
+  overflow: hidden;
+}
+button, input { font: inherit; color: inherit; }
+#app { height: 100%; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+#top { flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; overflow-x: hidden; max-height: 60%; }
+#top.sized { max-height: none; }
+
+/* Words that are pressed: plain, with a soft fill on hover */
+.nb {
+  border: 0; background: none; padding: 0 3px; margin: 0 -3px; border-radius: 4px; cursor: pointer;
+  text-align: left; white-space: nowrap; color: var(--dim);
+}
+.nb:hover { background: var(--hover); color: var(--text); }
+.nb:focus-visible { outline: 2px solid var(--dim); outline-offset: 1px; }
+.u { text-decoration: underline; text-underline-offset: 2px; }
+.dim { color: var(--dim); } .faint { color: var(--faint); } .text { color: var(--text); }
+.green { color: var(--green); } .amber { color: var(--amber); } .red { color: var(--red); } .brand { color: var(--brand); }
+.cut { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fix { flex-shrink: 0; white-space: nowrap; }
+.grow { flex-grow: 1; }
+svg { flex-shrink: 0; }
+
+/* 1 · Header */
+#head { display: flex; align-items: center; gap: 12px; white-space: nowrap; height: 24px; flex-shrink: 0; overflow: hidden; }
+#head .brand { font-weight: 700; }
+
+/* 2 · The Claudes, one card each, helpers under who started them */
+#crew { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.card { border-radius: 8px; padding: 4px 10px; background: var(--panel); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+.card.you { border-color: var(--amber); background: var(--amber-bg); }
+.card.open { border-color: var(--dim); }
+.card.done { background: transparent; border-color: transparent; padding: 1px 10px; }
+.l1, .l2 { display: flex; align-items: center; gap: 7px; white-space: nowrap; min-width: 0; }
+.l1 { height: 20px; }
+.l2 { height: 16px; padding-left: 24px; font-size: 11.5px; }
+.status { font-weight: 700; font-size: 13.5px; flex-shrink: 0; }
+.card.done .status { font-weight: 400; font-size: 12.5px; }
+.ask { padding-left: 24px; white-space: normal; }
+.time { flex-shrink: 0; font-size: 11.5px; color: var(--dim); }
+.dot { width: 8px; height: 8px; margin: 0 4px; flex-shrink: 0; border-radius: 4px; }
+.pips { display: flex; gap: 3px; flex-shrink: 0; }
+.pip { width: 8px; height: 8px; border-radius: 4px; border: 1.5px solid var(--line); }
+
+/* The last task, while nobody works */
+.recap { border-radius: 8px; padding: 8px 10px; border: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.fact { display: flex; gap: 10px; white-space: nowrap; min-width: 0; padding-left: 23px; }
+.fact > :first-child { width: 64px; flex-shrink: 0; color: var(--dim); }
+
+/* 3 · Touched */
+#touched { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; flex-shrink: 0; }
+.row { display: flex; align-items: center; gap: 12px; white-space: nowrap; min-width: 0; height: 20px; overflow: hidden; }
+.folder { width: 104px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+.file { color: var(--text); }
+.file.read { color: var(--dim); }
+
+/* The drag line */
+#grip { flex-shrink: 0; height: 11px; margin: -5px 0; cursor: row-resize; position: relative; display: flex; align-items: center; justify-content: center; touch-action: none; }
+#grip::before { content: ''; position: absolute; left: 0; right: 0; top: 5px; height: 1px; background: var(--line); }
+#grip .bar { position: relative; width: 36px; height: 5px; border-radius: 3px; background: var(--faint); }
+#grip:hover .bar, #grip.drag .bar { background: var(--dim); }
+
+/* 4 · The viewer: tabs, and the log or the tab's lines, to the bottom */
+#viewer { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+#tabs { display: flex; align-items: center; gap: 14px; white-space: nowrap; height: 22px; flex-shrink: 0; overflow: hidden; }
+#tabs .on { color: var(--text); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+#searchRow { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+#searchRow[hidden] { display: none; }
+#search { flex: 1; padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; outline: none; }
+#search:focus { border-color: var(--dim); }
+#body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; font-size: 12px; }
+.ln { display: flex; align-items: center; gap: 8px; white-space: nowrap; min-width: 0; height: 19px; }
+.ln .when { width: 62px; flex-shrink: 0; color: var(--faint); }
+.ln .who { width: 52px; flex-shrink: 0; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+.ln .dur { flex-shrink: 0; min-width: 44px; text-align: right; color: var(--faint); }
+.ln .dur.run { color: var(--green); }
+.thought { font-style: italic; color: var(--dim); }
+.whole { padding: 2px 0 6px 122px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.vl { display: flex; align-items: center; gap: 8px; white-space: nowrap; min-width: 0; min-height: 19px; }
+.vl .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.b { font-weight: 700; } .i { font-style: italic; }
+.empty { color: var(--dim); padding: 4px 0; }
+
+#gone { position: fixed; left: 12px; right: 12px; bottom: 12px; padding: 8px 10px; border: 1px solid var(--amber); border-radius: 8px; background: var(--bg); color: var(--amber); }
+#gone[hidden] { display: none; }
