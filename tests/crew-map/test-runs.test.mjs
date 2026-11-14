@@ -8,7 +8,7 @@ globalThis.h = (type, props, ...children) => {
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button') }
 const { register } = await import('../.build/crew-map.mjs')
 const hooks = {}
 const timers = []
@@ -24,7 +24,7 @@ const $ = {
   },
   fs: { read: async () => '', exists: async () => false },
   model: { complete: async () => ({ isAnswered: false }) },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async () => undefined, set: async () => {} },
   session: { cwd: async () => 'C:/proj' },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : n === 'TEMP' ? 'C:/Users/me/Temp' : undefined) },
   state: { get: async () => ({ value: [], version: 0 }) },

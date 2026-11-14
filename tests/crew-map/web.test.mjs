@@ -12,7 +12,7 @@ globalThis.h = (type, props, ...children) => {
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Link: el('Link') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Link: el('Link') }
 const { register } = await import('../.build/crew-map.mjs')
 const here = fileURLToPath(new URL('.', import.meta.url))
 const hooks = {}
@@ -26,7 +26,7 @@ const $ = {
   clock: { every: (ms, fn) => (timers.push({ ms, fn }), { cancel() {} }), after: (ms, fn) => (later.push(fn), { cancel() {} }) },
   fs: { read: async () => 'line\n', exists: async () => false },
   model: { complete: async () => ({ isAnswered: true, text: '' }) },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async () => undefined, set: async () => {} },
   session: { cwd: async () => 'C:/proj' },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [], version: 0 }) },

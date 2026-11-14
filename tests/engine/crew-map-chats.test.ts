@@ -18,7 +18,6 @@ const family = [
 for (const allowed of [true, false]) {
   test(`nested chats, the read ${allowed ? 'allowed' : 'needing approval'}`, async ($, on) => {
     mock.clock(on, { now: Date.parse('2031-01-01T10:00:00Z') })
-    mock.store(on, { intro: 'off' })
     mock.env(on, { OS: 'Windows_NT' })
     let reads = 0
     on('tool.check' as never, async (_$: unknown, e: any) => ({ decision: e.tool === LIST ? (allowed ? 'allow' : 'ask') : 'allow' }) as never)

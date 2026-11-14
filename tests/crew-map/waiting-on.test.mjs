@@ -7,7 +7,7 @@ globalThis.h = (type, props, ...children) => {
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Select: el('Select'), Input: el('Input') }
 const { register } = await import('../.build/crew-map.mjs')
 let now = Date.parse('2031-01-01T10:00:00')
 Date.now = () => now
@@ -17,7 +17,7 @@ const $ = {
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {} },
   clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
   fs: { read: async () => '', exists: async () => false, write: async () => {} },
-  store: { get: async k => (k === 'intro' ? 'off' : k === 'theme' ? 'dark' : undefined), set: async () => {} },
+  store: { get: async k => (k === 'theme' ? 'dark' : undefined), set: async () => {} },
   session: { cwd: async () => P },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [] }) },
@@ -38,13 +38,9 @@ const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return ou
 // A row in words: its picture's alt (the row as drawn), then any text beside it.
 const say = d => (d ? [...find(d, x => x.type === 'Svg').map(x => x.props.alt ?? ''), text(d)].join(' ') : '')
 const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 50 } }, viewport: { columns: 150 } }, async () => ({}))
-const { lines } = await import('./kit.mjs')
-// The main Claude's row, as its picture draws it: its words, left to right, line by line; and one of them.
-const rowGlyphs = t => {
-  const ls = lines(t, 'top')
-  const i = ls.findIndex(l => l.some(g => g.t === 'Claude'))
-  return i < 0 ? [] : ls.slice(i).filter(l => l[0].y < ls[i][0].y + 45).flat()
-}
+const kit = await import('./kit.mjs')
+// The main Claude's row: its words, line by line; and one of them.
+const rowGlyphs = t => kit.rowGlyphs(t, 'Claude')
 const row = t => rowGlyphs(t).map(g => g.t).join(' ')
 const word = (t, w) => rowGlyphs(t).find(g => g.t === w)
 let fails = 0

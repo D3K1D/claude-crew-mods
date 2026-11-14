@@ -7,7 +7,7 @@ globalThis.h = (type, props, ...children) => {
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Select: el('Select'), Input: el('Input') }
 const { register } = await import('../.build/crew-map.mjs')
 let now = Date.parse('2031-01-01T10:00:00')
 Date.now = () => now
@@ -17,7 +17,7 @@ const $ = {
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {} },
   clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
   fs: { read: async () => '', exists: async () => false, write: async () => {} },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async () => undefined, set: async () => {} },
   session: { cwd: async () => P },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [] }) },
@@ -34,9 +34,9 @@ const kids = x => (x && typeof x === 'object' ? (x.children ?? x.props?.children
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : kids(x).map(text).join(''))
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of kids(x)) find(c, pred, out); return out }
 const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
-const { glyphs } = await import('./kit.mjs')
+const { rowGlyphs } = await import('./kit.mjs')
 // A row's progress, as its second line says it ("Step 2 of 4 · Port the parser").
-const work = (t, name = 'Claude') => { const gs = glyphs(t, 'top'); const at = gs.find(g => g.t === name); return at ? gs.find(g => g.y > at.y && g.y < at.y + 30 && /^Step|so far$/.test(g.t))?.t ?? '' : '' }
+const work = (t, name = 'Claude') => rowGlyphs(t, name).find(g => /^Step|so far$/.test(g.t))?.t ?? ''
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 let n = 0

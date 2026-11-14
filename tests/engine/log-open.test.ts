@@ -34,7 +34,6 @@ const MSG = Array.from({ length: 8 }, (_, i) => `point ${i + 1} is that the inve
 
 test('a long message opens whole in the log, and folds again', async ($, on) => {
   mock.clock(on, { now: Date.parse('2031-01-01T10:00:00Z') })
-  mock.store(on, { intro: 'off' })
   mock.env(on, { OS: 'Windows_NT' })
   on('tool.call', async () => ({ result: { text: 'ok' } }) as never)
   on('turn.start', async () => ({ turnId: 'T' }) as never)

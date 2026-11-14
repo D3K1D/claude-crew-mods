@@ -10,7 +10,7 @@ globalThis.h = (type, props, ...children) => {
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Select: el('Select'), Input: el('Input') }
 const { register } = await import('../.build/crew-map.mjs')
 let now = Date.parse('2031-01-01T10:00:00')
 Date.now = () => now
@@ -20,7 +20,7 @@ const $ = {
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {} },
   clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
   fs: { read: async () => '', exists: async () => false, write: async () => {} },
-  store: { get: async k => (k === 'intro' ? 'off' : k === 'theme' ? 'dark' : undefined), set: async () => {} },
+  store: { get: async k => (k === 'theme' ? 'dark' : undefined), set: async () => {} },
   session: { cwd: async () => P },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [] }) },
@@ -44,14 +44,10 @@ const kids = x => (x && typeof x === 'object' ? (x.children ?? x.props?.children
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : kids(x).map(text).join(''))
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of kids(x)) find(c, pred, out); return out }
 const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 50 } }, viewport: { columns: 150 } }, async () => ({}))
-const { lines, words, glyphs, makePress } = await import('./kit.mjs')
+const { words, glyphs, makePress, rowGlyphs, rowNames, indentOf } = await import('./kit.mjs')
 const press = makePress(elements, render, () => new Promise(r => setTimeout(r, 20)))
-// A Claude's row, as its picture draws it: its lines' words, in order.
-const rowOf = (tree, name) => {
-  const ls = lines(tree, 'top')
-  const i = ls.findIndex(l => l.some(g => g.t === name))
-  return i < 0 ? '' : ls.slice(i).filter(l => l[0].y < ls[i][0].y + 45).flat().map(g => g.t).join(' ')
-}
+// A Claude's row: its lines' words, in order.
+const rowOf = (tree, name) => rowGlyphs(tree, name).map(g => g.t).join(' ')
 // What the viewer shows for a Claude: its Details, opened by its row's button.
 const details = async name => {
   await press(`${name}: Details`)
@@ -72,7 +68,7 @@ await call('Bash', { command: 'npm test', description: 'Run the auth tests' }, a
 {
   const row = rowOf(tree, 'Claude')
   check('a permission prompt marks the Claude as needing you, with what it asks', /Claude Needs you .*Allow running Run the auth tests\? Answer in the chat\./.test(row), row)
-  check('...in amber, its card amber', glyphs(tree, 'top').find(g => g.t === 'Needs you')?.role === 'amber' && find(tree, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-') && x.props.borderColor === '#E3B341').length === 1)
+  check('...in amber', glyphs(tree, 'top').find(g => g.t === 'Needs you')?.role === 'amber')
   check('...the header counts it', words(tree, 'top').includes('⏸ 1 needs you'))
   check('...and the log says what it needs', crew().log.some(l => l.text === '⏸ needs you: allow running Run the auth tests'))
 }
@@ -97,10 +93,9 @@ await call('Bash', { command: 'rm -rf build' }, async () => {
   tree = await render()
 }, { text: 'ok' }, { agentId: 'sub1' })
 {
-  const gs = glyphs(tree, 'top')
-  const helper = gs.find(g => g.t === agent('sub1').name)
-  const main = gs.find(g => g.t === 'Claude')
-  check('a helper needing you is pinned on top, flush left, over the Claude that started it', !!helper && !!main && helper.y < main.y && helper.x === main.x, `${helper?.y},${helper?.x} ${main?.y},${main?.x}`)
+  const names = rowNames(tree)
+  const [h, m] = [names.indexOf(agent('sub1').name), names.indexOf('Claude')]
+  check('a helper needing you is pinned on top, flush left, over the Claude that started it', h >= 0 && m > h && indentOf(tree, agent('sub1').name) === indentOf(tree, 'Claude'), names.join(','))
   check('...saying who it helps', /helping Claude/.test(rowOf(tree, agent('sub1').name)))
 }
 await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'S', agentId: 'sub1', usage: { input_tokens: 10, output_tokens: 10, model: 'claude-opus-5-5' } }, async () => ({ text: 'ok' }))

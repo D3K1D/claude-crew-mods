@@ -1,12 +1,11 @@
 // Fixes from the third review and the security audit, each pinned down.
-import { XMLValidator } from 'fast-xml-parser'
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Select: el('Select'), Input: el('Input') }
 const { register } = await import('../.build/crew-map.mjs')
 const hooks = {}
 let now = Date.parse('2026-10-14T10:00:00')
@@ -35,18 +34,9 @@ const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${
 let n = 0
 const run = (e, result = { text: 'ok' }) => hooks['tool.call']($, { tool_use_id: `c${n++}`, ...e }, async () => result)
 
-// ── The intro plays once per session, not on every reload ──
 await hooks['session.start']($, {}, async () => ({}))
 // These checks are about the tree map: show it (desks and folder cards are the default).
 globalThis.__store.set('crew', { ...globalThis.__store.get('crew'), view: 'map' })
-check('the intro plays on the first start', crew() && globalThis.__store.get('intro')?.until > now)
-await new Promise(r => setTimeout(r, 5))
-globalThis.__store.set('intro', { ...globalThis.__store.get('intro'), until: 0 })
-await hooks['session.start']($, {}, async () => ({}))
-// These checks are about the tree map: show it (desks and folder cards are the default).
-globalThis.__store.set('crew', { ...globalThis.__store.get('crew'), view: 'map' })
-check('a reload does not play it again', globalThis.__store.get('intro').until === 0, JSON.stringify(globalThis.__store.get('intro')))
-stored.intro = 'off'
 await hooks['turn.start']($, { text: 'Work', turnId: 'T' }, async () => ({}))
 
 // ── Test and build detection: by the program that runs ──
@@ -82,12 +72,6 @@ check('a remote browser goes to the browser station', seen === '@browser', seen)
 check('its action reads cleanly', crew().log.at(-1).text === '◍ browser: computer left click', crew().log.at(-1).text)
 await run({ tool: 'mcp__plugin_github_github__create_issue', title: 'x' })
 check('a plugin\'s server is named by its own name', crew().nodes['@app:plugin_github_github']?.label === 'GitHub', crew().nodes['@app:plugin_github_github']?.label)
-let svg = ''
-await hooks['tool.call']($, { tool: 'mcp__evil<b>&"x__run', tool_use_id: `c${n++}` }, async () => {
-  svg = find(await render(), x => x.type === 'Svg')[0].props.source
-  return { text: 'ok' }
-})
-check('a server name with markup is escaped in the bubble', XMLValidator.validate(svg) === true && !svg.includes('<b>'))
 
 // ── Import scanning stays fast on hostile files ──
 const hostile = `${'   \n'.repeat(80_000)}use crate::a;`

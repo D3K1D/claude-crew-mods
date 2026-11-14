@@ -7,7 +7,11 @@
 //   ACT {"search":"…"}      the search field
 //
 // Only this computer can reach it (127.0.0.1), every path starts with a random token, and a request
-// must name 127.0.0.1 as its host, so no other website can drive it. It stops when the mod does.
+// must name 127.0.0.1 as its host, so no other website can drive it.
+//
+// It stops when the mod stops it, and on its own when nobody needs it any more: when the process that
+// started it is gone (Claude closed or crashed), or when the mod has not been heard from (a push or
+// its ping every 15 seconds) for a minute. Its standard input is closed from the start, so that is no sign.
 import http from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -26,6 +30,20 @@ let view = ''
 const watchers = new Set()
 const say = line => process.stdout.write(`${line}\n`)
 const send = (res, data) => res.write(`data: ${data}\n\n`)
+const parent = process.ppid
+const QUIET_MS = Number(process.env.CREW_QUIET_MS) || 60_000
+let heard = Date.now()
+const alive = pid => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return err.code === 'EPERM'
+  }
+}
+setInterval(() => {
+  if (!alive(parent) || Date.now() - heard > QUIET_MS) process.exit(0)
+}, Number(process.env.CREW_CHECK_MS) || 5_000)
 
 const srv = http.createServer((req, res) => {
   const { port } = srv.address()
@@ -58,7 +76,14 @@ const srv = http.createServer((req, res) => {
     })
     return
   }
+  // The mod's ping: it is still there (the page's own requests don't count).
+  if (req.method === 'POST' && path === 'ping') {
+    heard = Date.now()
+    res.writeHead(204, plain)
+    return res.end()
+  }
   if (req.method === 'POST' && (path === 'push' || path === 'act')) {
+    if (path === 'push') heard = Date.now()
     let body = ''
     req.on('data', d => {
       body += d

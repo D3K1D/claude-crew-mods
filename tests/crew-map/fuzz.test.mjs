@@ -1,14 +1,13 @@
 // Randomized: thousands of events of every kind, with hostile file names and outputs, checked
 // against what must always hold: valid, bounded markup; bounded state; unique keys; no crashes;
 // and every hook fast even on adversarial text (no runaway regexes).
-import { XMLValidator } from 'fast-xml-parser'
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Select: el('Select'), Input: el('Input') }
 const { register } = await import('../.build/crew-map.mjs')
 const hooks = {}
 let now = Date.parse('2026-10-14T10:00:00')
@@ -25,7 +24,7 @@ const $ = {
   clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
   fs: { read: async p => (p.endsWith('.ts') ? "import x from './a'\nimport y from '../types'\n" : ''), exists: async () => rnd() < 0.3, write: async () => {} },
   model: { complete: async () => ({ isAnswered: false }) },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async () => undefined, set: async () => {} },
   session: { cwd: async () => P },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: codexRuns }) },
@@ -175,14 +174,6 @@ for (let step = 0; step < STEPS; step++) {
         check('render never throws', false, err?.stack?.split('\n').slice(0, 3).join(' | '))
         continue
       }
-      const svgs = find(tree, x => x.type === 'Svg').map(x => x.props.source)
-      for (const svg of svgs) {
-        const v = XMLValidator.validate(svg)
-        check('every image is valid XML', v === true, v === true ? '' : `${JSON.stringify(v.err)} near ${svg.slice(Math.max(0, (v.err?.col ?? 0) - 80), (v.err?.col ?? 0) + 40)}`)
-        check('every image fits the Svg limit', svg.length < 131072, String(svg.length))
-        check('no NaN, undefined or Infinity in an image', !/NaN|undefined|Infinity/.test(svg), svg.match(/.{40}(NaN|undefined|Infinity).{20}/)?.[0])
-        check('no raw script or markup from inputs', !svg.includes('<script') && !svg.includes('<b>') && !svg.includes('<i>'))
-      }
       // The engine refuses a pane whose Button holds anything but strings and Text.
       const badBtn = find(tree, x => x.type === 'Button').find(b => !(b.props.children ?? []).every(ch => typeof ch === 'string' || typeof ch === 'number' || ch?.type === 'Text'))
       check('every Button holds only text', !badBtn, badBtn?.props.key)
@@ -225,6 +216,5 @@ for (let step = 0; step < STEPS; step++) {
 }
 check('every hook stays fast on hostile text', slowest.ms < 250, `${slowest.ms.toFixed(0)} ms: ${slowest.what}`)
 // The validator itself must catch a broken image.
-check('the XML check catches broken markup', XMLValidator.validate('<svg><text>a < b & c</text></svg>') !== true)
 console.log(`PASS fuzz: ${checked} checks over ${STEPS} random events (seed ${SEED}); slowest step ${slowest.ms.toFixed(0)} ms (${slowest.what})`)
 console.log(`\n${fails} failing check(s)`)

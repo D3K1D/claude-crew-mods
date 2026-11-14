@@ -297,8 +297,6 @@ declare module 'claude-code' {
       /** Bumped once a second while a test runs, so its timer counts up. */
       tick: number
       replay: Replay
-      /** While the intro plays: when it ends (ms since the epoch), 0 when it is not playing. */
-      intro: { until: number; played?: boolean }
       view: MapView
       /** The map search: the text, which hit is shown, and a stamp per change. */
       search: { q: string; i: number; rev: number }

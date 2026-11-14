@@ -13,7 +13,6 @@ const ROOT = 'C:/work/game'
 
 const setup = (on: any) => {
   const clock = mock.clock(on, { now: Date.parse('2031-01-01T10:00:00Z') })
-  mock.store(on, { intro: 'off' })
   mock.env(on, { OS: 'Windows_NT', TEMP: 'C:/tmp' })
   const ran: string[][] = []
   on('tool.call', async () => ({ result: { text: 'ok' } }) as never)

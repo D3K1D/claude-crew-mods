@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.7.2'
+const VERSION = '1.7.3'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -37,7 +37,6 @@ const crew = atom({ plugin: 'crew-map', key: 'crew' } as const, {
   spent: { tokens: 0, cost: 0 },
 } as Crew)
 const replay = atom({ plugin: 'crew-map', key: 'replay' } as const, { on: false, at: 0, playing: false } as Replay)
-const intro = atom({ plugin: 'crew-map', key: 'intro' } as const, { until: 0, played: false } as { until: number; played?: boolean })
 const tick = atom({ plugin: 'crew-map', key: 'tick' } as const, 0)
 /** The map's window: where it sits over the map, how far zoomed, whether it follows the fit. */
 const mapView = atom({ plugin: 'crew-map', key: 'view' } as const, { x: 0, y: 0, k: 1, auto: true, rev: 'fit', sel: false, follow: 0 } as MapView)
@@ -847,8 +846,6 @@ const DESK_ROOM_MS = 60_000
 //  - auto (the default): each colour of a Text or a border becomes the engine's theme colour of the
 //    same meaning or hue ('claude', 'warning', 'autoAccept'…), which Claude Code itself tunes for a
 //    light or a dark theme; a colour with no such key is moved to a middle shade that reads on both.
-//    Each picture (Svg) keeps its dark colours and carries light ones for when the app is light
-//    (prefers-color-scheme), since an Svg draws its own colours.
 //  - light / dark: chosen in the toolbar when auto guesses wrong; light swaps every colour for its
 //    light-theme twin, dark draws as tuned.
 type ThemeMode = 'auto' | 'light' | 'dark'
@@ -924,49 +921,7 @@ const autoOf = (h: string) => {
   if (s < 0.15) return L > 0.5 ? 'text' : L > 0.12 ? 'inactive' : 'subtle'
   return shadeTo(k, 0.15, 0.3)
 }
-const svgCache = new Map<string, string>()
-/**
- * A picture painted for the theme: one style block, at its end, that gives each colour it draws with
- * its light twin, matched by the colour itself (`[fill="#0D1117"]{fill:#FFFFFF}`): a style rule wins
- * over a shape's own colour, so no shape changes and the picture grows by a few rules. Applied when
- * the app is light (auto) or always (light). A picture marked data-keep-darks (a sprite: no ground
- * of its own) keeps its darkest and whitest marks, its eyes and shine, as they are.
- */
-const themeSvg = (svg: string, mode: ThemeMode) => {
-  if (mode === 'dark') return svg
-  const key = `${mode}|${svg}`
-  const hit = svgCache.get(key)
-  if (hit !== undefined) return hit
-  const keep = svg.includes('data-keep-darks')
-  const seen = new Set<string>()
-  let css = ''
-  for (const m of svg.matchAll(/\s(fill|stroke|stop-color)="(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})"/g)) {
-    const [, prop, h] = m
-    if (seen.has(`${prop}${h}`)) continue
-    seen.add(`${prop}${h}`)
-    const from = hex6(h)
-    if (keep) {
-      const L = lum(rgbOf(from))
-      if (L < 0.08 || L > 0.85) continue
-    }
-    const to = lightOf(from)
-    if (to === from) continue
-    // A filled shape (a folder, a body) keeps a brighter shade than lettering needs: it reads by its
-    // area. Words drawn in that colour still take the deeper one.
-    const c = rgbOf(from)
-    if (prop === 'fill' && toHsl(c)[1] > 0.25 && lum(c) > 0.34) {
-      css += `[fill="${h}"]{fill:${shadeTo(from, 0.2, 0.34)}}text[fill="${h}"],tspan[fill="${h}"]{fill:${to}}`
-      continue
-    }
-    css += `[${prop}="${h}"]{${prop}:${to}}`
-  }
-  const end = svg.lastIndexOf('</svg>')
-  const out = css && end >= 0 ? `${svg.slice(0, end)}<style>${mode === 'auto' ? `@media (prefers-color-scheme: light){${css}}` : css}</style>${svg.slice(end)}` : svg
-  if (svgCache.size > 400) svgCache.clear()
-  svgCache.set(key, out)
-  return out
-}
-/** The pane painted for the theme: Text and border colours, and the pictures. */
+/** The pane painted for the theme: Text and border colours. */
 const paintPane = <T,>(tree: T, mode: ThemeMode): T => (mode === 'dark' ? tree : (paintNode(tree as unknown as FitNode, mode) as unknown as T))
 const paintNode = (x: FitNode, mode: ThemeMode): FitNode => {
   if (!x || typeof x !== 'object') return x
@@ -979,13 +934,6 @@ const paintNode = (x: FitNode, mode: ThemeMode): FitNode => {
     if (to === v) continue
     if (np === p) np = { ...p }
     np[k] = to
-  }
-  if (x.type === 'Svg' && typeof p.source === 'string') {
-    const s = themeSvg(p.source, mode)
-    if (s !== p.source) {
-      if (np === p) np = { ...p }
-      np.source = s
-    }
   }
   const y = np === p ? x : { ...x, props: np }
   return withKids(y, kidsOf(y).map(k => paintNode(k, mode)))
@@ -1936,18 +1884,12 @@ const startDemo = () => {
   demo = every(2600, step)
 }
 
-// ─── The picture map (desktop) ──────────────────────────────────────────────
+// ─── Diagnosis ──────────────────────────────────────────────────────────────
 
 const CX = '#10A37F'
-/** The last 40 map events (pointer messages and what they decided) and the draws by surface, for diagnosing the map's input. */
+/** The last 40 things worth knowing when something goes wrong (the website's errors), kept in the store as 'diag'. */
 const diag: string[] = []
-const draws: Record<string, number> = {}
-let hovers = 0
 let diagDirty = false
-/** When this pane last had the mouse or a button (the record kept is the latest one's). */
-let lastInputAt = 0
-/** The pane's size as the surface last reported it (columns × body rows), kept in the diag record. */
-let paneSize = ''
 const note = (text: string) => {
   diag.push(`${new Date().toISOString().slice(11, 19)} ${text}`)
   if (diag.length > 40) diag.shift()
@@ -1955,8 +1897,7 @@ const note = (text: string) => {
 }
 // ─── At a glance: one row per Claude ────────────────────────────────────────
 // What each Claude is doing, in plain words, for anyone glancing over: its kind of action (one icon each,
-// from one classifier of the tool it calls), how far along it is, its model. Each row is one picture
-// laid out here to the pixel (text widths counted, cut with … where it must), so nothing clips.
+// from one classifier of the tool it calls), how far along it is, its model.
 
 /** The kinds of thing a Claude does: every tool call, hook and pause is one of these. 16-unit stroke icons. */
 const KIND_ICON: Record<string, string> = {
@@ -1986,7 +1927,7 @@ const KIND_WORDS: Record<string, string> = {
   agent: 'Starting a helper', skill: 'Using a skill', plan: 'Planning', tool: 'Working', think: 'Thinking',
   hook: 'Your hook ran', hookBlock: 'Your hook blocked it',
 }
-/** The text glyph for a kind, where no picture is drawn (the terminal). */
+/** The text glyph for a kind, in the text pane. */
 const KIND_GLYPH: Record<string, string> = { read: '◇', edit: '✎', shell: '▸', search: '⌕', web: '◎', agent: '⇢', skill: '✦', plan: '☐', tool: '•', hook: '⚓', hookBlock: '⚓', think: '›', wait: '⏳', you: '!', done: '✓', idle: '○' }
 /** What kind of thing a tool call is. */
 const KINDS: [RegExp, string][] = [
@@ -2025,7 +1966,7 @@ const shortTime = (ms: number) => {
 }
 const xmlEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-/** One Claude's row as the picture draws it. */
+/** One Claude's row as the pane draws it. */
 type GlanceRow = {
   id: string
   name: string
@@ -2043,7 +1984,7 @@ type GlanceRow = {
   model: string
   depth: number
   request: string[]
-  /** Needing you: the whole request, in one line (the picture wraps it). */
+  /** Needing you: the whole request, in one line (the pane wraps it). */
   ask?: string
   where: string
   /** Opened: its model and cost, what it was asked (wrapped), its steps, its recent kinds of action. */
@@ -2096,15 +2037,8 @@ const searchFor = async ($: EngineInterface, typed: string, next = false) => {
   await update($, mapView, v => ({ ...v, follow: q.trim() ? rev : 0 }))
 }
 
-/** How long a frame takes here: from a window write to the draw it causes, and the draw itself. */
-const perf = { frames: 0, chainMs: 0, renderMs: 0 }
-/**
- * The desktop pane's text cell in CSS pixels: what turns a spot on the map
- * picture into the rows and columns overlays are placed by. The engine does not
- * say; these match the app's code font (a 19 px line, 7.9 px advance).
- */
+/** The unit the pane's line model measures widths and indents in: one text column (the page and the text pane count columns). */
 const CELL_W = 7.9
-const CELL_H = 19
 
 /** Opens a folder in the system's file manager. */
 const openFolder = async ($: EngineInterface, path: string): Promise<Opened> => {
@@ -2135,181 +2069,11 @@ const groupOf = (id: string) => {
   }
   return OUTSIDE
 }
-// ─── The intro: the title with the crew hopping on it, about six seconds ────────────────────
-
-/** How long the intro plays before the pane takes over, in ms. */
-const BOOT_MS = 6200
-
-/**
- * The intro as one SVG whose CSS animations run from the moment it is shown:
- * the title rises a letter at a time under a light sweep, little Claudes drop
- * onto the letters and hop along them, all bounce together as a bar fills, and
- * it zooms out into the pane. Nothing in it depends on the
- * clock, so redraws while it plays show the same markup and do not restart it.
- */
-const bootSvg = (W: number) => {
-  const VW = 960
-  const VH = 380
-  const O = '#D97757'
-  const G = '#3FB950'
-  const at = (s: number) => `animation-delay:${s.toFixed(2)}s`
-  let css = `
-text{font-family:ui-monospace,"Cascadia Code",Consolas,Menlo,monospace}
-.sans{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif}
-.a{animation-fill-mode:both;animation-timing-function:cubic-bezier(.2,.8,.2,1);transform-box:fill-box;transform-origin:center}
-@keyframes fadeIn{from{opacity:0}to{opacity:1}}
-@keyframes rise{from{transform:translateY(22px);opacity:0}to{transform:none;opacity:1}}
-@keyframes fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-@keyframes sheen{from{transform:translateX(-300px)}to{transform:translateX(640px)}}
-@keyframes out{0%{transform:scale(1);opacity:1}100%{transform:scale(1.06);opacity:0}}
-@keyframes glow{0%,100%{opacity:.45}50%{opacity:.9}}
-@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}
-`
-  let s = ''
-  s += `<defs><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="#161C27" stroke-width="1"/></pattern>`
-  s += `<radialGradient id="halo" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="${O}" stop-opacity=".28"/><stop offset="1" stop-color="${O}" stop-opacity="0"/></radialGradient>`
-  s += `<linearGradient id="sh" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".6"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>`
-  s += `<rect width="${VW}" height="${VH}" fill="#06070A"/>`
-  s += `<g class="a" style="animation:out .7s cubic-bezier(.6,0,.4,1) both;${at(5.3)}">`
-  s += `<rect width="${VW}" height="${VH}" fill="url(#grid)" class="a" style="animation:fadeIn .6s both;${at(0)}"/>`
-  // The halo fades in, then breathes: two elements, so the breathing cannot show it early.
-  const cx = VW / 2
-  const base = 236
-  s += `<g class="a" style="animation:fadeIn .8s both;${at(0.1)}"><ellipse cx="${cx}" cy="${base - 26}" rx="330" ry="150" fill="url(#halo)" style="animation:glow 2.4s ease-in-out infinite"/></g>`
-
-  // The title, a letter at a time, then a light sweep across it.
-  const title = 'CLAUDE CREW'
-  const size = 66
-  // Each letter as wide as it is in a bold sans (in ems), so W does not crowd E.
-  const EM: Record<string, number> = { C: 0.7, L: 0.58, A: 0.74, U: 0.74, D: 0.76, E: 0.64, R: 0.7, W: 0.98, ' ': 0.34 }
-  const gap = 0.05
-  const widths = [...title].map(ch => (EM[ch] ?? 0.7) * size)
-  const total = widths.reduce((n, w) => n + w, 0) + gap * size * (title.length - 1)
-  const xs: number[] = []
-  let run = cx - total / 2
-  for (const w of widths) {
-    xs.push(run + w / 2)
-    run += w + gap * size
-  }
-  const letter = (ch: string, i: number, extra: string) => `<text x="${xs[i].toFixed(1)}" y="${base}" font-size="${size}" font-weight="800" text-anchor="middle" class="${extra ? 'a sans' : 'sans'}"${extra}>${ch}</text>`
-  s += `<clipPath id="tclip">${[...title].map((ch, i) => (ch === ' ' ? '' : letter(ch, i, ''))).join('')}</clipPath>`
-  ;[...title].forEach((ch, i) => {
-    if (ch !== ' ') s += letter(ch, i, ` fill="#F5F0E8" style="animation:rise .5s both;${at(0.15 + i * 0.06)}"`)
-  })
-  s += `<g clip-path="url(#tclip)"><rect x="${cx - 300}" y="${base - 60}" width="160" height="80" fill="url(#sh)" class="a" style="animation:sheen 1s ease-in-out both;${at(1.0)}"/></g>`
-  s += `<text x="${cx}" y="${base + 34}" font-size="13" text-anchor="middle" fill="#8B949E" letter-spacing="4" class="a" style="animation:fadeIn .5s both;${at(0.8)}">LIVE MAP OF CLAUDE AND ITS CREW</text>`
-
-  // Little Claudes: each drops onto a letter, hops along the title, and all bounce together at the end.
-  const U = 2.8
-  const SW = 16 * U
-  const SH = 9 * U
-  const top = base - size * 0.72
-  const sprite = (color: string, blinkOff: number) => {
-    const R = (a: number, b: number, w: number, hh: number, f: string) =>
-      `<rect x="${(a * U - SW / 2).toFixed(1)}" y="${(b * U - SH).toFixed(1)}" width="${(w * U).toFixed(1)}" height="${(hh * U).toFixed(1)}" fill="${f}"/>`
-    return (
-      R(2, 0, 12, 7, color) +
-      R(0, 3, 2, 2, color) +
-      R(14, 3, 2, 2, color) +
-      [3, 5, 10, 12].map(a => R(a, 7, 1, 2, color)).join('') +
-      `<g style="transform-box:fill-box;transform-origin:center;animation:blink 2.6s linear infinite;animation-delay:-${blinkOff}s">${R(4, 2, 1, 2, '#0D1117')}${R(11, 2, 1, 2, '#0D1117')}</g>`
-    )
-  }
-  const BOUNCE = 4.7
-  const crew: { color: string; path: number[]; start: number }[] = [
-    { color: O, path: [0, 2, 4, 7, 9], start: 1.1 },
-    { color: '#6CB6FF', path: [10, 8, 5, 3, 1], start: 1.3 },
-    { color: '#7EE787', path: [5, 3, 0, 2, 4], start: 1.5 },
-    { color: '#D2A8FF', path: [7, 9, 10, 8, 7], start: 1.7 },
-  ]
-  const DROP = 0.38
-  const HOLD = 0.16
-  const HOP = 0.44
-  crew.forEach((c, n) => {
-    // Times are relative to the sprite's start; positions are its feet.
-    const frames: { t: number; x: number; y: number; ease: string }[] = []
-    const lands: number[] = []
-    const x0 = xs[c.path[0]]
-    frames.push({ t: 0, x: x0, y: -40, ease: 'cubic-bezier(.5,0,1,1)' })
-    let t = DROP
-    frames.push({ t, x: x0, y: top, ease: 'linear' })
-    lands.push(t)
-    const hop = (fromX: number, toX: number, lift: number) => {
-      t += HOLD
-      frames.push({ t, x: fromX, y: top, ease: 'cubic-bezier(.2,.7,.4,1)' })
-      t += HOP / 2
-      frames.push({ t, x: (fromX + toX) / 2, y: top - lift, ease: 'cubic-bezier(.6,0,.8,.3)' })
-      t += HOP / 2
-      frames.push({ t, x: toX, y: top, ease: 'linear' })
-      lands.push(t)
-    }
-    for (let k = 1; k < c.path.length; k++) {
-      const a = xs[c.path[k - 1]]
-      const b = xs[c.path[k]]
-      hop(a, b, 34 + Math.abs(b - a) * 0.22)
-    }
-    // Wait for the others, then one bounce together.
-    const last = xs[c.path[c.path.length - 1]]
-    const endAt = BOUNCE - c.start
-    if (endAt > t + HOLD) {
-      t = endAt - HOLD
-      hop(last, last, 26)
-    }
-    const T = t + 0.05
-    const pct = (v: number) => Math.min(100, (v / T) * 100).toFixed(2)
-    css += `@keyframes m${n}{${frames.map(f => `${pct(f.t)}%{transform:translate(${f.x.toFixed(1)}px,${f.y.toFixed(1)}px);animation-timing-function:${f.ease}}`).join('')}100%{transform:translate(${last.toFixed(1)}px,${top.toFixed(1)}px)}}\n`
-    // A squash on every landing.
-    css += `@keyframes q${n}{0%{transform:none}${lands
-      .map(l => `${pct(Math.max(0, l - 0.01))}%{transform:none}${pct(l + 0.03)}%{transform:scale(1.2,.72)}${pct(l + 0.13)}%{transform:none}`)
-      .join('')}100%{transform:none}}\n`
-    s += `<g style="animation:m${n} ${T.toFixed(2)}s linear both;${at(c.start)}"><g style="transform-box:fill-box;transform-origin:50% 100%;animation:q${n} ${T.toFixed(2)}s linear both;${at(c.start)}">${sprite(c.color, n * 0.7)}</g></g>`
-  })
-
-  // The bar fills, then says so.
-  s += `<rect x="${cx - 170}" y="${base + 62}" width="340" height="4" rx="2" fill="#1B2230" class="a" style="animation:fadeIn .3s both;${at(3.9)}"/>`
-  s += `<rect x="${cx - 170}" y="${base + 62}" width="340" height="4" rx="2" fill="${O}" class="a" style="transform-origin:left center;animation:fill .8s cubic-bezier(.6,0,.2,1) both;${at(4.0)}"/>`
-  s += `<text x="${cx}" y="${base + 92}" font-size="11" text-anchor="middle" font-weight="700" fill="${G}" letter-spacing="2" class="a" style="animation:fadeIn .3s both;${at(4.75)}">● ALL SYSTEMS ONLINE</text>`
-  s += `</g>`
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${Math.round((W * VH) / VW)}" viewBox="0 0 ${VW} ${VH}"><style>${css}</style>${s}</svg>`
-}
-
-// ─── The pane: four bands, drawn as the design draws them ───────────────────
-// Header (who does what, in counts, and the one cost), the crew (a row per Claude, helpers under who
-// started them), Touched (a line per folder) and the viewer (Activity, Files, Search, Settings, or one
-// Claude's Details). Each band is one picture laid out here to the pixel in a fixed-advance font, with
-// the hit module over it: a click lands on the target drawn under it. Only the crew changes height.
-
-/** The design's colours by meaning: [dark, light]. A Claude's hue is h0…h5, Codex cx. */
-const ROLE: Record<string, [string, string]> = {
-  text: ['#E6EDF3', '#1F2328'], dim: ['#8B949E', '#59636E'], faint: ['#6E7681', '#6E7781'], line: ['#30363D', '#D0D7DE'],
-  panel: ['#121821', '#F6F8FA'], amber: ['#E3B341', '#9A6700'], green: ['#3FB950', '#1A7F37'], red: ['#F85149', '#CF222E'],
-  brand: ['#D97757', '#BC5A34'], eye: ['#0D1117', '#0D1117'],
-  h0: ['#D97757', '#BC5A34'], h1: ['#6CB6FF', '#0969DA'], h2: ['#7EE787', '#1A7F37'], h3: ['#D2A8FF', '#8250DF'], h4: ['#56D4DD', '#0A7B83'], h5: ['#F778BA', '#BF3989'],
-  cx: ['#8B949E', '#59636E'],
-}
-const roleCss = (i: 0 | 1) =>
-  Object.entries(ROLE).map(([k, v]) => `.f-${k}{fill:${v[i]}}.s-${k}{stroke:${v[i]}}`).join('') + `.f-amberbg{fill:${i ? '#9A6700' : '#E3B341'};fill-opacity:${i ? 0.07 : 0.1}}`
-const PANE_FONT = `text{font-family:'Cascadia Mono','Cascadia Code',Consolas,ui-monospace,Menlo,monospace}`
-/** Each theme's style block: dark, light, or dark with light rules for when the app is light. */
-const PANE_CSS: Record<ThemeMode, string> = {
-  dark: PANE_FONT + roleCss(0),
-  light: PANE_FONT + roleCss(1),
-  auto: `${PANE_FONT}${roleCss(0)}@media (prefers-color-scheme: light){${roleCss(1)}}`,
-}
-/** One character's advance in that font, as a share of its size: Cascadia's 0.59 rounded up, so text never runs over. */
-const ADV = 0.6
-const pxW = (t: string, size: number) => textW(t) * size * ADV
-const fitPx = (t: string, px: number, size: number) => cutTo(t, Math.max(0, Math.floor(px / (size * ADV))))
 /** The colour role of a Claude's hue (its palette colour), or Codex's. */
 const hueRole = (hex: string) => {
   const i = PALETTE.indexOf(hex)
   return i >= 0 ? `h${i}` : 'cx'
 }
-/** Space the picture keeps at its left and right edges. */
-const PADX = 2
-
-/** A spot on a picture that does something when clicked; its label is the button the fallback draws. */
-type Hit = { x: number; y: number; w: number; h: number; label: string; run: Act }
 /** What a click on the pane does, as data: open a file or folder, move the viewer, set a setting, and the rest. */
 type Act =
   | { k: 'none' }
@@ -2317,50 +2081,10 @@ type Act =
   | { k: 'dir'; path: string; name: string }
   | { k: 'pane'; tab?: NonNullable<Crew['pane']>['tab']; focus?: string; top?: number }
   | { k: 'log'; anchor?: number | null; toggle?: string; hold?: number | null }
-  | { k: 'set'; theme?: ThemeMode; budget?: number; editor?: string; hideOutside?: boolean; intro?: 'on' | 'off' }
-  | { k: 'intro' }
+  | { k: 'set'; theme?: ThemeMode; budget?: number; editor?: string; hideOutside?: boolean }
   | { k: 'demo' }
   | { k: 'copy' }
 const NONE: Act = { k: 'none' }
-type TextOpts = { b?: boolean; i?: boolean; end?: boolean; u?: boolean }
-/** A picture being drawn: text, shapes, icons and the little Claude, and where its targets are. */
-const picture = () => {
-  let s = ''
-  const hits: Hit[] = []
-  const f = (n: number) => +n.toFixed(1)
-  /** Text at its baseline; returns its width. */
-  const text = (x: number, y: number, t: string, size: number, role: string, o: TextOpts = {}) => {
-    if (!t) return 0
-    const w = pxW(t, size)
-    s += `<text x="${f(x)}" y="${f(y)}" font-size="${size}" class="f-${role}"${o.b ? ' font-weight="700"' : ''}${o.i ? ' font-style="italic"' : ''}${o.end ? ' text-anchor="end"' : ''}>${xmlEsc(t)}</text>`
-    if (o.u) s += `<path d="M${f(o.end ? x - w : x)} ${f(y + 2.5)}h${f(w)}" class="s-${role}" stroke-width="1"/>`
-    return w
-  }
-  /** Text centred in a line box from `top`, `h` tall. */
-  const line = (x: number, top: number, h: number, t: string, size: number, role: string, o: TextOpts = {}) => text(x, top + h / 2 + size * 0.34, t, size, role, o)
-  const rect = (x: number, y: number, w: number, h: number, rx: number, fill = '', stroke = '') =>
-    (s += `<rect x="${f(x)}" y="${f(y)}" width="${f(w)}" height="${f(h)}" rx="${rx}"${fill ? ` class="f-${fill}${stroke ? ` s-${stroke}` : ''}"` : stroke ? ` fill="none" class="s-${stroke}"` : ''}/>`)
-  /** One of the 16-unit stroke icons, `size` px square, top-left at x, y. */
-  const icon = (x: number, y: number, size: number, kind: string, role: string, sw = 1.9) =>
-    (s += `<g transform="translate(${f(x)},${f(y)}) scale(${f(size / 16)})" fill="none" class="s-${role}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="${KIND_ICON[kind] ?? KIND_ICON.tool}"/></g>`)
-  /** The little still Claude, 17 by 12 at `scale` 1, its box's top-left at x, y. Its eyes stay dark. */
-  const sprite = (x: number, y: number, role: string, k = 1) => {
-    const R = (a: number, b: number, w: number, h: number, r = role) => `<rect x="${a}" y="${b}" width="${w}" height="${h}" class="f-${r}"/>`
-    s += `<g transform="translate(${f(x + 8.5 * k)},${f(y + 11.5 * k)}) scale(${k})">${R(-7, -11, 14, 8)}${k >= 1 ? R(-8, -8.5, 2, 2) + R(6, -8.5, 2, 2) : ''}${R(-4, -9, 2, 2.6, 'eye')}${R(2, -9, 2, 2.6, 'eye')}${[-5.5, -2.3, 0.7, 3.9].map(a => R(a, -3, 1.6, 2.6)).join('')}</g>`
-  }
-  /** Codex's mark: a little terminal, 17 by 12. */
-  const codexMark = (x: number, y: number) =>
-    (s += `<g transform="translate(${f(x)},${f(y)})" fill="none" class="s-dim" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="0.75" width="14" height="10.5" rx="2"/><path d="M5 4l2.2 2L5 8M9 8.2h3"/></g>`)
-  /** A dot filled with a role ('none': hollow), with a ring of another when given. */
-  const dot = (cx: number, cy: number, r: number, fill: string, ring = '') =>
-    (s += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${r}"${fill === 'none' ? ' fill="none"' : ''} class="${[fill === 'none' ? '' : `f-${fill}`, ring ? `s-${ring}` : ''].filter(Boolean).join(' ')}"${ring ? ' stroke-width="1.5"' : ''}/>`)
-  const rule = (y: number, x0: number, x1: number) => (s += `<path d="M${f(x0)} ${f(y + 0.5)}H${f(x1)}" class="s-line" stroke-width="1"/>`)
-  const hit = (x: number, y: number, w: number, h: number, label: string, run: Act) => hits.push({ x, y, w, h, label, run })
-  const done = (W: number, H: number, mode: ThemeMode) =>
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>${PANE_CSS[mode]}</style>${s}</svg>`
-  return { text, line, rect, icon, sprite, codexMark, dot, rule, hit, hits, done }
-}
-type Pic = ReturnType<typeof picture>
 
 /** A run of text on a line of the viewer: words, a fixed column, the rest cut to fit, a button. */
 type Seg = {
@@ -2389,95 +2113,9 @@ type Seg = {
 type VLine = { segs: Seg[]; right?: Seg[]; indent?: number }
 /** One Claude's row as the pane draws it: the glance row, its whole request unwrapped, and whether its Details show. */
 type PaneRow = GlanceRow & { ask: string; focused: boolean }
-/** A row's height in the picture: done one line; at work two; needing you, its request (wrapped) and who it helps. */
-const rowH = (r: PaneRow, lines: number) => (r.state === 'done' ? 24 : r.state === 'you' ? 50 + 18 * lines : 48)
-/** The room a row's request wraps in, in characters. */
-const askCols = (W: number) => Math.max(16, Math.floor((W - 2 * PADX - 2 - 11 - 24 - 11) / (12.5 * ADV)))
-
-/**
- * The crew: each row a card (amber needing you, none done), the little Claude, its name, the state's
- * icon and words in the state's colour, what on, its time; under them its step pips and progress, its
- * model, and Details. Returns where it ends.
- */
-const drawCrew = (P: Pic, rows: PaneRow[], y0: number, W: number, wide: boolean, onDetails: (id: string) => Act, bare = false) => {
-  let y = y0
-  const SR: Record<GlanceRow['state'], string> = { work: 'green', wait: 'dim', idle: 'dim', you: 'amber', done: 'dim' }
-  for (const r of rows) {
-    const sr = SR[r.state]
-    const request = r.state === 'you' ? wrapRows(r.ask, askCols(W), 6) : []
-    const h = rowH(r, request.length)
-    const x0 = bare ? 0 : PADX + (r.state === 'you' ? 0 : Math.min(3, r.depth) * (wide ? 20 : 12))
-    const x1 = bare ? W : W - PADX
-    if (bare) {
-      // The card is the Box around the picture.
-    } else if (r.state === 'you') P.rect(x0 + 0.5, y + 0.5, x1 - x0 - 1, h - 1, 8, 'amberbg', 'amber')
-    else if (r.state !== 'done') P.rect(x0 + 0.5, y + 0.5, x1 - x0 - 1, h - 1, 8, 'panel', r.focused ? 'dim' : 'line')
-    const ix = x0 + 11
-    const t1 = y + (r.state === 'done' ? 2 : 5)
-    // Line one: the little Claude (a dot once done; Codex's own mark), name, icon, status, what on, time.
-    if (r.state === 'done') P.dot(ix + 8, t1 + 10, 4, hueRole(r.hue))
-    else if (r.hue === CX) P.codexMark(ix, t1 + 4)
-    else P.sprite(ix, t1 + 4, hueRole(r.hue))
-    const timeW = r.time ? P.line(x1 - 11, t1, 20, r.time, 11.5, r.state === 'you' ? 'amber' : 'dim', { end: true }) : 0
-    const right = x1 - 11 - (timeW ? timeW + 7 : 0)
-    let x = ix + 24
-    const name = fitPx(r.name, Math.max(0, Math.min(150, right - x - 120)), 12.5)
-    x += P.line(x, t1, 20, name, 12.5, r.state === 'done' ? 'dim' : 'text') + 7
-    P.icon(x, t1 + 2.5, 15, r.kind, sr, r.kind === 'think' ? 2.8 : 1.9)
-    x += 15 + 7
-    const size = r.state === 'done' ? 12.5 : 13.5
-    x += P.line(x, t1, 20, fitPx(r.status, right - x, size), size, sr, { b: true }) + 7
-    if (r.object && right - x > 30) P.line(x, t1, 20, fitPx(r.object, right - x, 12.5), 12.5, r.state === 'done' ? 'dim' : 'text')
-    // Details is a Button in the card's Box, beside the picture, not drawn in it.
-    const details = (_top: number, _lh: number) => -12
-    if (r.state === 'you') {
-      request.forEach((l, i) => P.line(ix + 24, t1 + 22 + 18 * i, 18, l, 12.5, 'text'))
-      const t3 = t1 + 22 + 18 * request.length + 2
-      const dw = details(t3, 16)
-      P.line(ix + 24, t3, 16, fitPx(r.where, x1 - 11 - dw - 12 - ix - 24, 11.5), 11.5, 'dim')
-    } else if (r.state !== 'done') {
-      const t2 = t1 + 22
-      let px = ix + 24
-      const n = Math.min(5, r.total)
-      const filled = r.total > 5 ? Math.round((r.done / r.total) * 5) : r.done
-      for (let k = 0; k < n; k++) P.dot(px + 4 + k * 11, t2 + 8, 3.25, k < filled ? sr : 'none', k <= filled ? sr : 'line')
-      if (n) px += n * 11 - 3 + 7
-      const dw = details(t2, 16)
-      let end = x1 - 11 - dw - 7
-      if (wide && r.model) end -= P.line(end, t2, 16, r.model, 11.5, 'faint', { end: true }) + 7
-      P.line(px, t2, 16, fitPx(r.progress, end - px, 11.5), 11.5, r.stuck ? 'amber' : 'dim')
-    }
-    y += h + 6
-  }
-  return y
-}
 
 /** The last task's card in the crew's place while nobody works: how long, what changed, tests, cost, who. */
 type Recap = { title: string; goal: string; ago: string; facts: [string, string, string][]; copy?: Act; demo?: Act }
-const recapH = (r: Recap) => (r.copy ? 1 + 8 + 20 + r.facts.length * 22 + 8 + 1 : 1 + 8 + 18 + 8 + 1)
-const drawRecap = (P: Pic, r: Recap, y: number, W: number, wide: boolean) => {
-  const h = recapH(r)
-  P.rect(PADX + 0.5, y + 0.5, W - 2 * PADX - 1, h - 1, 8, '', 'line')
-  const x = PADX + 11
-  if (!r.copy) {
-    // Nothing done yet: what will show here, and the demo.
-    P.line(x, y + 9, 18, fitPx(r.title, W - 2 * x, 12.5), 12.5, 'dim')
-    return y + h + 6
-  }
-  const t = y + 9
-  P.icon(x, t + 2.5, 15, 'done', 'green', 2)
-  let tx = x + 23
-  tx += P.line(tx, t, 20, r.title, 12.5, 'text', { b: true }) + 8
-  const agoW = r.ago ? P.line(W - PADX - 11, t, 20, r.ago, 11.5, 'dim', { end: true }) + 8 : 0
-  P.line(tx, t, 20, fitPx(r.goal, W - PADX - 11 - agoW - tx, 12.5), 12.5, 'dim')
-  const labelW = wide ? 64 : 56
-  r.facts.forEach(([k, v, role], i) => {
-    const ft = t + 20 + 4 + i * 22
-    P.line(x + 23, ft, 18, k, 12.5, 'dim')
-    P.line(x + 23 + labelW + 10, ft, 18, fitPx(v, W - PADX - 11 - (x + 23 + labelW + 10), 12.5), 12.5, role)
-  })
-  return y + h + 6
-}
 
 /** A file on a Touched line: its name, errors, lines added and removed, and the little Claude on it now. */
 type TouchFile = { name: string; errs: number; add: number; del: number; on: string; read?: boolean; run: Act }
@@ -2511,10 +2149,6 @@ const doAction = async ($: EngineInterface, a: Act, surface: unknown) => {
       void $.store.set('budget', a.budget).catch(() => undefined)
       void $.ui.toast(a.budget ? `Budget set to ${fmtUsd(a.budget)}: you'll get a heads-up at 50%, 80% and 100%` : 'Budget cleared')
     }
-    if (a.intro) {
-      introOff = a.intro === 'off'
-      void $.store.set('intro', a.intro).catch(() => undefined)
-    }
     return write?.(d => ({
       ...d,
       ...(a.theme ? { theme: a.theme } : {}),
@@ -2523,7 +2157,6 @@ const doAction = async ($: EngineInterface, a: Act, surface: unknown) => {
       ...(a.hideOutside !== undefined ? { hideOutside: a.hideOutside } : {}),
     }))
   }
-  if (a.k === 'intro') return playIntro?.()
   if (a.k === 'demo') return startDemo()
   if (a.k === 'copy') {
     const sm = (await readCrew?.())?.summary
@@ -2535,8 +2168,6 @@ const doAction = async ($: EngineInterface, a: Act, surface: unknown) => {
 
 /** A log line's kind of action, by the mark its words start with. */
 const LOG_GLYPH: Record<string, string> = { '✎': 'edit', '◇': 'read', '▸': 'shell', '⌕': 'search', '◎': 'web', '⇢': 'agent', '🗜': 'think', '◍': 'web', '▣': 'tool', '▤': 'read', '✻': 'agent', '•': 'tool', '⚗': 'shell', '⏸': 'you', '✓': 'done', '✗': 'hookBlock', '←': 'agent', '→': 'agent', '⚓': 'hook' }
-/** Whether the intro plays when the pane opens (the person can turn it off in Settings). */
-let introOff = false
 
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 
@@ -2546,8 +2177,6 @@ let codexCount = 0
 const noticeTurn = new Set<string>()
 const codexRunCount = async ($: EngineInterface) =>
   (((await $.state.get({ plugin: 'codex-bridge', key: 'runs' } as never).catch(() => ({}))) as { value?: unknown[] }).value ?? []).length
-/** Plays the intro: the pane shows it until BOOT_MS from now, then redraws as itself. */
-let playIntro: (() => Promise<void>) | undefined
 
 let replayShown = { at: -1, stamp: 0 }
 
@@ -2590,15 +2219,14 @@ const windowOf = (model: string) => (/\[1m\]|-1m\b/i.test(model) ? 1_000_000 : m
  * What the pane shows, worked out once for any surface: the counts and cost, each Claude's row, the last
  * task, Touched, the tabs and the lines of the one shown. The pane draws it; the website gets it as data.
  */
-const paneModel = async ($: EngineInterface, cols: number, isTerminal: boolean, bodyRows: number, surface: string) => {
+const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => {
     // Every value the pane draws from, read side by side (one round trip, not nine in a row).
-    const [c, , codexPublished, , sq] = await Promise.all([
+    const [c, , codexPublished, sq] = await Promise.all([
       read($, crew),
       // Read so the pane redraws each second while a timer runs.
       read($, tick),
       // Codex runs as the codex-bridge mod publishes them (another plugin's value: read only, typed loosely here).
       $.state.get({ plugin: 'codex-bridge', key: 'runs' } as never).catch(() => ({})),
-      read($, intro),
       read($, search),
     ])
     const published = (codexPublished as unknown as { value?: CodexRun[] }).value ?? []
@@ -2708,8 +2336,6 @@ const paneModel = async ($: EngineInterface, cols: number, isTerminal: boolean, 
       deskMax = deskCount
       deskLowSince = 0
     }
-    // The picture's width: the pane inside the area's frame, less the Details button beside it.
-    const glanceW = Math.max(200, Math.floor(((isTerminal ? cols : Math.floor(cols * 0.97) - 1) - 4 - 9) * CELL_W))
     const showModel = cols >= 70
     // How deep a Claude sits: the main one 0, its helpers 1, theirs 2…
     const depthOf = (a: Agent) => {
@@ -2782,7 +2408,7 @@ const paneModel = async ($: EngineInterface, cols: number, isTerminal: boolean, 
         stuck: !!a.stuck && state !== 'done',
         model: shortModel(agentModel.get(a.id) ?? (a.id === 'main' ? mainModel : '')),
         depth: depthOf(a),
-        request: ask ? wrapRows(ask, Math.max(20, Math.floor((glanceW - 30 - 10) / (13.5 * 0.6))), 2) : [],
+        request: ask ? wrapRows(ask, Math.max(20, cols - 18), 2) : [],
         ask,
         where: a.needs && a.id !== 'main' && parent ? `helping ${parent.name}` : '',
       }
@@ -2889,7 +2515,6 @@ const paneModel = async ($: EngineInterface, cols: number, isTerminal: boolean, 
     const focusRow = ps.tab === 'claude' ? glanceList.find(r => r.id === ps.focus) : undefined
     const tab = ps.tab === 'claude' && !focusRow ? 'activity' : ps.tab ?? 'activity'
     const rowsP: PaneRow[] = glanceList.map(r => ({ ...r, ask: r.ask ?? r.request.join(' '), focused: tab === 'claude' && r.id === ps.focus }))
-    const W = Math.round(vwCols * CELL_W)
     const count = (s: GlanceRow['state']) => rowsP.filter(r => r.state === s).length
     const standby = !rowsP.some(r => r.state === 'work' || r.state === 'wait' || r.state === 'you')
     const openDetails = (id: string) => (tab === 'claude' && ps.focus === id ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: 'claude', focus: id, top: 0 }))
@@ -2956,26 +2581,12 @@ const paneModel = async ($: EngineInterface, cols: number, isTerminal: boolean, 
 
     // The viewer: what each tab lists, as lines; the body shows BODY_ROWS of them from where it is scrolled.
     // Every Claude shows; the viewer takes the rest of the pane, down to its bottom (8 rows at least).
-    const ROW = CELL_H
-    const DET = 10
-    const rowW = Math.round((vwCols - 4 - DET) * CELL_W)
-    const askLines = (r: PaneRow) => (r.state === 'you' ? wrapRows(r.ask, askCols(rowW), 6).length : 0)
-    const aboveRows = isTerminal
-      ? 1 +
-        1 +
-        rowsP.reduce((n, r) => n + (r.state === 'done' ? 1 : r.state === 'you' ? 2 + wrapRows(r.ask, Math.max(16, cols - 6), 6).length : 2), 0) +
-        (recap ? (recap.copy ? 2 + recap.facts.length : 2) : 0)
-      : Math.ceil(
-          (24 +
-            rowsP.reduce((n, r) => n + (r.state === 'done' ? rowH(r, 0) : Math.ceil((rowH(r, askLines(r)) + 4) / ROW) * ROW), 0) +
-            (recap ? recapH(recap) - 6 + ROW : 0)) /
-            ROW,
-        )
+    const aboveRows =
+      1 +
+      1 +
+      rowsP.reduce((n, r) => n + (r.state === 'done' ? 1 : r.state === 'you' ? 2 + wrapRows(r.ask, Math.max(16, cols - 6), 6).length : 2), 0) +
+      (recap ? (recap.copy ? 2 + recap.facts.length : 2) : 0)
     const paneRows = Math.max(0, Math.floor(bodyRows))
-    if (`${surface} ${cols}x${paneRows}` !== paneSize) {
-      paneSize = `${surface} ${cols}x${paneRows}`
-      diagDirty = true
-    }
     const BODY_ROWS = Math.max(8, (paneRows || aboveRows + 1 + 4 + 2 + 1 + 12) - aboveRows - 1 - 4 - 2 - (tab === 'search' ? 1 : 0) - 1)
     const timeW = (wide ? 8 : 5) * CELL_W
     const logCols = Math.max(12, vwCols - (wide ? 8 : 5) - 3 - 7 - 3 - 3 - 9)
@@ -3031,7 +2642,7 @@ const paneModel = async ($: EngineInterface, cols: number, isTerminal: boolean, 
       if (!focusRow) return []
       const a = src.agents.find(x => x.id === focusRow.id)
       const run = focusRow.id.startsWith('cx-') ? codexRuns.find(x => `cx-${x.id}` === focusRow.id) : undefined
-      const textCols = Math.max(16, Math.floor((W - 2 * PADX) / (12 * ADV)))
+      const textCols = Math.max(16, vwCols - 2)
       const out: VLine[] = []
       const chat = focusRow.id.startsWith('chat-') ? chatList.find(x => `chat-${x.id}` === focusRow.id) : undefined
       if (chat) {
@@ -3123,14 +2734,6 @@ const paneModel = async ($: EngineInterface, cols: number, isTerminal: boolean, 
       },
       { segs: [{ t: 'Open files in', w: setW, role: 'dim', gap: 12 }, ...([['code', 'VS Code'], ['cursor', 'Cursor'], ['system', 'default app']] as const).map(([v, t]) => choice(t, (c.editor || 'code') === v, { k: 'set', editor: v }))] },
       { segs: [{ t: 'Outside files', w: setW, role: 'dim', gap: 12 }, choice('shown', !src.hideOutside, { k: 'set', hideOutside: false }), choice('hidden', !!src.hideOutside, { k: 'set', hideOutside: true })] },
-      {
-        segs: [
-          { t: 'Intro on open', w: setW, role: 'dim', gap: 12 },
-          choice('on', !introOff, { k: 'set', intro: 'on' }),
-          choice('off', introOff, { k: 'set', intro: 'off' }),
-          { t: '▶ play it now', role: 'dim', run: { k: 'intro' } },
-        ],
-      },
       { segs: [{ t: 'Demo', w: setW, role: 'dim', gap: 12 }, { t: demoOn ? 'a pretend session is playing' : '▶ try a pretend session', role: 'dim', u: !demoOn, run: { k: 'demo' } }] },
       { segs: [] },
       { segs: [{ t: `Claude Crew ${VERSION}`, role: 'faint' }] },
@@ -3190,12 +2793,14 @@ const paneModel = async ($: EngineInterface, cols: number, isTerminal: boolean, 
         dur: l.took !== undefined ? took(l.took) : running ? took(now - l.at) : '',
       }
     })
-    return { c, sq, cols, isTerminal, vwCols, totalCost, wide, paneAct, tab, rowsP, W, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, ROW, DET, askLines, BODY_ROWS, listed, top0, scroll, tabs, webLog }
+    return { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, BODY_ROWS, listed, top0, scroll, tabs, webLog }
 }
 
 /** The chat's Claude Crew website: the server this mod runs for it, its address, and who has it open. */
 let webUrl = ''
-let webPush: ((body: string) => Promise<unknown>) | undefined
+/** Posts to the website: the view ('push'), or 'ping' so it knows the mod is still here (it stops after a quiet minute). */
+let webPost: ((path: 'push' | 'ping', body?: string) => Promise<unknown>) | undefined
+let webPinged = 0
 let webWatchers = 0
 let webSent = ''
 let webBusy = false
@@ -3210,7 +2815,7 @@ const actId = (a: Act) => {
 }
 /** The website's view: the pane's model as data, each press an id. */
 const webView = async ($: EngineInterface) => {
-  const m = await paneModel($, 160, false, 700, 'web')
+  const m = await paneModel($, 160, 700)
   const seg = (g: Seg) => ({
     t: g.t ?? '',
     role: g.role,
@@ -3275,13 +2880,17 @@ const webView = async ($: EngineInterface) => {
 }
 /** Sends the website the view when it changed, while anyone has the page open. */
 const publishWeb = async ($: EngineInterface) => {
-  if (!webPush || !webWatchers || webBusy) return
+  if (webPost && Date.now() - webPinged > 15_000) {
+    webPinged = Date.now()
+    void webPost('ping')
+  }
+  if (!webPost || !webWatchers || webBusy) return
   webBusy = true
   try {
     const s = JSON.stringify(await webView($))
     if (s !== webSent) {
       webSent = s
-      await webPush(s)
+      await webPost('push', s)
     }
   } catch (err) {
     note(`web view: ${String(err).slice(0, 160)}`)
@@ -3304,7 +2913,7 @@ const startWeb = ($: EngineInterface) => {
             const [port, token] = line.slice(6).split(' ')
             const base = `http://127.0.0.1:${port}/${token}`
             webUrl = `${base}/`
-            webPush = body => $.http.fetch(`${base}/push`, { method: 'POST', body }).catch(() => undefined)
+            webPost = (path, body = '') => $.http.fetch(`${base}/${path}`, { method: 'POST', body }).catch(() => undefined)
             $.ui.invalidate('ui.render')
           } else if (line.startsWith('WATCH ')) {
             webWatchers = Number(line.slice(6)) || 0
@@ -3327,7 +2936,7 @@ const startWeb = ($: EngineInterface) => {
     }
     const was = webUrl
     webUrl = ''
-    webPush = undefined
+    webPost = undefined
     webWatchers = 0
     if (was) $.ui.invalidate('ui.render')
     else void Promise.resolve().then(() => $.ui.open({ id: PANE, title: 'Claude Crew' })).catch(() => undefined)
@@ -3343,12 +2952,6 @@ export const register: Register = on => {
         () => undefined,
       )
       return p
-    }
-    playIntro = async () => {
-      const until = Date.now() + BOOT_MS
-      await update($, intro, () => ({ until, played: true }))
-      // Ending it is a write, so the pane redraws as itself (unless a newer play started meanwhile).
-      $.clock.after(BOOT_MS + 80, () => void update($, intro, cur => (cur.until === until ? { ...cur, until: 0 } : cur)))
     }
     readCrew = () => read($, crew)
     after = (ms, fn) => {
@@ -3405,10 +3008,7 @@ export const register: Register = on => {
       void (async () => {
         if (diagDirty) {
           diagDirty = false
-          // Several panes (one per chat) share the store: keep the record of the one last used.
-          const kept = (await $.store.get('diag').catch(() => undefined)) as { lastInputAt?: number } | undefined
-          if (!kept || (kept.lastInputAt ?? 0) <= lastInputAt)
-            await $.store.set('diag', { version: VERSION, at: new Date().toISOString(), lastInputAt, cwd: sessionDir, paneSize, draws, hovers, frames: perf.frames, avgChainMs: Math.round(perf.chainMs / Math.max(1, perf.frames)), avgRenderMs: Math.round(perf.renderMs / Math.max(1, perf.frames)), events: diag }).catch(() => undefined)
+          await $.store.set('diag', { version: VERSION, at: new Date().toISOString(), cwd: sessionDir, events: diag }).catch(() => undefined)
         }
         const c = await read($, crew)
         const running = (c.tests ?? []).filter(t => t.status === 'running')
@@ -3458,9 +3058,6 @@ export const register: Register = on => {
     void readChatCost($)
     const savedTheme = await $.store.get('theme').catch(() => undefined)
     if (savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'auto') await write?.(d => (d.theme === savedTheme ? d : { ...d, theme: savedTheme }))
-    // Once per session: a reload or a worker restart starts the module again, not the session.
-    introOff = (await $.store.get('intro').catch(() => undefined)) === 'off'
-    if (!introOff && !(await read($, intro)).played) await playIntro()
     // This chat's website: started once, and sent the view while anyone has it open. The pane opens
     // by itself only when the website can't start.
     if (!webUrl) startWeb($)
@@ -3487,7 +3084,6 @@ export const register: Register = on => {
       )
       return { text: `Claude Crew for this chat: ${url} (opening it beside the chat; click it if it doesn't open)` }
     }
-    if ((await $.store.get('intro').catch(() => undefined)) !== 'off') await playIntro?.()
     await $.ui.open({ id: PANE, title: 'Claude Crew' })
     return { text: 'Claude Crew pane opened.' }
   })
@@ -4013,53 +3609,17 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A hit module failed to load or run here: the pictures' targets become plain buttons instead.
-  on('ui.fault', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
-    note(`fault ${e.element}: ${String((e as { reason?: unknown }).reason ?? '').slice(0, 120)}`)
-    return next(e)
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const renderStart = Date.now()
-    const { Box, Text, Button, Client, Svg, Select, Input } = $.ui.resolve(e) as unknown as Record<string, (props: unknown) => unknown>
+    const { Box, Text, Button, Input, Link } = $.ui.resolve(e) as unknown as Record<string, (props: unknown) => unknown>
     const cols = Math.max(40, e.props?.bodyColumns ?? e.viewport?.columns ?? 80)
-    const isTerminal = e.surface === 'terminal'
-    const playing = await read($, intro)
-    if (!isTerminal && Date.now() < playing.until)
-      return (
-        <Box flexDirection="column">
-          <Svg source={bootSvg(Math.round(Math.min(1180, Math.max(360, (cols - 2) * CELL_W))))} alt="Claude Crew starting up: the title rises while little Claudes hop across its letters." />
-          <Box flexDirection="row">
-            <Box flexGrow={1} />
-            <Button key="intro-skip" plain onPress={() => void update($, intro, cur => ({ ...cur, until: 0 }))}>
-              {'skip ▸'}
-            </Button>
-            <Text>{'    '}</Text>
-            <Button
-              key="intro-off"
-              plain
-              dimColor
-              onPress={() => {
-                introOff = true
-                void $.store.set('intro', 'off').catch(() => undefined)
-                void update($, intro, cur => ({ ...cur, until: 0 }))
-                void $.ui.toast('Intro off. Settings (⚙) plays it any time, and turns it back on.')
-              }}
-            >
-              {"don't show again"}
-            </Button>
-          </Box>
-        </Box>
-      )
 
     // The website runs: the pane on the desktop only says where, and how to open it beside the chat.
-    if (!isTerminal && webUrl) {
+    if (e.surface !== 'terminal' && webUrl) {
       const c = await read($, crew)
       const atWork = c.agents.filter(a => a.state === 'busy' || a.state === 'thinking').length
       const needs = c.agents.filter(a => a.needs).length
       const total = c.chatCost ?? c.spent?.cost ?? 0
       const status = [`${fmtK(c.agents.length)} Claude${c.agents.length === 1 ? '' : 's'}`, needs ? `${fmtK(needs)} need${needs === 1 ? 's' : ''} you` : '', atWork ? `${fmtK(atWork)} working` : 'nothing running', total > 0 ? fmtUsd(total) : ''].filter(Boolean).join(' · ')
-      const { Link } = $.ui.resolve(e) as unknown as Record<string, (props: unknown) => unknown>
       return paintPane(
         <Box flexDirection="column">
           <Box flexDirection="row">
@@ -4078,11 +3638,10 @@ export const register: Register = on => {
       )
     }
 
-    const m = await paneModel($, cols, isTerminal, e.props?.scroll?.bodyRows ?? 0, e.surface)
-    const { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, W, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, ROW, DET, askLines, BODY_ROWS, listed, top0, scroll, tabs } = m
-    // Drawn as the design draws it: pictures for what is only read (the header, each Claude's row, the
-    // last task's card), and real Buttons for everything pressed (Details, files, tabs, scrolling, the log's
-    // lines, settings), laid out beside and under the pictures, never over them.
+    // The terminal, or the desktop when the website could not start: the pane as lines of text, each
+    // thing pressed a Button.
+    const m = await paneModel($, cols, e.props?.scroll?.bodyRows ?? 0)
+    const { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, BODY_ROWS, listed, top0, scroll, tabs } = m
     const mode = c.theme ?? 'auto'
     const TONE: Record<string, string> = { text: '#E6EDF3', dim: '#8B949E', faint: '#8B949E', amber: '#E3B341', green: '#3FB950', red: '#F85149', brand: '#D97757', line: '#30363D', cx: '#8B949E' }
     const toneOf = (role: string) => TONE[role] ?? (/^h\d$/.test(role) ? PALETTE[Number(role.slice(1))] : '#E6EDF3')
@@ -4107,92 +3666,23 @@ export const register: Register = on => {
           </Button>
         )
       }
+      // A mark before words (a Claude's dot, a kind's glyph) in its own colour, the words in theirs.
+      if (lead && g.t && !cells)
+        return [
+          <Text key={`${k}m`} mono size="footnote" color={tone}>
+            {lead}
+          </Text>,
+          <Text key={k} mono size="footnote" color={toneOf(g.role ?? 'text')} bold={g.b} italic={g.i} wrap="truncate">
+            {g.t}
+          </Text>,
+        ]
       return (
         <Text key={k} mono size="footnote" color={tone} bold={g.b} italic={g.i} wrap="truncate">
           {body}
         </Text>
       )
     }
-    // On the desktop a line of the viewer is pictures and buttons: every run of words, icons and dots
-    // that is only read is one picture, drawn to the pixel; each thing pressed is the app's Button in a
-    // room of whole columns beside it, never on it. Widths are whole columns, so they line up.
-    const LINE_PX = 12
-    const LINE_COLS = vwCols - 1
-    const leadCols = (g: Seg) => (g.dot ? 2 : 0) + (g.icon ? 2 : 0) + (g.sprite ? 3 : 0) + (g.bar !== undefined ? 10 : 0)
-    const btnText = (g: Seg) => (g.parts ? g.parts.map(p => p[0]).join('') : `${g.dot ? '● ' : ''}${g.t ?? ''}`)
-    const segCols = (g: Seg) => (g.run ? textW(btnText(g)) + 1 : g.w ? Math.floor(g.w / CELL_W) : leadCols(g) + (g.t ? Math.ceil(pxW(g.t, g.size ?? LINE_PX) / CELL_W) : 0))
-    const drawSeg = (P: Pic, g: Seg, x: number, room: number) => {
-      const end = x + room
-      if (g.dot) {
-        P.dot(x + 4.5, ROW / 2, 3.5, g.dot)
-        x += 2 * CELL_W
-      }
-      if (g.icon) {
-        P.icon(x, (ROW - 13) / 2, 13, g.icon[0], g.icon[1], g.icon[0] === 'think' ? 2.4 : 1.8)
-        x += 2 * CELL_W
-      }
-      if (g.sprite) {
-        P.sprite(x, (ROW - 12) / 2, g.sprite)
-        x += 3 * CELL_W
-      }
-      if (g.bar !== undefined) {
-        P.rect(x, ROW / 2 - 4, 72, 8, 4, 'line')
-        if (g.bar > 0) P.rect(x, ROW / 2 - 4, Math.max(8, 72 * Math.min(1, g.bar)), 8, 4, g.role === 'red' || g.role === 'amber' ? g.role : 'dim')
-        x += 10 * CELL_W
-      }
-      if (g.t) {
-        const size = g.size ?? LINE_PX
-        P.line(x, 0, ROW, fitPx(g.t, Math.max(0, end - x), size), size, g.role ?? 'text', { b: g.b, i: g.i, u: g.u })
-      }
-    }
-    const linePic = (l: VLine, k: string) => {
-      const indent = l.indent ? Math.round(l.indent / CELL_W) : 0
-      const left = l.segs.filter(g => g.t || g.parts || g.dot || g.icon || g.sprite || g.bar !== undefined)
-      const right = (l.right ?? []).filter(g => g.t || g.parts)
-      const fixed = indent + [...left, ...right].reduce((n, g) => n + (g.flex ? 0 : segCols(g)) + 1, 0)
-      const room = Math.max(0, LINE_COLS - fixed)
-      const flexAt = left.findIndex(g => g.flex)
-      // Each item: a seg in its columns (and a column after it), or empty room.
-      const items: { g?: Seg; cols: number }[] = indent ? [{ cols: indent }] : []
-      left.forEach((g, i) => items.push({ g, cols: (i === flexAt ? room : segCols(g)) + 1 }))
-      if (flexAt < 0 && room) items.push({ cols: room })
-      right.forEach(g => items.push({ cols: 1 }, { g, cols: segCols(g) }))
-      // Runs of read-only items become one picture; a button stands alone.
-      const out: JSX.Element[] = []
-      let run: { g?: Seg; cols: number }[] = []
-      const flush = () => {
-        if (!run.length) return
-        const cols = run.reduce((n, it) => n + it.cols, 0)
-        if (run.some(it => it.g)) {
-          const P = picture()
-          let x = 0
-          for (const it of run) {
-            if (it.g) drawSeg(P, it.g, x, it.cols * CELL_W - (it.g.flex ? CELL_W : 0))
-            x += it.cols * CELL_W
-          }
-          const alt = run.map(it => (it.g ? [it.g.t].filter(Boolean).join('') : '')).filter(Boolean).join(' ')
-          out.push(<Svg key={`${k}p${out.length}`} source={P.done(Math.round(cols * CELL_W), ROW, mode)} alt={alt || ' '} width={Math.round(cols * CELL_W)} height={ROW} />)
-        } else out.push(<Box key={`${k}e${out.length}`} width={cols} flexShrink={0} />)
-        run = []
-      }
-      items.forEach((it, i) => {
-        if (it.g?.run) {
-          flush()
-          out.push(
-            <Box key={`${k}b${i}`} width={it.cols} flexShrink={0}>
-              {segEl(it.g, `${k}g${i}`)}
-            </Box>,
-          )
-        } else run.push(it)
-      })
-      flush()
-      return (
-        <Box key={k} flexDirection="row" height={1} overflow="hidden">
-          {out}
-        </Box>
-      )
-    }
-    const lineEl = (l: VLine, k: string) => (!isTerminal ? linePic(l, k) : (
+    const lineEl = (l: VLine, k: string) => (
       <Box key={k} flexDirection="row" height={1} overflow="hidden">
         {l.indent ? <Text mono size="footnote">{' '.repeat(Math.round(l.indent / CELL_W))}</Text> : null}
         {l.segs.map((g, i) => (
@@ -4209,79 +3699,25 @@ export const register: Register = on => {
           </Box>
         ))}
       </Box>
-    ))
+    )
 
     // The header: the brand, the counts by state, and the one cost.
-    const head = picture()
-    {
-      let x = PADX
-      x += head.line(x, 0, 24, wide ? '✻ Claude Crew' : '✻', 12.5, 'brand', { b: true }) + 12
-      for (const [t, role, b] of counts) x += head.line(x, 0, 24, t, 12.5, role, { b }) + 12
-      let rx = W - PADX
-      if (budgetText) rx -= head.line(rx, 0, 24, budgetText, 12.5, 'dim', { end: true }) + 8
-      if (totalCost > 0 || c.budget > 0) head.line(rx, 0, 24, fmtUsd(totalCost), 12.5, costRole, { end: true })
-    }
     const headLine: VLine = { segs: [{ t: '✻ Claude Crew', b: true, role: 'brand' }, ...counts.map(([t, role, b]) => ({ t, role, b }))], right: totalCost > 0 || c.budget > 0 ? [{ t: `${fmtUsd(totalCost)}${budgetText ? ` ${budgetText}` : ''}`, role: costRole }] : [] }
 
-    // The Claudes: each row a picture, its Details a Button beside it on the line it belongs to.
-    const detailsBtn = (r: PaneRow) => (
-      <Button key={`details:${r.id}`} plain onPress={press(openDetails(r.id))}>
-        <Text mono size="footnote" color={r.focused ? '#E6EDF3' : '#8B949E'} underline>
-          {r.focused ? 'Hide' : 'Details'}
-        </Text>
-      </Button>
-    )
-    // The card's colours in the dark theme; the theme pass turns them light. With the theme left to the app
-    // (auto) a Box can't follow it for a fill (no theme colour is a panel's), so the card is an outline then.
-    const CARD = { fill: '#121821', line: '#30363D', edge: '#8B949E', amber: '#E3B341', amberFill: '#221E14' }
-    const rowEl = (r: PaneRow) => {
-      const P = picture()
-      const lines = askLines(r)
-      const alt = `${r.name}: ${r.status}${r.object ? ` · ${r.object}` : ''}${r.state === 'you' ? ` · ${r.ask}` : r.state === 'done' ? '' : ` · ${r.progress}`}`
-      if (r.state === 'done') {
-        const tall = rowH(r, 0)
-        drawCrew(P, [r], 0, W, wide, openDetails)
-        return <Svg key={`row-${r.id}`} source={P.done(W, tall, mode)} alt={alt} width={W} height={tall} />
-      }
-      // In from the pane's edge by its depth; the picture, then Details, inside the card's border.
-      const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * (wide ? 3 : 2)
-      const picW = Math.max(160, Math.round((vwCols - 2 - indent - 2 - DET) * CELL_W))
-      const tall = rowH(r, lines) - 4
-      drawCrew(P, [r], -2, picW, wide, openDetails, true)
-      return (
-        <Box key={`row-${r.id}`} flexDirection="row" marginLeft={1 + indent} marginRight={1} borderStyle="round" borderColor={r.state === 'you' ? CARD.amber : r.focused ? CARD.edge : CARD.line} {...(mode === 'auto' ? {} : { backgroundColor: r.state === 'you' ? CARD.amberFill : CARD.fill })}>
-          <Svg source={P.done(picW, tall, mode)} alt={alt} width={picW} height={tall} />
-          <Box flexDirection="column" justifyContent="flex-end" alignItems="flex-end" width={DET} flexShrink={0}>
-            {detailsBtn(r)}
-          </Box>
-        </Box>
-      )
-    }
-    const recapEls = recap
-      ? (() => {
-          const P = picture()
-          const tall = drawRecap(P, recap, 0, W, wide) - 6
-          return [
-            <Svg key="recap" source={P.done(W, tall, mode)} alt={[recap.title, recap.goal, ...recap.facts.map(f => `${f[0]}: ${f[1]}`)].join('. ')} width={W} height={tall} />,
-            <Box key="recap-act" flexDirection="row" paddingLeft={4}>
-              {segEl(recap.copy ? { t: 'Copy as Markdown', role: 'dim', u: true, run: recap.copy } : { t: '▶ Try a pretend session', role: 'dim', u: true, run: recap.demo }, 'recap-btn')}
-            </Box>,
-          ]
-        })()
-      : []
+    // The Claudes: a row's lines in a Box of its own, its Details a Button on its last line.
     const SR: Record<GlanceRow['state'], string> = { work: 'green', wait: 'dim', idle: 'dim', you: 'amber', done: 'dim' }
-    const crewLines: VLine[] = rowsP.flatMap(r => {
+    const rowLines = (r: PaneRow): VLine[] => {
       const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * 2 * CELL_W
       const details: Seg = { t: r.focused ? 'Hide' : 'Details', role: 'dim', run: openDetails(r.id) }
       const one: VLine = { indent, segs: [{ dot: hueRole(r.hue), t: r.name, b: r.state !== 'done', role: r.state === 'done' ? 'dim' : 'text' }, { icon: [r.kind, SR[r.state]], t: r.status, b: true, role: SR[r.state] }, { t: r.object, flex: true, role: r.state === 'done' ? 'dim' : 'text' }], right: [{ t: r.time, role: 'dim' }] }
       if (r.state === 'done') return [one]
       if (r.state === 'you') return [one, ...wrapRows(r.ask, Math.max(16, cols - 6), 6).map(t => ({ indent: indent + 2 * CELL_W, segs: [{ t }] })), { indent: indent + 2 * CELL_W, segs: [{ t: r.where, role: 'dim', flex: true }], right: [details] }]
       const pips = r.total ? `${'●'.repeat(Math.min(5, r.done))}${'○'.repeat(Math.max(0, Math.min(5, r.total) - r.done))}` : ''
-      return [one, { indent: indent + 2 * CELL_W, segs: [{ t: [pips, r.progress].filter(Boolean).join(' '), role: r.stuck ? 'amber' : 'dim', flex: true }], right: [...(wide && r.model ? [{ t: r.model, role: 'faint' }] : []), details] }]
-    })
+      return [one, { indent: indent + 2 * CELL_W, segs: [{ t: pips, role: 'dim' }, { t: r.progress, role: r.stuck ? 'amber' : 'dim', flex: true }], right: [...(wide && r.model ? [{ t: r.model, role: 'faint' }] : []), details] }]
+    }
     const recapLines: VLine[] = recap
       ? recap.copy
-        ? [{ segs: [{ t: `✓ ${recap.title}`, b: true, role: 'green' }, { t: recap.goal, role: 'dim', flex: true }], right: [{ t: recap.ago, role: 'dim' }] }, ...recap.facts.map(([k, v, role]) => ({ indent: 2 * CELL_W, segs: [{ t: k, w: 9 * CELL_W, role: 'dim' }, { t: v, role, flex: true }] })), { indent: 2 * CELL_W, segs: [{ t: 'Copy as Markdown', role: 'dim', u: true, run: recap.copy }] }]
+        ? [{ segs: [{ icon: ['done', 'green'], t: recap.title, b: true, role: 'green' }, { t: recap.goal, role: 'dim', flex: true }], right: [{ t: recap.ago, role: 'dim' }] }, ...recap.facts.map(([k, v, role]) => ({ indent: 2 * CELL_W, segs: [{ t: k, w: 9 * CELL_W, role: 'dim' }, { t: v, role, flex: true }] })), { indent: 2 * CELL_W, segs: [{ t: 'Copy as Markdown', role: 'dim', u: true, run: recap.copy }] }]
         : [{ segs: [{ t: recap.title, role: 'dim', flex: true }] }, { segs: [{ t: '▶ Try a pretend session', role: 'dim', u: true, run: recap.demo }] }]
       : []
 
@@ -4325,12 +3761,16 @@ export const register: Register = on => {
       </Box>
     ) : null
     const view = listed.slice(top0, top0 + BODY_ROWS)
-    draws[e.surface] = (draws[e.surface] ?? 0) + 1
     return paintPane(
       <Box flexDirection="column">
-        {isTerminal ? lineEl(headLine, 'head') : <Svg key="head" source={head.done(W, 24, mode)} alt={`Claude Crew. ${counts.map(k => k[0]).join(', ')}${totalCost > 0 ? `. ${fmtUsd(totalCost)} so far` : ''}.`} width={W} height={24} />}
-        <Box key="crew" flexDirection="column" marginTop={isTerminal ? 1 : 0}>
-          {isTerminal ? [...crewLines, ...recapLines].map((l, i) => lineEl(l, `crew${i}`)) : [...rowsP.map(rowEl), ...recapEls]}
+        {lineEl(headLine, 'head')}
+        <Box key="crew" flexDirection="column" marginTop={1}>
+          {rowsP.map(r => (
+            <Box key={`row-${r.id}`} flexDirection="column">
+              {rowLines(r).map((l, i) => lineEl(l, `${r.id}:${i}`))}
+            </Box>
+          ))}
+          {recapLines.map((l, i) => lineEl(l, `recap${i}`))}
         </Box>
         <Box key="touched" flexDirection="column" marginTop={1}>
           {touchLines.map((l, i) => lineEl(l, `touch${i}`))}
@@ -4345,6 +3785,5 @@ export const register: Register = on => {
       </Box>,
       mode,
     )
-
   })
 }

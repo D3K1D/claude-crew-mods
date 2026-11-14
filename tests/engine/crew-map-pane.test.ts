@@ -1,6 +1,5 @@
 // The pane drawn by the engine itself (its own elements and rules), on the desktop and the terminal,
-// empty and in a busy session: it draws every time, with no element the engine would refuse; and a
-// click on a picture goes through the real hit module to what is drawn under it.
+// empty and in a busy session: it draws every time, as text, with no element the engine would refuse.
 import { test, expect, mock } from 'claude-code/testing'
 
 const PANE = (bodyColumns: number) =>
@@ -24,13 +23,6 @@ const textOf = (x: unknown): string => {
   if (!x || typeof x !== 'object') return ''
   return ((x as { children?: unknown[] }).children ?? []).map(textOf).join('')
 }
-const pictures = (tree: unknown) => walk(tree).filter(e => e.type === 'Svg').map(e => ({ source: String(e.props?.source ?? ''), height: Number(e.props?.height ?? 0), width: Number(e.props?.width ?? 0) }))
-const wordsOf = (src: string) => [...src.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1].replace(/&amp;/g, '&'))
-/** Where a word is drawn in a picture: its x (its right end for text set by its end) and baseline. */
-const spotOf = (src: string, word: string) => {
-  const m = [...src.matchAll(/<text x="([\d.]+)" y="([\d.]+)"[^>]*>([^<]*)<\/text>/g)].find(x => x[3] === word)
-  return m ? { x: Number(m[1]), y: Number(m[2]), end: /text-anchor="end"/.test(m[0]) } : undefined
-}
 
 const drawAll = async ($: any, label: string) => {
   for (const surface of ['desktop', 'terminal'] as const) {
@@ -38,16 +30,9 @@ const drawAll = async ($: any, label: string) => {
       const ui = await $.ui.mount({ plugin: 'crew-map', surface, ...PANE(cols) })
       const tree = await ui.drawn()
       const all = walk(tree)
-      const pics = pictures(tree)
-      const header = surface === 'desktop' ? pics.some(p => p.source.includes('class="f-brand"')) : /✻ Claude Crew/.test(textOf(tree))
-      expect(header, `${label} ${surface} ${cols}: header`).toBe(true)
+      expect(/✻ Claude Crew/.test(textOf(tree)), `${label} ${surface} ${cols}: header`).toBe(true)
       expect(all.filter(e => e.props && 'children' in e.props).length, `${label} ${surface} ${cols}: no children prop`).toBe(0)
-      if (surface === 'desktop') {
-        expect(pics.length >= 2, `${label} desktop ${cols}: the header and a row are pictures`).toBe(true)
-        expect(all.filter(e => e.type === 'Client').length, `${label} desktop ${cols}: nothing laid over a picture`).toBe(0)
-        expect(all.some(e => e.type === 'Button'), `${label} desktop ${cols}: the controls are Buttons`).toBe(true)
-        expect(pics.every(p => p.source.length < 131072), `${label} desktop ${cols}: within the engine's size`).toBe(true)
-      } else expect(pics.length, `${label} terminal ${cols}: no pictures`).toBe(0)
+      expect(all.filter(e => e.type === 'Svg').length, `${label} ${surface} ${cols}: no pictures`).toBe(0)
       await ui.unmount()
     }
   }
@@ -55,7 +40,6 @@ const drawAll = async ($: any, label: string) => {
 
 test('the pane draws empty, and in a busy session', async ($, on) => {
   mock.clock(on, { now: Date.parse('2031-01-01T10:00:00Z') })
-  mock.store(on, { intro: 'off' })
   mock.env(on, { OS: 'Windows_NT' })
   on('tool.call', async () => ({ result: { text: 'ok' } }) as never)
   on('turn.start', async () => ({ turnId: 'T' }) as never)
@@ -80,18 +64,19 @@ test('the pane draws empty, and in a busy session', async ($, on) => {
   for await (const _ of steps as AsyncIterable<unknown>);
   await drawAll($, 'busy')
 
-  // What the busy desktop pane says: needing you, with its whole request; Touched with the edit.
+  // What the busy text pane says: needing you, with its whole request; Touched with the edit.
   const cols = 87
-  const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'desktop', ...PANE(cols) })
-  const said = pictures(await ui.drawn()).flatMap(p => wordsOf(p.source))
+  const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'terminal', ...PANE(cols) })
+  const said = textOf(await ui.drawn())
   expect(said.includes('Needs you'), 'needs you').toBe(true)
-  expect(said.some(w => w.startsWith('Allow running Clear the old build folder?')), 'its whole request').toBe(true)
+  expect(said.includes('Allow running Clear the old build folder?'), 'its whole request').toBe(true)
   const buttonText = async () => (await ui.findAll({ type: 'Button' })).map(b => textOf(b) || String((b as { text?: string }).text ?? ''))
   const labels = await buttonText()
   expect(labels.some(t => /a\.ts\s*\+2/.test(t)), `Touched has the edited file as a Button, with its lines: ${labels.join(' | ').slice(0, 300)}`).toBe(true)
 
   // Pressed as the person presses it: Details shows that Claude in the viewer, in its own tab.
-  await ui.press({ key: 'details:main' })
+  const details = (await ui.findAll({ type: 'Button' })).find(b => (textOf(b) || String((b as { text?: string }).text ?? '')) === 'Details')
+  await ui.press({ key: details!.key! })
   expect((await buttonText()).includes('Claude ✕'), "Details shows that Claude's tab").toBe(true)
   expect((await buttonText()).includes('Hide'), '...and its row says Hide').toBe(true)
 

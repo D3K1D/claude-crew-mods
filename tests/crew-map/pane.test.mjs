@@ -3,14 +3,14 @@
 // line per folder, files as buttons) and the viewer (Activity, Files, Search, Settings, or one Claude's
 // Details). What is only read is drawn as pictures (the header, each Claude's row, the last task's card);
 // everything pressed is a real Button, beside or under them, never over them.
-import { find, text, words, glyphs, has, pics, makePress, targets, viewHeight } from './kit.mjs'
+import { find, text, words, glyphs, has, makePress, targets, viewHeight, rowNames, indentOf } from './kit.mjs'
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Select: el('Select'), Input: el('Input') }
 const { register } = await import('../.build/crew-map.mjs')
 let now = Date.parse('2031-01-01T21:00:00')
 Date.now = () => now
@@ -25,7 +25,7 @@ const $ = {
   ui: { open: async () => {}, resolve: () => elements, toast: async t => void toasts.push(t), copy: async a => (copied.push(a), { isCopied: true }) },
   clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
   fs: { read: async () => '', exists: async () => false, write: async () => {} },
-  store: { get: async k => (k === 'intro' ? 'off' : stored[k]), set: async (k, v) => void (stored[k] = v) },
+  store: { get: async k => stored[k], set: async (k, v) => void (stored[k] = v) },
   session: { cwd: async () => P, usage: async () => ({ cost: { usd: 3.18 } }) },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: codex }) },
@@ -59,8 +59,8 @@ await fire('session.start', {}, async () => ({}))
 
 // ── Before any work: one Claude, idle; the crew's room says what will show there, with the demo.
 let t = await render()
-check('desktop: the header and the row are pictures; no Client, nothing laid over a picture', pics(t).length >= 2 && find(t, x => x.type === 'Client').length === 0 && find(t, x => x.type === 'Box' && (x.props.marginTop ?? 0) < 0).length === 0)
-check("each Claude's card is a Box with a border (its fill only with a theme picked: auto can't fill a Box), holding its picture and its Details Button", find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-')).every(b => b.props.borderStyle === 'round' && !b.props.backgroundColor && find(b, y => y.type === 'Svg').length === 1 && find(b, y => y.type === 'Button').length === 1))
+check('without the website the desktop draws the text pane: no pictures', find(t, x => x.type === 'Svg' || x.type === 'Client').length === 0)
+check("each Claude's row is a Box of its own, holding its Details Button", find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-')).every(b => find(b, y => y.type === 'Button').length === 1))
 {
   // The viewer runs to the bottom of the pane: what the pane has, less what is above it; never under 8.
   const at = rows => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 87, scroll: { bodyRows: rows } }, viewport: { columns: 87 } }, async () => ({})).then(viewHeight)
@@ -110,13 +110,11 @@ await tick()
 t = await render()
 const top = glyphs(t, 'top')
 const at = w => top.find(g => g.t === w)
-check('header: needs you (bold amber), working (green), and the cost', at('⏸ 1 needs you')?.role === 'amber' && at('⏸ 1 needs you')?.bold && top.some(g => /^● \d working$/.test(g.t) && g.role === 'green') && at('$3.18')?.end, top.slice(0, 6).map(g => g.t).join('|'))
+check('header: needs you (bold amber), working (green), and the cost', at('⏸ 1 needs you')?.role === 'amber' && at('⏸ 1 needs you')?.bold && top.some(g => /^● \d working$/.test(g.t) && g.role === 'green') && has(t, '$3.18', 'top'), top.slice(0, 6).map(g => g.t).join('|'))
 const names = ['Architect', 'Claude', 'Scout', 'Scout 2', 'Helper', 'Codex']
-const ys = names.map(n => at(n)?.y ?? -1)
-check('rows: needing you pinned on top, then in tree order (each helper under who started it), Codex under who ran it', ys.every((y, i) => y > 0 && (i === 0 || y > ys[i - 1])), ys.join(','))
-// A card's depth is how far its Box is in from the pane's edge.
-const cardOf = n => find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-') && find(x, y => y.type === 'Svg' && String(y.props.alt).startsWith(n + ':')).length)[0]
-const xs = names.map(n => cardOf(n)?.props.marginLeft ?? -1)
+check('rows: needing you pinned on top, then in tree order (each helper under who started it), Codex under who ran it', rowNames(t).join(',') === names.join(','), rowNames(t).join(','))
+// A row's depth is how far its first line is in from the pane's edge.
+const xs = names.map(n => indentOf(t, n))
 check('...indented by depth: the one needing you flush left, helpers in, theirs further', xs[0] < xs[2] && xs[1] < xs[2] && xs[2] < xs[3] && xs[4] === xs[2] && xs[5] > xs[4], xs.join(','))
 check('needing you: amber "Needs you" and the whole request', at('Needs you')?.role === 'amber' && has(t, 'Allow running Clear the old build folder? Answer in the chat.', 'top'))
 check('a helper writing code: the state in green, bold, and on which file', at('Writing code')?.role === 'green' && at('Writing code')?.bold && has(t, 'fixture.js', 'top'))
@@ -126,12 +124,10 @@ check('a helper with no step list counts its actions', top.some(g => /^\d+ actio
 check('Codex has a row: its model, what it does', has(t, 'gpt-5.6-sol', 'top') && has(t, 'adapter.ts', 'top'))
 check('every row but done ones has Details, a Button beside it', find(t, x => x.type === 'Button' && text(x) === 'Details').length === names.length)
 check('Touched: the summary, a line per folder, files with lines added', has(t, 'src/adapters/', 'top') && has(t, 'tests/', 'top') && has(t, 'types.ts', 'top') && has(t, '+13', 'top') && has(t, 'Open folder', 'top'))
-const topSrc = pics(t)[0].source
 check('the file a Claude is editing carries its dot, in its colour', find(t, x => x.type === 'Button' && /^● fixture\.js/.test(text(x))).length === 1)
 check('Activity: the log, its lines timed, the one running counting with ●', has(t, 'Editing fixture.js', 'view') && words(t, 'view').some(w => /^● \d/.test(w)))
 check('the log names who did what', has(t, 'Scout', 'view') && has(t, 'Helper', 'view'))
 check('colour means state only: no colour of a state on a name', ['Claude', 'Scout', 'Helper'].every(n => at(n)?.role === 'text'))
-check('every picture stays within the size the engine takes', pics(t).every(p => p.source.length < 131072))
 check('no element carries children in its props as well as its own', find(t, x => x.props && 'children' in x.props && x.children).length === 0)
 
 // ── Details: the Button beside a row shows that Claude in the viewer.
@@ -153,20 +149,18 @@ await press('index.js')
 check('a file opens in the editor', ran.some(a => a.join(' ').includes('index.js')), JSON.stringify(ran))
 await press('Settings')
 t = await render()
-check('Settings: theme, budget, editor, outside files, intro, demo, and the version', ['Theme', 'Budget', 'Open files in', 'Outside files', 'Intro on open', 'Demo'].every(w => has(t, w, 'view')) && words(t, 'view').some(w => /^Claude Crew \d/.test(w)))
+check('Settings: theme, budget, editor, outside files, demo, and the version', ['Theme', 'Budget', 'Open files in', 'Outside files', 'Demo'].every(w => has(t, w, 'view')) && words(t, 'view').some(w => /^Claude Crew \d/.test(w)))
 await press('$10')
 t = await render()
 check('a budget: the header says the cost of it', has(t, 'of $10', 'top') && stored.budget === 10 && toasts.some(x => /Budget set to \$10/.test(x)))
 await press('☀ light')
 t = await render()
-check('light: the pictures take the light colours', pics(t).every(p => /\.f-text\{fill:#1F2328\}/.test(p.source) && !/prefers-color-scheme/.test(p.source)) && stored.theme === 'light')
+check('light: the text takes the light colours', find(t, x => x.type === 'Text' && x.props.color === '#1F2328').length > 0 && !find(t, x => x.type === 'Text' && x.props.color === '#E6EDF3').length && stored.theme === 'light')
 await press('◐ auto')
 t = await render()
-check('auto: dark colours, with light ones for a light app', pics(t).every(p => /\.f-text\{fill:#E6EDF3\}.*@media \(prefers-color-scheme: light\)\{.*\.f-text\{fill:#1F2328\}/.test(p.source)))
+check("auto: the app's own theme colours", find(t, x => x.type === 'Text' && x.props.color === 'text').length > 0 && !find(t, x => x.type === 'Text' && x.props.color === '#E6EDF3').length)
 await press('Cursor')
 check('the editor files open in', stored.editor === 'Cursor'.toLowerCase())
-await press('off')
-check('the intro can be turned off', stored.intro === 'off')
 await press('Search')
 t = await render()
 const field = find(t, x => x.type === 'Input' && x.props.key === 'search-input')[0]
@@ -180,16 +174,11 @@ await press('Activity')
 // ── Narrow (57 columns): the same bands, shorter words; nothing runs past the edge.
 t = await render(57)
 check('narrow: counts without words, no model on the rows', has(t, '⏸ 1', 'top') && !has(t, 'Sonnet 5.5', 'top'))
-const W57 = pics(t)[0].width
-check('narrow: nothing is drawn past the right edge', glyphs(t).filter(g => g.x !== undefined).every(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) <= W57 + 0.5), glyphs(t).filter(g => g.x !== undefined && (g.end ? g.x : g.x + g.t.length * g.size * 0.6) > W57 + 0.5).map(g => g.t).join('|'))
-t = await render(87)
-const W87 = pics(t)[0].width
-check('wide: nothing is drawn past the right edge either', glyphs(t).filter(g => g.x !== undefined).every(g => (g.end ? g.x : g.x + g.t.length * g.size * 0.6) <= W87 + 0.5), glyphs(t).filter(g => g.x !== undefined && (g.end ? g.x : g.x + g.t.length * g.size * 0.6) > W87 + 0.5).map(g => g.t).join('|'))
 
 
 // ── The terminal: the same bands as text, each target a button.
 t = await render(87, 'terminal')
-check('terminal: no pictures', pics(t).length === 0)
+check('terminal: no pictures', find(t, x => x.type === 'Svg').length === 0)
 check('terminal: the header, the rows, Touched, the tabs', /✻ Claude Crew/.test(text(t)) && /Writing code/.test(text(t)) && /Touched/.test(text(t)) && find(t, x => x.type === 'Button' && text(x) === 'Activity').length === 1)
 check('terminal: Details is a button', find(t, x => x.type === 'Button' && text(x) === 'Details').length >= 5)
 

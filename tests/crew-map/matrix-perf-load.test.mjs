@@ -27,7 +27,7 @@ const setup = async ({ start = true } = {}) => {
   globalThis.__store = new CountingMap()
   const store = globalThis.__store
   const el = name => props => ({ type: name, props })
-  const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
+  const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Select: el('Select'), Input: el('Input') }
   const { register } = await import(`${BUILD}?load=${++inst}`)
   const hooks = {}
   const T = { now: Date.parse('2026-10-14T10:00:00') }
@@ -43,7 +43,7 @@ const setup = async ({ start = true } = {}) => {
     },
     fs: { read: async () => '', exists: async () => false, write: async () => {} },
     model: { complete: async () => ({ isAnswered: false }) },
-    store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+    store: { get: async () => undefined, set: async () => {} },
     session: { cwd: async () => P },
     env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
     state: { get: async () => ({}) },
@@ -93,8 +93,6 @@ const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${
     const st = stats(tree)
     check(`${view}: a redraw at 150 columns takes under 15 ms`, t / 10 < 15, `${(t / 10).toFixed(1)} ms`)
     check(`${view}: the pane stays inside the engine's bounds (nodes, depth, size)`, st.nodes < 20_000 && st.depth < 32 && st.json < 400_000, JSON.stringify(st))
-    const svg = Math.max(0, ...find(tree, x => x.type === 'Svg').map(x => x.props.source.length))
-    check(`${view}: every picture fits the Svg limit`, svg < 131_072, `${svg} chars`)
   }
 }
 
@@ -202,7 +200,6 @@ function PARALLEL_TEST() {
   return `import { test, expect, mock } from 'claude-code/testing'
 test('parallel', { timeoutMs: 60000 }, async ($, on) => {
   const clk = mock.clock(on, { now: Date.parse('2031-01-01T10:00:00Z') })
-  mock.store(on, { intro: 'off' })
   mock.env(on, { OS: 'Windows_NT' })
   let sets = 0
   on('state.set' as never, (async (_$: any, e: any, next: any) => { if (e.key === 'crew') sets++; return next(e) }) as never)

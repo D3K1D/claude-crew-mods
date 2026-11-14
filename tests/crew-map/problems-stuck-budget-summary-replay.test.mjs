@@ -1,21 +1,18 @@
 // Problems on the map, stuck detection, budget, task summary, replay.
-import { writeFileSync, mkdirSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-const OUT = fileURLToPath(new URL('../.build/out', import.meta.url))
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Select: el('Select'), Input: el('Input') }
 const { register } = await import('../.build/crew-map.mjs')
 const hooks = {}
 const timers = []
 const toasts = []
 const ran = []
 const copied = []
-const stored = { intro: 'off' }
+const stored = {}
 let now = Date.parse('2026-10-12T10:00:00')
 Date.now = () => now
 const $ = {
@@ -44,7 +41,6 @@ const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : 
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of x.props?.children ?? []) find(c, pred, out); return out }
 const render = () => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 140 }, viewport: { columns: 140 } })
 const btn = (tree, key) => find(tree, x => x.type === 'Button' && x.props.key === key)[0]
-const svgOf = t => find(t, x => x.type === 'Svg')[0].props.source
 const { words, glyphs, makePress } = await import('./kit.mjs')
 const press = makePress(elements, render, () => new Promise(r => setTimeout(r, 20)))
 const said = t => words(t).join(' | ')
@@ -133,7 +129,7 @@ check('no repeat toast for the same mark', toasts.filter(t => t.startsWith('💸
 await hooks['turn.complete']($, { reason: 'answer', answer: 'x', durationMs: 1, isAborted: false, turnId: 'T4', usage: { output_tokens: 3000, model: 'claude-opus-5-5' } }, async () => ({ text: 'x' }))
 check('over budget toasts', toasts.some(t => t.startsWith('💸 Over budget')), toasts.join(' | '))
 tree = await render()
-check('the header shows the cost of the budget, in red once over', words(tree, 'top').includes('of $0.05') && glyphs(tree, 'top').find(g => /^\$\d/.test(g.t))?.role === 'red', said(tree).slice(0, 120))
+check('the header shows the cost of the budget, in red once over', glyphs(tree, 'top').find(g => /^\$\d.* of \$0\.05$/.test(g.t))?.role === 'red', said(tree).slice(0, 120))
 
 // ── No replay: the button was taken out ──
 check('timeline recorded steps (for the task summary)', crew().timeline.length >= 15, String(crew().timeline.length))
@@ -144,8 +140,6 @@ await press('Settings')
 await press('▶ try a pretend session')
 await advance(2600 * 2 + 300)
 check('demo raises problems', crew().problems.some(p => p.path.startsWith('demo/')))
-mkdirSync(OUT, { recursive: true })
-writeFileSync(`${OUT}/problems.svg`, svgOf(await render()))
 await advance(2600 * 6)
 check('demo ends with a summary card', crew().summary?.goal.startsWith('Demo:'))
 console.log(`\n${fails} failing check(s)`)

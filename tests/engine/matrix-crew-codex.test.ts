@@ -51,7 +51,6 @@ const run = (id: string, status: 'running' | 'done' | 'failed' | 'stopped', extr
 for (const surface of ['desktop', 'terminal'] as const)
   test(`${surface}: crew map draws codex-bridge runs`, { timeoutMs: 30_000 }, async ($, on) => {
     mock.clock(on, { now: NOW })
-    mock.store(on, { intro: 'off' })
     mock.env(on, { OS: 'Windows_NT', TEMP: 'C:/T' })
     const runs = [run('r1', 'running'), run('r2', 'running', { caller: 'agent-s0', thread: '' }), run('r3', 'done'), run('r4', 'failed', { thread: '' }), run('r5', 'stopped')]
     on('state.get', { plugin: 'codex-bridge' } as never, async (_$: unknown, e: any) => ({ value: { value: e.key === 'runs' ? runs : undefined, version: 1 } }) as never)

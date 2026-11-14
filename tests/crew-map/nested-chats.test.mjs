@@ -1,14 +1,14 @@
 // The chats started from this one (the desktop app's start_session), and theirs, as rows in the crew
 // band, nested under this chat: read from the app's own session list, only where that read runs without
 // asking anyone. The pane's own read never shows in the log; Claude's own call still does.
-import { find, text, words, makePress } from './kit.mjs'
+import { text, words, makePress, rowNames } from './kit.mjs'
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
 }
 globalThis.__store = new Map()
 const el = name => props => ({ type: name, props })
-const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Client: el('Client'), Svg: el('Svg'), Select: el('Select'), Input: el('Input') }
+const elements = { Box: el('Box'), Text: el('Text'), Button: el('Button'), Select: el('Select'), Input: el('Input') }
 const { register } = await import('../.build/crew-map.mjs')
 let now = Date.parse('2031-01-01T21:00:00Z')
 Date.now = () => now
@@ -30,7 +30,7 @@ const $ = {
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {} },
   clock: { every: (ms, fn) => (every.push({ ms, fn }), { cancel() { every = every.filter(x => x.fn !== fn) } }), after: () => ({ cancel() {} }) },
   fs: { read: async () => '', exists: async () => false, write: async () => {} },
-  store: { get: async k => (k === 'intro' ? 'off' : undefined), set: async () => {} },
+  store: { get: async () => undefined, set: async () => {} },
   session: { cwd: async () => P },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [] }) },
@@ -53,8 +53,8 @@ const tick = () => new Promise(r => setTimeout(r, 60))
 const press = makePress(elements, render, tick)
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
-const alts = t => find(t, x => x.type === 'Svg').map(x => String(x.props.alt ?? ''))
-const said = t => find(t, x => x.type === 'Svg').flatMap(x => [...String(x.props.source).matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1]))
+const alts = rowNames
+const said = t => words(t, 'top')
 
 await fire('session.start', {}, async () => ({}))
 await tick()
