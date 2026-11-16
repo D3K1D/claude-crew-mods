@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.7.5'
+const VERSION = '1.7.6'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -2874,6 +2874,19 @@ const webView = async ($: EngineInterface) => {
     tabs: m.tabs.map(t => ({ t: t.t, label: t.label, on: t.on, act: actId(t.run) })),
     tab: m.tab,
     q: m.sq.q,
+    settings:
+      m.tab === 'settings'
+        ? {
+            themes: THEMES.map(t => ({ t: THEME_LABEL[t], on: (m.c.theme ?? 'auto') === t, act: actId({ k: 'set', theme: t }) })),
+            budget: m.c.budget || 0,
+            editor: m.c.editor || 'code',
+            hideOutside: !!m.c.hideOutside,
+            outside: [actId({ k: 'set', hideOutside: false }), actId({ k: 'set', hideOutside: true })],
+            demoOn: m.c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done'),
+            demo: actId({ k: 'demo' }),
+            version: VERSION,
+          }
+        : null,
     log: m.tab === 'activity' ? m.webLog : [],
     lines: m.tab === 'activity' ? [] : m.listed.slice(0, 600).map(line),
   }
@@ -2933,13 +2946,19 @@ const startWeb = ($: EngineInterface) => {
             webSent = ''
             void publishWeb($)
           } else if (line.startsWith('ACT ')) {
-            let msg: { id?: unknown; search?: unknown; next?: unknown } = {}
+            let msg: { id?: unknown; search?: unknown; next?: unknown; set?: { budget?: unknown; editor?: unknown } } = {}
             try {
               msg = JSON.parse(line.slice(4))
             } catch {}
             const act = typeof msg.id === 'string' ? webActs.get(msg.id) : undefined
             if (act) await doAction($, act, undefined)
             else if (typeof msg.search === 'string') await searchFor($, msg.search.slice(0, 200), msg.next === true)
+            else if (msg.set && typeof msg.set === 'object') {
+              // Settings' budget box and editor list: only values the pane's own choices could set.
+              const { budget, editor } = msg.set
+              if (typeof budget === 'number' && Number.isFinite(budget) && budget >= 0 && budget <= 100_000) await doAction($, { k: 'set', budget: Math.round(budget * 100) / 100 }, undefined)
+              if (editor === 'code' || editor === 'cursor' || editor === 'system') await doAction($, { k: 'set', editor }, undefined)
+            }
             void publishWeb($)
           }
         }

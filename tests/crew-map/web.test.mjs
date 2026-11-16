@@ -53,6 +53,10 @@ const check = (label, cond, extra = '') => {
   console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`)
 }
 const wait = ms => new Promise(r => setTimeout(r, ms))
+const until = async (fn, ms = 3000) => {
+  for (const end = Date.now() + ms; Date.now() < end; await wait(50)) if (await fn()) return true
+  return false
+}
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : (x?.props?.children ?? []).map(text).join(''))
 const find = (x, pred, out = []) => {
   if (!x || typeof x !== 'object') return out
@@ -152,6 +156,15 @@ try {
   await fetch(`${url}act`, { method: 'POST', body: JSON.stringify({ id: 'nope' }) })
   await wait(150)
   check('an id the mod never gave does nothing', globalThis.__store.get('crew')?.pane?.tab === 'files')
+
+  // Settings' budget box and editor list.
+  await fetch(`${url}act`, { method: 'POST', body: JSON.stringify({ set: { budget: 12, editor: 'cursor' } }) })
+  await until(() => globalThis.__store.get('crew')?.editor === 'cursor')
+  check('the budget typed on the page is set', globalThis.__store.get('crew')?.budget === 12, String(globalThis.__store.get('crew')?.budget))
+  check('and the editor picked', globalThis.__store.get('crew')?.editor === 'cursor')
+  await fetch(`${url}act`, { method: 'POST', body: JSON.stringify({ set: { budget: -5, editor: 'calc.exe' } }) })
+  await wait(200)
+  check('a budget or editor the list does not offer is ignored', globalThis.__store.get('crew')?.budget === 12 && globalThis.__store.get('crew')?.editor === 'cursor')
 
   // /crew asks Claude to open it in the browser pane once the command is done, and shows the address.
   const r = await hooks['command.run']($, { command: 'crew', args: '' }, async () => ({}))

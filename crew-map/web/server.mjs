@@ -5,6 +5,7 @@
 //   WATCH <n>               how many pages have it open (the mod sends views only while one does)
 //   ACT {"id":"…"}          a press; the mod looks the id up in what it handed out
 //   ACT {"search":"…"}      the search field
+//   ACT {"set":{…}}         Settings' budget box or editor list
 //
 // Only this computer can reach it (127.0.0.1), every path starts with a random token, and a request
 // must name 127.0.0.1 as its host, so no other website can drive it.
@@ -109,7 +110,15 @@ const srv = http.createServer((req, res) => {
       } else {
         try {
           const msg = JSON.parse(body)
-          const out = typeof msg.id === 'string' ? { id: msg.id.slice(0, 40) } : typeof msg.search === 'string' ? { search: msg.search.slice(0, 200), next: msg.next === true } : undefined
+          const set = msg.set && typeof msg.set === 'object' ? msg.set : undefined
+          const out =
+            typeof msg.id === 'string'
+              ? { id: msg.id.slice(0, 40) }
+              : typeof msg.search === 'string'
+                ? { search: msg.search.slice(0, 200), next: msg.next === true }
+                : set
+                  ? { set: { ...(Number.isFinite(set.budget) ? { budget: set.budget } : {}), ...(typeof set.editor === 'string' ? { editor: set.editor.slice(0, 20) } : {}) } }
+                  : undefined
           if (out) say(`ACT ${JSON.stringify(out)}`)
         } catch {}
       }
