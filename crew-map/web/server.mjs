@@ -80,6 +80,15 @@ const srv = http.createServer((req, res) => {
     })
     return
   }
+  // This chat's website starting again (Claude reopened) while this one is still winding down: it
+  // hands over its address and stops.
+  if (req.method === 'POST' && path === 'quit') {
+    res.writeHead(204, plain)
+    res.end()
+    srv.close()
+    for (const w of watchers) w.destroy()
+    return setTimeout(() => process.exit(0), 50)
+  }
   // The mod's ping: it is still there (the page's own requests don't count).
   if (req.method === 'POST' && path === 'ping') {
     heard = Date.now()
@@ -113,8 +122,18 @@ const srv = http.createServer((req, res) => {
   res.end()
 })
 srv.on('listening', () => say(`READY ${srv.address().port} ${token}`))
+// The address is taken: most likely this chat's own website from before Claude reopened, still winding
+// down. Ask it to stop (only it knows the token), and try again for a few seconds; something else holds
+// the port after that, so take a new address.
+const TAKEOVER_MS = 6000
+let firstTry = 0
 srv.on('error', err => {
   if (err.code !== 'EADDRINUSE' || srv.address()) throw err
+  if (want && !firstTry) {
+    firstTry = Date.now()
+    fetch(`http://127.0.0.1:${want}/${token}/quit`, { method: 'POST' }).catch(() => {})
+  }
+  if (want && Date.now() - firstTry < TAKEOVER_MS) return setTimeout(() => srv.listen(want, '127.0.0.1'), 250)
   token = randomBytes(12).toString('hex')
   srv.listen(0, '127.0.0.1')
 })

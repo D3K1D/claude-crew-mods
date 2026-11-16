@@ -81,13 +81,25 @@ try {
   check('the chat opens again: its website is back at the same address', again === first, `${first} then ${again}`)
   check('and the page loads there', (await fetch(again)).ok)
 
-  // The port was taken while Claude was closed: a new address, and the chat keeps that one.
+  // Claude reopened before the old website had wound down: the new one asks it to stop, and keeps the address.
+  await close()
+  const old = spawn(process.execPath, [join(here, '..', '..', 'crew-map', 'web', 'server.mjs'), new URL(first).port, first.split('/')[3]])
+  await new Promise(r => old.stdout.once('data', r))
+  check('(the old website is still up at that address)', (await fetch(first)).ok)
+  const oldGone = new Promise(r => old.once('exit', () => r(true)))
+  await hooks['session.start']($, {}, async () => ({}))
+  await until(urlNow, 8000)
+  const back = await urlNow()
+  check('the old website winding down: the new one still gets the same address', back === first, `${first} then ${back}`)
+  check('and the old one stopped', await Promise.race([oldGone, wait(3000).then(() => false)]))
+
+  // The port was taken by something else while Claude was closed: a new address, and the chat keeps that one.
   await close()
   const port = Number(new URL(first).port)
   const squatter = createServer().listen(port, '127.0.0.1')
   await new Promise(r => squatter.once('listening', r))
   await hooks['session.start']($, {}, async () => ({}))
-  await until(urlNow)
+  await until(urlNow, 12000)
   const moved = await urlNow()
   check('its port taken meanwhile: the website starts at a new address', !!moved && moved !== first, moved)
   check('with a new token too', !!moved && moved.split('/')[3] !== first.split('/')[3])
