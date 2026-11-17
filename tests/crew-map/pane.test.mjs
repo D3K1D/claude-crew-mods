@@ -38,7 +38,7 @@ const fire = (ev, e, bottom) => {
   const run = i => (i < mine.length ? mine[i].fn($, e, x => run(i + 1, x)) : bottom(e))
   return run(0)
 }
-const render = (cols = 87, surface = 'desktop') => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface, props: { bodyColumns: cols, scroll: { bodyRows: 60 } }, viewport: { columns: cols } }, async () => ({}))
+const render = (cols = 87, surface = 'terminal') => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface, props: { bodyColumns: cols, scroll: { bodyRows: 60 } }, viewport: { columns: cols } }, async () => ({}))
 const tick = () => new Promise(r => setTimeout(r, 60))
 const press = makePress(elements, render, tick)
 let fails = 0
@@ -63,11 +63,11 @@ check('without the website the desktop draws the text pane: no pictures', find(t
 check("each Claude's row is a Box of its own, holding its Details Button", find(t, x => x.type === 'Box' && String(x.props.key ?? '').startsWith('row-')).every(b => find(b, y => y.type === 'Button').length === 1))
 {
   // The viewer runs to the bottom of the pane: what the pane has, less what is above it; never under 8.
-  const at = rows => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 87, scroll: { bodyRows: rows } }, viewport: { columns: 87 } }, async () => ({})).then(viewHeight)
+  const at = rows => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: 87, scroll: { bodyRows: rows } }, viewport: { columns: 87 } }, async () => ({})).then(viewHeight)
   const [h60, h40, h10] = [await at(60), await at(40), await at(10)]
   check('the viewer fills the pane to its bottom: 20 more rows of pane, 20 more rows of log', h60 - h40 === 20 && h60 > 12, `${h60} ${h40}`)
   check('...and keeps 8 rows in a short pane', h10 === 8, String(h10))
-  const unsized = await fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 87 }, viewport: { columns: 87 } }, async () => ({})).then(viewHeight)
+  const unsized = await fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: 87 }, viewport: { columns: 87 } }, async () => ({})).then(viewHeight)
   check('...and 12 where the surface gives no size', unsized === 12, String(unsized))
 }
 check('header: the brand and one idle Claude, nothing running', has(t, '✻ Claude Crew', 'top') && has(t, '◌ 1 idle', 'top') && has(t, 'nothing running', 'top'))

@@ -126,15 +126,15 @@ for (let step = 0; step < STEPS; step++) {
       else Object.assign(pick(codexRuns), { status: pick(['done', 'failed', 'stopped']), endedAt: now })
     } else if (r < 0.28) {
       // The person at the pane: clicks, hovers, the arrows, the search, folding, hiding, the two views.
-      const tree = await hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 140, scroll: { bodyRows: 40 } }, viewport: { columns: 140 } })
+      const tree = await hooks['ui.render']($, { surface: 'terminal', props: { bodyColumns: 140, scroll: { bodyRows: 40 } }, viewport: { columns: 140 } })
       const pan = find(tree, x => x.type === 'Client' && x.props.key === 'pan')[0]?.props.props
       const junk = () => pick([NaN, Infinity, -1e9, 1e9, 'x', null, undefined, -0, 0.5])
       const num = (a, b) => (rnd() < 0.08 ? junk() : a + rnd() * (b - a))
       const what = rnd()
       if (what < 0.35)
-        await hooks['ui.message']($, { surface: 'desktop', component: 'Pane', requestId: 'crew-map', element: 'pan', module: './pan.tsx', data: { view: pan?.view, rev: pan?.rev, click: [num(-50, 1200), num(-50, 700)], ctrl: rnd() < 0.3, sel: rnd() < 0.5, hover: rnd() < 0.5 ? [num(0, 1100), num(0, 700)] : null } }, async () => ({}))
+        await hooks['ui.message']($, { surface: 'terminal', component: 'Pane', requestId: 'crew-map', element: 'pan', module: './pan.tsx', data: { view: pan?.view, rev: pan?.rev, click: [num(-50, 1200), num(-50, 700)], ctrl: rnd() < 0.3, sel: rnd() < 0.5, hover: rnd() < 0.5 ? [num(0, 1100), num(0, 700)] : null } }, async () => ({}))
       else if (what < 0.55)
-        await hooks['ui.message']($, { surface: 'desktop', component: 'Pane', requestId: 'crew-map', element: 'pan', module: './pan.tsx', data: { view: { x: num(-3000, 3000), y: num(-3000, 3000), k: num(-1, 5) }, rev: rnd() < 0.8 ? pan?.rev : 'stale', zoom: rnd() < 0.3 ? num(-1, 3) : undefined, fit: rnd() < 0.1 } }, async () => ({}))
+        await hooks['ui.message']($, { surface: 'terminal', component: 'Pane', requestId: 'crew-map', element: 'pan', module: './pan.tsx', data: { view: { x: num(-3000, 3000), y: num(-3000, 3000), k: num(-1, 5) }, rev: rnd() < 0.8 ? pan?.rev : 'stale', zoom: rnd() < 0.3 ? num(-1, 3) : undefined, fit: rnd() < 0.1 } }, async () => ({}))
       else if (what < 0.7) {
         // The arrows (and junk: a stale press after the window moved).
         const arrow = find(tree, x => x.type === 'Button' && String(x.props.key).startsWith('move-'))
@@ -169,7 +169,7 @@ for (let step = 0; step < STEPS; step++) {
     for (const cols of [50, 140, 300]) {
       let tree
       try {
-        tree = await timed(`render ${cols}`, () => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: cols }, viewport: { columns: cols } }))
+        tree = await timed(`render ${cols}`, () => hooks['ui.render']($, { surface: 'terminal', props: { bodyColumns: cols }, viewport: { columns: cols } }))
       } catch (err) {
         check('render never throws', false, err?.stack?.split('\n').slice(0, 3).join(' | '))
         continue

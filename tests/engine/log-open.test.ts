@@ -47,7 +47,7 @@ test('a long message opens whole in the log, and folds again', async ($, on) => 
   for (const f of ['a', 'b']) await $.tool.call({ tool: 'Read', tool_use_id: `r-${f}`, file_path: `C:/work/game/src/${f}.ts` } as never)
 
   for (const cols of [87, 140]) {
-    const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'desktop', ...PANE(cols) })
+    const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'terminal', ...PANE(cols) })
     const opener = keyOf(await ui.drawn(), '›')
     expect(!!opener, `${cols}: the message has a ›`).toBe(true)
     await ui.press({ key: opener! })

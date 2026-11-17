@@ -33,7 +33,7 @@ const fire = (ev, e, bottom) => {
 const kids = x => (x && typeof x === 'object' ? (x.children ?? x.props?.children ?? []) : [])
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : kids(x).map(text).join(''))
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of kids(x)) find(c, pred, out); return out }
-const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
+const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
 const { rowGlyphs } = await import('./kit.mjs')
 // A row's progress, as its second line says it ("Step 2 of 4 · Port the parser").
 const work = (t, name = 'Claude') => rowGlyphs(t, name).find(g => /^Step|so far$/.test(g.t))?.t ?? ''

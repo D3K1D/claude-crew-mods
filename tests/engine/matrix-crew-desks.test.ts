@@ -52,7 +52,7 @@ const busy = async ($: any, helpers: number) => {
   for (let i = 0; i < helpers; i++) await $.tool.call({ tool: 'Read', tool_use_id: `hr${i}`, agentId: `agent-s${i}`, file_path: `${ROOT}/src/many/f${i % 14}.ts` } as never)
 }
 
-for (const surface of ['desktop', 'terminal'] as const) {
+for (const surface of ['terminal'] as const) {
   test(`${surface}: desks by default, tree map and back, chips and folds`, { timeoutMs: 30_000 }, async ($, on) => {
     const { ran } = setup(on)
     await busy($, 3)

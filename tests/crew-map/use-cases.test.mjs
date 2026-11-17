@@ -33,7 +33,7 @@ await hooks['session.start']($, {}, async () => ({}))
 await hooks['turn.start']($, { text: 'Build the level in Blender, check the docs site, and write the guide', turnId: 'T' }, async () => ({}))
 const crew = () => globalThis.__store.get('crew')
 const main = () => crew().agents.find(a => a.id === 'main')
-const render = () => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 150 }, viewport: { columns: 150 } })
+const render = () => hooks['ui.render']($, { surface: 'terminal', props: { bodyColumns: 150 }, viewport: { columns: 150 } })
 const press = makePress(elements, render, () => new Promise(r => setTimeout(r, 10)))
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }

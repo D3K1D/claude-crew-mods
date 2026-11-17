@@ -39,7 +39,7 @@ const crew = () => globalThis.__store.get('crew')
 const main = () => crew().agents.find(a => a.id === 'main')
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : (x?.props?.children ?? []).map(text).join(''))
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of x.props?.children ?? []) find(c, pred, out); return out }
-const render = () => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 140 }, viewport: { columns: 140 } })
+const render = () => hooks['ui.render']($, { surface: 'terminal', props: { bodyColumns: 140 }, viewport: { columns: 140 } })
 const btn = (tree, key) => find(tree, x => x.type === 'Button' && x.props.key === key)[0]
 const { words, glyphs, makePress } = await import('./kit.mjs')
 const press = makePress(elements, render, () => new Promise(r => setTimeout(r, 20)))

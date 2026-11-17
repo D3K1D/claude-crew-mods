@@ -37,7 +37,7 @@ const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : 
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of kids(x)) find(c, pred, out); return out }
 // A row in words: its picture's alt (the row as drawn), then any text beside it.
 const say = d => (d ? [...find(d, x => x.type === 'Svg').map(x => x.props.alt ?? ''), text(d)].join(' ') : '')
-const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 50 } }, viewport: { columns: 150 } }, async () => ({}))
+const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: 150, scroll: { bodyRows: 50 } }, viewport: { columns: 150 } }, async () => ({}))
 const kit = await import('./kit.mjs')
 // The main Claude's row: its words, line by line; and one of them.
 const rowGlyphs = t => kit.rowGlyphs(t, 'Claude')

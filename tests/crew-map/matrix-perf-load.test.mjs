@@ -52,7 +52,7 @@ const setup = async ({ start = true } = {}) => {
   register((ev, m, fn) => { hooks[ev] = fn ?? m; return { catch() {} } }, {})
   if (start) await hooks['session.start']($, {}, async () => ({}))
   const fireDue = async () => { for (const t of after.splice(0).filter(t => !t.cancelled)) { if (t.at <= T.now) await t.fn(); else after.push(t) } }
-  const render = (cols = 150) => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: cols, scroll: { bodyRows: 40 } }, viewport: { columns: cols } })
+  const render = (cols = 150) => hooks['ui.render']($, { surface: 'terminal', props: { bodyColumns: cols, scroll: { bodyRows: 40 } }, viewport: { columns: cols } })
   return { hooks, $, T, store, every, after, fireDue, render, crew: () => store.get('crew'), setView: v => store.set('crew', { ...store.get('crew'), view: v }) }
 }
 const call = (s, e, result = { text: 'ok' }) => s.hooks['tool.call'](s.$, { tool_use_id: `c${Math.random()}`, ...e }, async () => result)

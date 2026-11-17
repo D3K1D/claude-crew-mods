@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname } from 'node:path'
 
@@ -27,13 +27,20 @@ const ticks = []
 const $ = {
   command: { register: async () => {} },
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {}, invalidate: () => {} },
-  clock: { every: (ms, fn) => (ticks.push({ ms, fn }), { cancel() {} }), after: () => ({ cancel() {} }) },
+  clock: { every: (ms, fn) => (ticks.push({ ms, fn }), { cancel() {} }), after: (ms, fn) => (setTimeout(fn, ms), { cancel() {} }) },
   fs: {
     read: async p => (p.startsWith(home) ? readFileSync(p, 'utf8') : 'line\n'),
     exists: async () => false,
     write: async (p, t) => (mkdirSync(dirname(p), { recursive: true }), writeFileSync(p, t)),
-    list: async () => [],
+    list: async p => {
+      try {
+        return readdirSync(p, { withFileTypes: true }).map(e => ({ name: e.name, kind: e.isDirectory() ? 'dir' : 'file', mtimeMs: statSync(join(p, e.name)).mtimeMs }))
+      } catch {
+        return []
+      }
+    },
   },
+  prompt: { submit: async () => {} },
   model: { complete: async () => ({ isAnswered: true, text: '' }) },
   store: { get: async k => kept.get(k), set: async (k, v) => void kept.set(k, v) },
   session: { cwd: async () => 'C:/proj', id: async () => 'chat-1' },
@@ -81,9 +88,13 @@ const close = async () => {
 
 try {
   await hooks['session.start']($, {}, async () => ({}))
+  await wait(400)
+  check('a chat that never opened its website runs no server for it', !(await urlNow()) && !children.length)
+  const said = await hooks['command.run']($, { command: 'crew', args: '' }, async () => ({}))
   await until(urlNow)
   const first = await urlNow()
-  check('the website starts', /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{24}\/$/.test(first), first)
+  check('/crew starts it, and says where it is', String(said?.text).includes(first) && !!first, String(said?.text))
+  check('the website starts',/^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{24}\/$/.test(first), first)
   check('its address is kept for this chat', kept.get('webAddress')?.['chat-1']?.token === first.split('/')[3], JSON.stringify(kept.get('webAddress')))
 
   check('Claude closes: the website stops', await close())
@@ -111,12 +122,12 @@ try {
   await journalTick()
   await until(async () => {
     try {
-      return readFileSync(`${home}/.claude/crew-map/journals/chat-1.json`, 'utf8').includes('keep.ts')
+      return readFileSync(`${home}/.claude/crew-map/journals/chat-1/000001.json`, 'utf8').includes('keep.ts')
     } catch {
       return false
     }
   })
-  check('the whole log is kept on disk as it grows', readFileSync(`${home}/.claude/crew-map/journals/chat-1.json`, 'utf8').includes('keep.ts'))
+  check('the whole log is kept on disk as it grows', readFileSync(`${home}/.claude/crew-map/journals/chat-1/000001.json`, 'utf8').includes('keep.ts'))
   globalThis.__store.set('crew', { ...globalThis.__store.get('crew'), log: [] })
   await close()
   await hooks['session.start']($, {}, async () => ({}))

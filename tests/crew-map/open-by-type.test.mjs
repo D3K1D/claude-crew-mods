@@ -34,7 +34,7 @@ const fire = (ev, e, bottom) => {
 const kids = x => (x && typeof x === 'object' ? (x.children ?? x.props?.children ?? []) : [])
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : kids(x).map(text).join(''))
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of kids(x)) find(c, pred, out); return out }
-const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
+const render = () => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 let n = 0
@@ -106,7 +106,7 @@ const platformTry = async (name, uname) => {
   for (const f of ['art/hero sprite.png', 'tools/setup.exe']) await fire2('tool.call', { tool: 'Read', tool_use_id: `m${n++}`, file_path: `/home/me/game/${f}` }, async () => ({ text: 'ok' }))
   const saved = elements.Client
   elements.Client = undefined
-  const draw = () => fire2('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
+  const draw = () => fire2('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: 150, scroll: { bodyRows: 60 } }, viewport: { columns: 150 } }, async () => ({}))
   // This copy's project is /home/me/game: the files the first copy read are outside it, hidden.
   for (const label of ['⚙', 'hidden', 'Files 0', 'Files 1', 'Files 2', 'Files 3']) {
     await find(await draw(), x => x.type === 'Button' && text(x) === label)[0]?.props.onPress({ surface: 'desktop' })

@@ -37,7 +37,7 @@ const advance = async ms => { const end = now + ms; for (;;) { const due = timer
 const crew = () => globalThis.__store.get('crew')
 const text = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : (x?.props?.children ?? []).map(text).join(''))
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of x.props?.children ?? []) find(c, pred, out); return out }
-const render = () => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 120 }, viewport: { columns: 120 } })
+const render = () => hooks['ui.render']($, { surface: 'terminal', props: { bodyColumns: 120 }, viewport: { columns: 120 } })
 const svgOf = t => find(t, x => x.type === 'Svg').map(x => x.props.source).join('')
 const { words: kitWords } = await import('./kit.mjs')
 // Every word the pane's pictures draw, in one string.

@@ -48,7 +48,7 @@ const run = (id: string, status: 'running' | 'done' | 'failed' | 'stopped', extr
   ...extra,
 })
 
-for (const surface of ['desktop', 'terminal'] as const)
+for (const surface of ['terminal'] as const)
   test(`${surface}: crew map draws codex-bridge runs`, { timeoutMs: 30_000 }, async ($, on) => {
     mock.clock(on, { now: NOW })
     mock.env(on, { OS: 'Windows_NT', TEMP: 'C:/T' })

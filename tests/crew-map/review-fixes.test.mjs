@@ -28,7 +28,7 @@ const $ = {
 register((ev, m, fn) => { hooks[ev] = fn ?? m; return { catch() {} } }, {})
 const crew = () => globalThis.__store.get('crew')
 const find = (x, pred, out = []) => { if (!x || typeof x !== 'object') return out; if (pred(x)) out.push(x); for (const c of x.props?.children ?? []) find(c, pred, out); return out }
-const render = () => hooks['ui.render']($, { surface: 'desktop', props: { bodyColumns: 140 }, viewport: { columns: 140 } })
+const render = () => hooks['ui.render']($, { surface: 'terminal', props: { bodyColumns: 140 }, viewport: { columns: 140 } })
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 let n = 0

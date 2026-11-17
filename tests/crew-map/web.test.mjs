@@ -24,18 +24,20 @@ const written = new Map()
 const asked = []
 const exports = []
 const replies = []
+const stored = new Map()
 const $ = {
   command: { register: async () => {} },
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {}, invalidate: () => {} },
-  clock: { every: (ms, fn) => (timers.push({ ms, fn }), { cancel() {} }), after: (ms, fn) => (later.push(fn), { cancel() {} }) },
+  // (Short waits run at once, as the mod's wait for its website; the rest wait for the test.)
+  clock: { every: (ms, fn) => (timers.push({ ms, fn }), { cancel() {} }), after: (ms, fn) => (ms <= 100 ? setTimeout(fn, ms) : later.push(fn), { cancel() {} }) },
   fs: {
-    read: async () => 'line\n',
+    read: async p => (written.has(p) ? written.get(p) : 'line\n'),
     exists: async () => false,
     write: async (p, text) => void written.set(p, text),
     list: async p => (p.endsWith('.claude/crew-logs') ? [{ name: '2031-01-01-old-work-abcd1234.summary.md', mtimeMs: 1 }] : []),
   },
   model: { complete: async r => (asked.push(r), { isAnswered: true, text: '## Goal\nFix the loader.' }) },
-  store: { get: async () => undefined, set: async () => {} },
+  store: { get: async k => stored.get(k), set: async (k, v) => void stored.set(k, v) },
   session: { cwd: async () => 'C:/proj' },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [], version: 0 }) },
@@ -82,6 +84,11 @@ const done = () => {
 
 try {
   await hooks['session.start']($, {}, async () => ({}))
+  await wait(300)
+  check('no website until it is asked for', !children.length)
+  check('the desktop pane says how to open it, with no address yet', text(await render('desktop')).includes('Type /crew to open it beside the chat') && !find(await render('desktop'), x => x.type === 'Link').length, text(await render('desktop')).slice(0, 200))
+  // The first /crew starts it.
+  await hooks['command.run']($, { command: 'crew', args: '' }, async () => ({}))
   let link
   for (let i = 0; i < 100 && !link; i++) {
     await wait(50)
@@ -254,6 +261,18 @@ try {
   check('Save writes the log into the project', saved.some(p => /\/\.claude\/crew-logs\/\d{4}-\d\d-\d\d-fix-the-loader-[\w-]+\.md$/.test(p) && !p.endsWith('.summary.md')), saved.join(' | '))
   check('and a summary beside it, from a cheaper model', saved.some(p => p.endsWith('.summary.md')) && asked[0]?.model === 'haiku', asked[0]?.model)
   check('the summary is what the model wrote', [...written.entries()].find(([p]) => p.endsWith('.summary.md'))?.[1]?.includes('Fix the loader.'))
+  // Saved again: with nothing new, no model is asked; after a new line, only the lines since go with the summary.
+  const saveAgain = async () => {
+    const n = asked.length
+    await fetch(`${url}act`, { method: 'POST', body: JSON.stringify({ id: va?.logActs?.save }) })
+    await until(() => asked.length > n, 1500)
+    await wait(100)
+    return asked.slice(n)
+  }
+  check('saved again with nothing new: no model asked', !(await saveAgain()).length)
+  await hooks['tool.call']($, { tool_use_id: 'n1', tool: 'Read', file_path: 'C:/proj/src/fresh.ts' }, async () => ({ text: 'ok' }))
+  const [upd] = await saveAgain()
+  check('after a new line: the summary so far and only the new lines are sent', /summary so far[\s\S]*Fix the loader\.[\s\S]*The log since[\s\S]*fresh\.ts/.test(upd?.prompt ?? '') && !/The log since[\s\S]*loader\.ts\*\*/.test(upd?.prompt ?? '') && !/Reading loader\.ts/.test((upd?.prompt ?? '').split('The log since')[1] ?? ''), String(upd?.prompt).slice(-400))
   const composed = await hooks['prompt.compose']($, {}, async () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }))
   check('new chats in the project are told where the saved logs are', composed.sections.some(s => s.id === 'crew-map:logs' && s.text.includes('.claude/crew-logs')), JSON.stringify(composed.sections.map(s => s.id)))
 

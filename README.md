@@ -35,6 +35,8 @@ They work on their own and better together: with both installed, a running Codex
 
 You need **Claude Code 2.1.275 or later**. Codex Bridge also needs the **Codex CLI** signed in to your account: the [Codex desktop app](https://openai.com/codex) includes it, or install it with `npm i -g @openai/codex` and run `codex login`.
 
+Claude Crew's website needs **Node.js 18 or later** on your PATH (`node --version` to check; get it from [nodejs.org](https://nodejs.org)). Neither the Claude app nor Claude Code includes Node. Without it, `/crew` has no website to open: Claude Crew opens its own pane beside the chat instead, with the same view as text. Its log is still kept and old logs are still read. Only the website, and the clean-up of its month-old files, need Node.
+
 ### Option 1: the plugin command (recommended)
 
 In a terminal, start `claude` and type:

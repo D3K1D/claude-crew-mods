@@ -44,7 +44,7 @@ const find = (x, pred, out = []) => {
 }
 const render = surface => hooks['ui.render']($, { surface, props: { bodyColumns: 120 }, viewport: { columns: 120 } })
 const windows = async () => {
-  const tree = await render('desktop')
+  const tree = await render('terminal')
   const { words } = await import('./kit.mjs')
   return { wins: [words(tree, 'top').join('\n')], log: words(tree, 'view') }
 }

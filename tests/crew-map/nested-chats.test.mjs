@@ -48,7 +48,7 @@ const fire = (ev, e, bottom) => {
   const run = i => (i < mine.length ? mine[i].fn($, e, x => run(i + 1, x)) : bottom(e))
   return run(0)
 }
-const render = (cols = 100, surface = 'desktop') => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface, props: { bodyColumns: cols, scroll: { bodyRows: 60 } }, viewport: { columns: cols } }, async () => ({}))
+const render = (cols = 100, surface = 'terminal') => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface, props: { bodyColumns: cols, scroll: { bodyRows: 60 } }, viewport: { columns: cols } }, async () => ({}))
 const tick = () => new Promise(r => setTimeout(r, 60))
 const press = makePress(elements, render, tick)
 let fails = 0
@@ -91,7 +91,7 @@ check('asked to approve: never called, but it keeps checking', listed === before
 check('and the chats are marked as not live', globalThis.__store.get('crew').chatsLive === false)
 const asOf = new Date(now).toTimeString().slice(0, 5)
 t = await render()
-check('a card not read live says "as of" its last read, its state dim', said(t).some(w => w === `as of ${asOf}`) && !said(t).some(w => /in its own chat/.test(w)), said(t).join(' | ').slice(0, 300))
+check('a card not read live says "as of" its last read, not "in its own chat"', said(t).some(w => w.endsWith(`(as of ${asOf})`)) && !said(t).some(w => /in its own chat/.test(w)), said(t).join(' | ').slice(0, 300))
 check('the header counts only what is known live: the stale chats are left out', said(t).some(w => /^◌ 1 idle$/.test(w)), said(t).slice(0, 4).join(' | '))
 const termStale = text(await render(100, 'terminal'))
 check('in a terminal: "Idle (as of …)", with its last activity at the right', termStale.includes(`Idle (as of ${asOf})   10s`), termStale.slice(0, 300))

@@ -88,7 +88,7 @@ check('it writes chats/<its app id>.json: its journal and steps', mine.id === 'l
 
 // 3 · A nested chat's file and journal: its steps and lines are read, only when they change.
 put(`${DIR}/chats/local_kid.json`, JSON.stringify({ id: 'local_kid', journal: 'cli-kid', total: 4, done: 1, doing: 'Write the pages', at: now }))
-put(`${DIR}/journals/cli-kid.json`, JSON.stringify([
+put(`${DIR}/journals/cli-kid/000001.json`, JSON.stringify([
   { at: now - 5000, who: 'Claude', hue: 0, kind: 'act', text: '✎ editing docs/index.md', took: 300 },
   { at: now - 4000, who: 'Quill', hue: 2, kind: 'act', text: '✎ editing docs/build.mjs', took: 200 },
 ]))
@@ -99,8 +99,8 @@ t = text(await render())
 check("a nested chat's lines join this log, under its name", /docs-… ✎ {2}Editing docs\/index\.md/.test(t), t.slice(-600))
 check("a helper there is named first: Quill ·", /docs-… ✎ {2}Quill · Editing docs\/build\.mjs/.test(t))
 check("its card shows its steps as a Claude's card does: Step 2 of 4 · Write the pages", /Build the docs site.*●○○○ Step 2 of 4 · Write the pages/.test(t) && !/Chat · work/.test(t), t.slice(0, 400))
-check('its lines are not written into this chat\'s own journal', !(disk.get(`${DIR}/journals/cli-me.json`)?.text ?? '').includes('docs/index.md'))
-put(`${DIR}/journals/cli-kid.json`, JSON.stringify([
+check('its lines are not written into this chat\'s own journal', !(disk.get(`${DIR}/journals/cli-me/000001.json`)?.text ?? '').includes('docs/index.md'))
+put(`${DIR}/journals/cli-kid/000001.json`, JSON.stringify([
   { at: now - 5000, who: 'Claude', hue: 0, kind: 'act', text: '✎ editing docs/index.md', took: 300 },
   { at: now - 4000, who: 'Quill', hue: 2, kind: 'act', text: '✎ editing docs/build.mjs', took: 200 },
   { at: now, who: 'Claude', hue: 0, kind: 'act', text: '▸ ran npm run docs', took: 900 },
@@ -117,6 +117,45 @@ now += 4000
 await timer(4000)
 await tick()
 check('nothing is read again while neither file changed', !reads.length, reads.join(' | '))
+// A second chunk appears: only it is read.
+put(`${DIR}/journals/cli-kid/000002.json`, JSON.stringify([{ at: now, who: 'Claude', hue: 0, kind: 'act', text: '▸ ran npm run deploy', took: 500 }]))
+reads.length = 0
+now += 1000
+await timer(4000)
+await tick()
+check("a nested chat's new chunk is read, not the ones before it", reads.length === 1 && reads[0].endsWith('cli-kid/000002.json') && /Ran npm run deploy/.test(text(await render())), reads.join(' | '))
 $.fs.read = read0
+
+// 4 · This chat's journal: chunks of 250 lines, and only the ones that changed are written.
+const writes = []
+const write0 = $.fs.write
+$.fs.write = async (p, s) => (writes.push(p), write0(p, s))
+let finish
+const slow = fire('tool.call', { tool: 'Bash', tool_use_id: 'slow', command: 'npm run long', run_in_background: false }, () => new Promise(r => (finish = r)))
+await tick()
+for (let i = 0; i < 260; i++) {
+  now += 10
+  await fire('tool.call', { tool: 'Grep', tool_use_id: `g${i}`, pattern: `p${i}` }, async () => ({ text: 'ok' }))
+  if (i % 50 === 49) await timer(3000)
+await tick()
+}
+await timer(3000)
+await tick()
+await tick()
+check('the journal is split in chunks of 250 lines', disk.has(`${DIR}/journals/cli-me/000002.json`) && JSON.parse(disk.get(`${DIR}/journals/cli-me/000001.json`).text).length === 250)
+writes.length = 0
+now += 10
+await fire('tool.call', { tool: 'Grep', tool_use_id: 'last', pattern: 'last' }, async () => ({ text: 'ok' }))
+await timer(3000)
+await tick()
+check('a new line writes only the newest chunk', writes.filter(p => p.includes('/journals/')).join(' | ') === `${DIR}/journals/cli-me/000002.json`, writes.join(' | '))
+writes.length = 0
+finish({ text: 'done' })
+await slow
+await timer(3000)
+await tick()
+const first = JSON.parse(disk.get(`${DIR}/journals/cli-me/000001.json`).text)
+check('a line that finished late rewrites only its own (older) chunk', writes.filter(p => p.includes('/journals/')).join(' | ') === `${DIR}/journals/cli-me/000001.json` && first.some(l => l.call === 'slow' && l.took > 0), writes.join(' | '))
+$.fs.write = write0
 console.log(`\n${fails} failing check(s)`)
 process.exit(fails ? 1 : 0)

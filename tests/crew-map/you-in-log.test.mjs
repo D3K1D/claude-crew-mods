@@ -31,7 +31,7 @@ const fire = (ev, e, bottom) => {
   const run = i => (i < mine.length ? mine[i].fn($, e, x => run(i + 1, x)) : bottom(e))
   return run(0)
 }
-const render = cols => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'desktop', props: { bodyColumns: cols }, viewport: { columns: cols } }, async () => ({}))
+const render = cols => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: cols }, viewport: { columns: cols } }, async () => ({}))
 const press = makePress(elements, () => render(150), () => new Promise(r => setTimeout(r, 20)))
 let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }

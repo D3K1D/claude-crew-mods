@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.2'
+const VERSION = '1.8.3'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -2339,7 +2339,8 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     // The log: its lines, scrolled (held at a line while new ones come in below), and the ones opened whole.
     const lv = c.logView ?? {}
     const openLog = new Set(lv.open ?? [])
-    const allLog = [...c.log, ...codexLog, ...nestedLines()].sort((x, y) => x.at - y.at)
+    // This chat's lines, Codex's, and the nested chats' newest (all of theirs come with Load older).
+    const allLog = [...c.log, ...codexLog, ...nestedLines().slice(-NESTED_VIEW)].sort((x, y) => x.at - y.at)
     const held = typeof lv.anchor === 'number'
     let upto = held ? allLog.filter(l => l.at <= (lv.anchor as number)) : allLog
     if (!upto.length) upto = allLog.slice(0, 1)
@@ -2842,8 +2843,9 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       on: x.id === tab,
       run: x.id === 'claude' ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: x.id as NonNullable<Crew['pane']>['tab'], top: 0 }),
     }))
-    // The website's log: each line whole (the page cuts it to fit and opens it), oldest first.
-    const webLog = allLog.slice(-400).map(webLine)
+    // The website's log: its newest lines (the page keeps what it was sent, and loads older ones from the
+    // journals), each whole (the page cuts it to fit and opens it), oldest first.
+    const webLog = allLog.slice(-WEB_WINDOW).map(webLine)
     return { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, BODY_ROWS, listed, top0, scroll, tabs, webLog }
 }
 
@@ -3000,70 +3002,119 @@ const publishWeb = async ($: EngineInterface) => {
 }
 /**
  * The whole log of this chat, kept on disk as it grows (the pane keeps only its newest lines and
- * starts over when Claude restarts), so Save, Copy and Download have all of it. One file per chat
- * under ~/.claude/crew-map/journals.
+ * starts over when Claude restarts), so Save, Copy and Download have all of it. A folder per chat,
+ * ~/.claude/crew-map/journals/<session id>/, of numbered chunks of 250 lines (000001.json …, each a
+ * JSON array). A tick writes only the chunks that changed: the newest, and an older one whose line
+ * finished late. (A chat's single <session id>.json from before is carried over once.)
  */
 const journal = new Map<string, LogLine>()
-let journalPath = ''
-let journalSid = ''
-let journalDirty = false
+const CHUNK = 250
 const JOURNAL_KEEP = 5000
-const savedBefore = (at: number) => {
-  let left = 0
-  let first = Infinity
-  for (const l of [...journal.values(), ...nestedLines()]) {
-    if (l.at < at) left++
-    first = Math.min(first, l.at)
+let journalDir = ''
+let journalSid = ''
+/** Which chunk each line is in, each chunk's lines in order, and the chunks to write. */
+const chunkOf = new Map<string, number>()
+const chunks = new Map<number, string[]>()
+const dirtyChunks = new Set<number>()
+let lastChunk = 1
+const chunkName = (n: number) => `${String(n).padStart(6, '0')}.json`
+const isLine = (l: unknown): l is LogLine => !!l && typeof (l as LogLine).at === 'number' && typeof (l as LogLine).text === 'string'
+/** A line into the journal: a new one at the end of the newest chunk, a changed one where it is. */
+const addToJournal = (l: LogLine, chunk?: number) => {
+  const k = logKey(l)
+  const at = chunkOf.get(k)
+  if (at !== undefined) {
+    const was = journal.get(k)
+    if (was && was.took === l.took && was.more === l.more && was.bad === l.bad) return
+    journal.set(k, l)
+    dirtyChunks.add(at)
+    return
   }
-  return { left, first: Number.isFinite(first) ? clock(first).slice(0, 5) : '' }
+  const n = chunk ?? ((chunks.get(lastChunk)?.length ?? 0) >= CHUNK ? lastChunk + 1 : lastChunk)
+  lastChunk = Math.max(lastChunk, n)
+  chunks.set(n, [...(chunks.get(n) ?? []), k])
+  chunkOf.set(k, n)
+  journal.set(k, l)
+  if (chunk === undefined) dirtyChunks.add(n)
+  // Bounded: the oldest chunk leaves memory (its file stays, until it is pruned).
+  while (journal.size > JOURNAL_KEEP && chunks.size > 1) {
+    const first = Math.min(...chunks.keys())
+    for (const x of chunks.get(first) ?? []) {
+      journal.delete(x)
+      chunkOf.delete(x)
+    }
+    chunks.delete(first)
+    dirtyChunks.delete(first)
+  }
 }
 const later$ = <T,>(fn: () => Promise<T> | T) => Promise.resolve().then(fn)
 const journalLines = () => [...journal.values()].sort((x, y) => x.at - y.at)
+const listDir = (path: string) => later$(() => fsList?.(path) ?? []).catch(() => []) as Promise<{ name: string; mtimeMs?: number }[]>
+const readJson = (path: string) => later$(async () => JSON.parse(String(await fsRead?.(path))) as unknown).catch(() => undefined)
+/** A journal folder's chunk numbers, oldest first. */
+const chunkList = async (dir: string) =>
+  (await listDir(dir))
+    .filter(f => /^\d{6}\.json$/.test(f.name))
+    .map(f => ({ n: Number(f.name.slice(0, 6)), at: f.mtimeMs ?? 0 }))
+    .sort((x, y) => x.n - y.n)
+/** The engine's file reads, for the helpers above (set when the journal opens). */
+let fsList: ((path: string) => Promise<unknown[]>) | undefined
+let fsRead: ((path: string) => Promise<unknown>) | undefined
 const openJournal = async ($: EngineInterface) => {
-  // The file is written only once the old one is read in (the timer may tick before then).
-  journalPath = ''
+  // Written only once what was there is read in (the timer may tick before then).
+  journalDir = ''
+  fsList = p => $.fs.list(p)
+  fsRead = p => $.fs.read(p)
   journalSid = String((await later$(() => $.session.id()).catch(() => '')) ?? '')
   const home = String((await later$(() => $.env.get('USERPROFILE')).catch(() => undefined)) ?? (await later$(() => $.env.get('HOME')).catch(() => undefined)) ?? '').replace(/\\/g, '/')
   homeDir = home
   hostId = String((await later$(() => $.env.get('CLAUDE_CODE_HOST_SESSION_ID')).catch(() => undefined)) ?? '')
   if (!/^local_[\w-]+$/.test(hostId)) hostId = ''
-  const path = journalSid && home ? `${home}/.claude/crew-map/journals/${journalSid}.json` : ''
-  if (!path) return
-  try {
-    const old = JSON.parse(String(await $.fs.read(path)))
-    if (Array.isArray(old)) for (const l of old as LogLine[]) if (l && typeof l.at === 'number' && typeof l.text === 'string' && !journal.has(logKey(l))) journal.set(logKey(l), l)
-  } catch {}
-  journalPath = path
-  journalDirty = true
+  const dir = journalSid && home ? `${home}/.claude/crew-map/journals/${journalSid}` : ''
+  if (!dir) return
+  const have = await chunkList(dir)
+  for (const { n } of have.slice(-Math.ceil(JOURNAL_KEEP / CHUNK))) {
+    const lines = await readJson(`${dir}/${chunkName(n)}`)
+    if (Array.isArray(lines)) for (const l of lines) if (isLine(l) && !journal.has(logKey(l))) addToJournal(l, n)
+  }
+  lastChunk = Math.max(1, have[have.length - 1]?.n ?? 1)
+  if (!have.length) {
+    const old = await readJson(`${dir}.json`)
+    if (Array.isArray(old)) for (const l of old.slice(-JOURNAL_KEEP)) if (isLine(l)) addToJournal(l)
+  }
+  journalDir = dir
 }
-/** Takes the log's new lines into the journal (a pretend session's stay out), and writes it when it grew. */
+/**
+ * Old journals and steps files go (none written for 30 days, or past the newest 300 journals): $.fs
+ * can't delete, so web/prune.mjs does, with Node (which the website needs anyway). Once a day at most.
+ */
+const pruneOld = async ($: EngineInterface) => {
+  const today = localDay(Date.now())
+  if (!homeDir || (await $.store.get('pruned').catch(() => today)) === today) return
+  await $.store.set('pruned', today).catch(() => undefined)
+  await later$(() => $.process.run(['node', `${$.plugin.root}/web/prune.mjs`, `${homeDir}/.claude/crew-map`, '30', journalSid], { timeoutMs: 20_000 })).catch(() => undefined)
+}
+/** Takes the log's new lines into the journal (a pretend session's stay out), and writes the chunks that changed. */
 const syncJournal = async ($: EngineInterface) => {
   const c = await readCrew?.()
   if (!c) return
   const demoNames = new Set(c.agents.filter(a => a.id.startsWith('demo-')).map(a => a.name))
   const demoOn = demoNames.size > 0
-  for (const l of c.log) {
-    if (demoNames.has(l.who) || (demoOn && l.who === 'Claude')) continue
-    const k = logKey(l)
-    const was = journal.get(k)
-    if (!was || was.took !== l.took) {
-      journal.set(k, l)
-      journalDirty = true
+  for (const l of c.log) if (!demoNames.has(l.who) && !(demoOn && l.who === 'Claude')) addToJournal(l)
+  if (journalDir)
+    for (const n of [...dirtyChunks]) {
+      dirtyChunks.delete(n)
+      const lines = (chunks.get(n) ?? []).map(k => journal.get(k)).filter(isLine)
+      await later$(() => $.fs.write(`${journalDir}/${chunkName(n)}`, JSON.stringify(lines))).catch(() => dirtyChunks.add(n))
     }
-  }
-  if (journal.size > JOURNAL_KEEP) for (const k of [...journal.keys()].slice(0, journal.size - JOURNAL_KEEP)) journal.delete(k)
-  if (journalDirty && journalPath) {
-    journalDirty = false
-    await later$(() => $.fs.write(journalPath, JSON.stringify(journalLines()))).catch(() => undefined)
-  }
   await writeSelf($, c)
 }
 
 // ── Nested chats' steps and lines ──
 // Each chat's mod writes a small file about itself, ~/.claude/crew-map/chats/<its app id>.json: its
 // journal's name and its steps. The chat that started it (any chat above it) reads that file and the
-// journal it names, every few seconds and only when one changed, so their steps fill its card and their
-// lines join its log. (Files, not $.store: one file per chat, so two chats never write the same one.)
+// journal chunks that changed, every few seconds, so their steps fill its card and their lines join its
+// log. (Files, not $.store: one file per chat, so two chats never write the same one.)
 type ChatFile = { id: string; journal: string; total: number; done: number; doing: string; at: number }
 /** This chat's id in the desktop app (local_…), and the home folder the files live under. */
 let hostId = ''
@@ -3084,11 +3135,47 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
   selfAt = Date.now()
   await later$(() => $.fs.write(`${homeDir}/.claude/crew-map/chats/${hostId}.json`, `${s.slice(0, -1)},"at":${selfAt}}`)).catch(() => undefined)
 }
-/** What this chat knows of each nested chat: its file, and its journal's lines (as this log shows them). */
-const nested = new Map<string, { file?: ChatFile; lines: LogLine[]; fileM: number; journalM: number; title?: string }>()
+/** What this chat knows of each nested chat: its file, and its journal's chunks (lines as this log shows them). */
+type Nested = { file?: ChatFile; fileM: number; title?: string; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
+const nested = new Map<string, Nested>()
 /** A nested chat's colour (its card's): an index into PALETTE. */
 const chatHue = (id: string) => [...id].reduce((n, x) => n + x.charCodeAt(0), 0) % PALETTE.length
-const nestedLines = () => [...nested.values()].flatMap(x => x.lines)
+/** All nested chats' lines in time order, made again only when one changed. */
+let nestedVer = 0
+let sortedVer = -1
+let sortedNested: LogLine[] = []
+const nestedLines = () => {
+  if (sortedVer !== nestedVer) {
+    sortedNested = [...nested.values()].flatMap(x => x.lines).sort((x, y) => x.at - y.at)
+    sortedVer = nestedVer
+  }
+  return sortedNested
+}
+/** How many of those come before a time. */
+const nestedBefore = (at: number) => {
+  const all = nestedLines()
+  let lo = 0
+  let hi = all.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if ((all[mid]?.at ?? 0) < at) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+/** The nested chats' newest lines the view carries (older ones come with Load older). */
+const NESTED_VIEW = 200
+/** How many of the newest lines each view to the website carries. */
+const WEB_WINDOW = 150
+const savedBefore = (at: number) => {
+  let left = nestedBefore(at)
+  let first = nestedLines()[0]?.at ?? Infinity
+  for (const l of journal.values()) {
+    if (l.at < at) left++
+    if (l.at < first) first = l.at
+  }
+  return { left, first: Number.isFinite(first) ? clock(first).slice(0, 5) : '' }
+}
 let readingNested = false
 const readNested = async ($: EngineInterface) => {
   const c = await readCrew?.()
@@ -3104,39 +3191,50 @@ const readNested = async ($: EngineInterface) => {
       }
     if (chats.length) {
       const dir = `${homeDir}/.claude/crew-map`
-      const ls = (p: string) => later$(() => $.fs.list(p)).catch(() => []) as Promise<{ name: string; mtimeMs?: number }[]>
-      const [files, journals] = await Promise.all([ls(`${dir}/chats`), ls(`${dir}/journals`)])
-      const mtime = (list: { name: string; mtimeMs?: number }[], name: string) => list.find(f => f.name === name)?.mtimeMs ?? 0
+      const files = await listDir(`${dir}/chats`)
       for (const ch of chats) {
-        const cur = nested.get(ch.id) ?? { lines: [], fileM: 0, journalM: 0 }
+        const cur: Nested = nested.get(ch.id) ?? { fileM: 0, chunkM: new Map(), chunkLines: new Map(), lines: [] }
         cur.title = ch.title
         nested.set(ch.id, cur)
-        const fm = mtime(files, `${ch.id}.json`)
+        const fm = files.find(f => f.name === `${ch.id}.json`)?.mtimeMs ?? 0
         if (fm && fm !== cur.fileM) {
-          const f = await later$(async () => JSON.parse(String(await $.fs.read(`${dir}/chats/${ch.id}.json`))) as ChatFile).catch(() => undefined)
+          const f = (await readJson(`${dir}/chats/${ch.id}.json`)) as ChatFile | undefined
           if (f && typeof f.journal === 'string' && /^[\w-]+$/.test(f.journal)) {
             cur.file = f
             cur.fileM = fm
             changed = true
           }
         }
-        const jm = cur.file ? mtime(journals, `${cur.file.journal}.json`) : 0
-        if (jm && jm !== cur.journalM) {
-          const old = await later$(async () => JSON.parse(String(await $.fs.read(`${dir}/journals/${cur.file?.journal}.json`))) as unknown).catch(() => undefined)
-          if (Array.isArray(old)) {
-            const name = trunc(ch.name || ch.title, 24)
-            // Its lines as this log shows them: under the chat's name, a helper's name kept apart.
-            cur.lines = (old as LogLine[])
-              .filter(l => l && typeof l.at === 'number' && typeof l.text === 'string' && !l.chat)
-              .slice(-JOURNAL_KEEP)
-              .map(l => ({ ...l, chat: ch.id, who: name, ...(l.who !== 'Claude' ? { by: l.who } : {}) }))
-            cur.journalM = jm
-            changed = true
+        if (!cur.file) continue
+        // Only the chunks that changed since the last read, of its newest 5,000 lines.
+        const name = trunc(ch.name || ch.title, 24)
+        const asHere = (l: LogLine): LogLine => ({ ...l, chat: ch.id, who: name, ...(l.who !== 'Claude' ? { by: l.who } : {}) })
+        const have = (await chunkList(`${dir}/journals/${cur.file.journal}`)).slice(-Math.ceil(JOURNAL_KEEP / CHUNK))
+        let mine = false
+        for (const n of [...cur.chunkLines.keys()])
+          if (!have.some(x => x.n === n)) {
+            cur.chunkLines.delete(n)
+            cur.chunkM.delete(n)
+            mine = true
           }
+        for (const { n, at } of have) {
+          if (!at || cur.chunkM.get(n) === at) continue
+          const lines = await readJson(`${dir}/journals/${cur.file.journal}/${chunkName(n)}`)
+          if (!Array.isArray(lines)) continue
+          cur.chunkLines.set(n, lines.filter(l => isLine(l) && !l.chat).map(asHere))
+          cur.chunkM.set(n, at)
+          mine = true
+        }
+        if (mine) {
+          cur.lines = [...cur.chunkLines.entries()].sort((x, y) => x[0] - y[0]).flatMap(x => x[1])
+          changed = true
         }
       }
     }
-    if (changed) $.ui.invalidate('ui.render')
+    if (changed) {
+      nestedVer++
+      $.ui.invalidate('ui.render')
+    }
   } finally {
     readingNested = false
   }
@@ -3170,8 +3268,10 @@ const logMarkdown = (lines: LogLine[], c: Crew) => {
 const LOG_DIR = '.claude/crew-logs'
 const SUMMARY_SYSTEM = 'You write notes that a future Claude, working in the same project, reads to understand an earlier chat. Be concrete: file names, commands, decisions and their reasons. No preamble.'
 const SUMMARY_ASK = 'Below is the activity log of one chat in this project: who did what and when, and what they were thinking. Summarise it in Markdown under these headings: Goal; What was done (files and commands); How and why (the key decisions and the reasoning behind them); Problems hit and how they were solved; Left open. Keep it under 400 words.'
+const UPDATE_ASK =
+  'Below is the summary of one chat in this project so far, then the lines of its activity log since that summary. Return the whole summary brought up to date with what the new lines add, in the same Markdown under the same headings: Goal; What was done (files and commands); How and why (the key decisions and the reasoning behind them); Problems hit and how they were solved; Left open. Keep it under 400 words.'
 let saving = false
-let lastSave: { at: number; file: string; summary: boolean } | undefined
+let lastSave:{ at: number; file: string; summary: boolean } | undefined
 const slugOf = (s: string) => oneLine(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'chat'
 /** Saves this chat's log into the project, and a summary of it by a cheaper model (Haiku) beside it. */
 const saveLog = async ($: EngineInterface, why: 'button' | 'task') => {
@@ -3198,11 +3298,21 @@ const saveLog = async ($: EngineInterface, why: 'button' | 'task') => {
     const md = logMarkdown(lines, c)
     const dir = `${sessionDir}/${LOG_DIR}`
     await $.fs.write(`${dir}/${base}.md`, md)
-    const r = (await later$(() =>
-      $.model.complete({ model: 'haiku', system: SUMMARY_SYSTEM, prompt: `${SUMMARY_ASK}\n\n${md.length > 150_000 ? `(earlier lines left out)\n${md.slice(-150_000)}` : md}`, maxTokens: 1500, timeoutMs: 120_000 }),
-    ).catch(() => undefined)) as { isAnswered?: boolean; text?: string } | undefined
+    // The summary: written once from the whole log, then brought up to date with only the lines since
+    // (and not asked for at all when nothing is new).
+    const marks = ((await $.store.get('summarised').catch(() => undefined)) ?? {}) as Record<string, number>
+    const upTo = marks[key] ?? 0
+    const before = upTo ? String((await later$(() => $.fs.read(`${dir}/${base}.summary.md`)).catch(() => '')) ?? '').trim() : ''
+    const fresh = before ? lines.filter(l => l.at > upTo) : lines
+    const cap = (s: string) => (s.length > 150_000 ? `(earlier lines left out)\n${s.slice(-150_000)}` : s)
+    const ask = before ? `${UPDATE_ASK}\n\n## The summary so far\n\n${before}\n\n## The log since\n\n${cap(logMarkdown(fresh, c))}` : `${SUMMARY_ASK}\n\n${cap(md)}`
+    const r =
+      before && !fresh.length
+        ? { isAnswered: true, text: before }
+        : ((await later$(() => $.model.complete({ model: 'haiku', system: SUMMARY_SYSTEM, prompt: ask, maxTokens: 1500, timeoutMs: 120_000 })).catch(() => undefined)) as { isAnswered?: boolean; text?: string } | undefined)
     const summary = r?.isAnswered && r.text ? r.text.trim() : ''
-    if (summary) await $.fs.write(`${dir}/${base}.summary.md`, `${summary}\n`)
+    if (summary && summary !== before) await $.fs.write(`${dir}/${base}.summary.md`, `${summary}\n`)
+    if (summary) await $.store.set('summarised', Object.fromEntries(Object.entries({ ...marks, [key]: lines[lines.length - 1]?.at ?? 0 }).slice(-200))).catch(() => undefined)
     lastSave = { at: Date.now(), file: `${LOG_DIR}/${base}.md`, summary: !!summary }
     if (why === 'button') void $.ui.toast(`Log saved to ${LOG_DIR}/${base}.md${summary ? ', with a summary beside it' : " (the summary couldn't be written)"}`)
   } catch (err) {
@@ -3257,7 +3367,18 @@ const findLogs = async ($: EngineInterface) => {
 }
 
 /** Starts this chat's website (a small Node server beside the mod) and answers what is pressed on it. */
-const startWeb = ($: EngineInterface) => {
+/**
+ * The website runs only once it is wanted: on the first /crew, or at session start for a chat that had
+ * one before Claude restarted (so its browser pane finds it again). A chat nobody opens keeps no server.
+ */
+let webState: 'off' | 'checking' | 'starting' | 'on' = 'off'
+/** It could not start at all (no Node): the pane then draws the whole view itself. */
+let webFailed = false
+const startWeb = ($: EngineInterface, onlyIfKept = false) => {
+  if (webState !== 'off') return
+  // At session start it only looks for a saved address first; "Starting…" shows once it starts.
+  webState = onlyIfKept ? 'checking' : 'starting'
+  void later$(() => $.ui.invalidate('ui.render')).catch(() => undefined)
   void (async () => {
     try {
       // The address this chat's website had last time (kept per chat in the store), so after Claude
@@ -3267,6 +3388,12 @@ const startWeb = ($: EngineInterface) => {
         .catch(() => '')
       const kept = ((await $.store.get('webAddress').catch(() => undefined)) ?? {}) as Record<string, { port: number; token: string; at: number }>
       const was = sid ? kept[sid] : undefined
+      if (onlyIfKept && !was) {
+        webState = 'off'
+        return
+      }
+      webState = 'starting'
+      void later$(() => $.ui.invalidate('ui.render')).catch(() => undefined)
       const server = $.process.spawn({ argv: ['node', `${$.plugin.root}/web/server.mjs`, ...(was ? [String(was.port), was.token] : [])] })
       let buf = ''
       for await (const piece of server as AsyncIterable<{ text: string }>) {
@@ -3278,6 +3405,8 @@ const startWeb = ($: EngineInterface) => {
             const [port, token] = line.slice(6).split(' ')
             const base = `http://127.0.0.1:${port}/${token}`
             webUrl = `${base}/`
+            webState = 'on'
+            webFailed = false
             if (sid) {
               const keep = Object.entries({ ...kept, [sid]: { port: Number(port), token, at: Date.now() } })
                 .sort((x, y) => y[1].at - x[1].at)
@@ -3321,10 +3450,12 @@ const startWeb = ($: EngineInterface) => {
     }
     const was = webUrl
     webUrl = ''
+    webState = 'off'
+    if (!was) webFailed = true
     webPost = undefined
     webWatchers = 0
-    if (was) $.ui.invalidate('ui.render')
-    else void Promise.resolve().then(() => $.ui.open({ id: PANE, title: 'Claude Crew' })).catch(() => undefined)
+    $.ui.invalidate('ui.render')
+    if (!was) void Promise.resolve().then(() => $.ui.open({ id: PANE, title: 'Claude Crew' })).catch(() => undefined)
   })()
 }
 
@@ -3448,10 +3579,10 @@ export const register: Register = on => {
     void readChatCost($)
     const savedTheme = await $.store.get('theme').catch(() => undefined)
     if (savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'auto') await write?.(d => (d.theme === savedTheme ? d : { ...d, theme: savedTheme }))
-    // This chat's website: started once, and sent the view while anyone has it open. The pane opens
-    // by itself only when the website can't start.
-    if (!webUrl) startWeb($)
-    void openJournal($)
+    // This chat's website: back at once only if it had one before (else on its first /crew), and sent
+    // the view while anyone has it open. The pane opens by itself only when the website can't start.
+    if (!webUrl) startWeb($, true)
+    void openJournal($).then(() => pruneOld($))
     journalTimer?.cancel()
     journalTimer = $.clock.every(3000, () => void syncJournal($))
     nestedTimer?.cancel()
@@ -3474,6 +3605,14 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'crew' }, async $ => {
+    // The website starts now if it isn't running (half a second or so), once a session start's look for
+    // a saved address is done.
+    const settle = async () => {
+      for (let i = 0; i < 50 && !webUrl && (webState === 'starting' || webState === 'checking'); i++) await new Promise<void>(r => void $.clock.after(100, () => r()))
+    }
+    await settle()
+    if (!webUrl) startWeb($)
+    await settle()
     if (webUrl) {
       const url = webUrl
       $.clock.after(400, () =>
@@ -3960,8 +4099,13 @@ export const register: Register = on => {
         problemNote = ''
         let d = ok && delta && node && !isSpecial(node) ? record(c, node, id, delta) : c
         // How long the call took, on its line in the log.
-        if (d.log.some(l => l.call === callId && l.took === undefined))
-          d = { ...d, log: d.log.map(l => (l.call === callId && l.took === undefined ? { ...l, took: Math.max(0, stamp - l.at), ...(more ? { more } : {}), ...(ok ? {} : { bad: true as const }) } : l)) }
+        const finished = (l: LogLine): LogLine => ({ ...l, took: Math.max(0, stamp - l.at), ...(more ? { more } : {}), ...(ok ? {} : { bad: true as const }) })
+        if (d.log.some(l => l.call === callId && l.took === undefined)) d = { ...d, log: d.log.map(l => (l.call === callId && l.took === undefined ? finished(l) : l)) }
+        else {
+          // A long call whose line has left the pane's log: its line in the journal finishes instead.
+          const kept = [...journal.values()].find(l => l.call === callId && l.took === undefined)
+          if (kept) addToJournal(finished(kept))
+        }
         if (ok && /^Task(Create|Update|List|Get)$/.test(e.tool)) d = applyTaskCall(d, e.tool, a, ran, out, id)
         // The call is over: a permission it waited on is settled.
         if (d.agents.some(x => x.id === id && x.needs?.tool === e.tool.slice(0, 80))) d = upsert(d, id, x => ({ ...x, needs: undefined }))
@@ -4071,7 +4215,9 @@ export const register: Register = on => {
     const cols = Math.max(40, e.props?.bodyColumns ?? e.viewport?.columns ?? 80)
 
     // The website runs: the pane on the desktop only says where, and how to open it beside the chat.
-    if (e.surface !== 'terminal' && webUrl) {
+    // On the desktop the pane points at the website: running, starting, or to be opened with /crew. Only
+    // when it could not start at all (no Node) does the pane draw the whole view itself.
+    if (e.surface !== 'terminal' && !webFailed) {
       const c = await read($, crew)
       const atWork = c.agents.filter(a => a.state === 'busy' || a.state === 'thinking').length
       const needs = c.agents.filter(a => a.needs).length
@@ -4083,12 +4229,16 @@ export const register: Register = on => {
             <Text bold color="#D97757">{'✻ Claude Crew'}</Text>
             <Text color="#8B949E">{" · this chat's crew is a website"}</Text>
           </Box>
-          <Box flexDirection="row">
-            <Text color="#3FB950">{'● '}</Text>
-            <Text>{'running at '}</Text>
-            <Link href={webUrl} />
-          </Box>
-          <Text color="#8B949E">{'Type /crew to open it beside the chat, or click the address.'}</Text>
+          {webUrl ? (
+            <Box flexDirection="row">
+              <Text color="#3FB950">{'● '}</Text>
+              <Text>{'running at '}</Text>
+              <Link href={webUrl} />
+            </Box>
+          ) : (
+            <Text color="#8B949E">{webState === 'starting' ? 'Starting…' : 'Type /crew to open it beside the chat'}</Text>
+          )}
+          {webUrl ? <Text color="#8B949E">{'Type /crew to open it beside the chat, or click the address.'}</Text> : null}
           <Text color={needs ? '#E3B341' : '#8B949E'}>{status}</Text>
         </Box>,
         c.theme ?? 'auto',

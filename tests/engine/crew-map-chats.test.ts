@@ -34,7 +34,7 @@ for (const allowed of [true, false]) {
     on('ui.open', async () => ({ value: true }) as never)
     await $.session.start({ source: 'startup', cwd: 'C:/work/game' } as never)
     for (let i = 0; i < 5 && allowed && !reads; i++) await new Promise(r => setTimeout(r, 50))
-    const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'desktop', ...PANE(100) })
+    const ui = await $.ui.mount({ plugin: 'crew-map', surface: 'terminal', ...PANE(100) })
     const drawn = JSON.stringify(await ui.drawn())
     if (allowed) {
       expect(reads, 'the list was read').toBeGreaterThan(0)
