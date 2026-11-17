@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.7.7'
+const VERSION = '1.7.8'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -2840,7 +2840,6 @@ const webView = async ($: EngineInterface) => {
     label: g.label,
   })
   const line = (l: VLine) => ({ segs: l.segs.map(seg), right: (l.right ?? []).map(seg), indent: l.indent ? Math.round(l.indent / CELL_W) : 0 })
-  const sm = m.c.summary
   return {
     v: VERSION,
     theme: m.c.theme ?? 'auto',
@@ -2867,7 +2866,7 @@ const webView = async ($: EngineInterface) => {
       details: actId(m.openDetails(r.id)),
     })),
     recap: m.recap
-      ? { title: m.recap.title, goal: m.recap.goal, ago: m.recap.ago, facts: m.recap.facts, copy: m.recap.copy && sm ? summaryMarkdown(sm) : '', demo: m.recap.demo ? actId(m.recap.demo) : '' }
+      ? { title: m.recap.title, goal: m.recap.goal, ago: m.recap.ago, facts: m.recap.facts, full: !!m.recap.copy, demo: m.recap.demo ? actId(m.recap.demo) : '' }
       : null,
     touched: {
       sum: m.touchedSum,

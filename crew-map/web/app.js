@@ -40,7 +40,9 @@ const UI = {
 const uiIcon = name => `<svg class="ico" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${UI[name]}"/></svg>`
 // Words for the wide page, and their shorter form when it is narrow (as the design's 450 px board).
 const W = (wide, narrow = '') => `<span class="w">${wide}</span>${narrow ? `<span class="n">${narrow}</span>` : ''}`
-const btn = (act, inner, cls = '', label = '') => (act ? `<button class="nb ${cls}" data-act="${esc(act)}"${label ? ` aria-label="${esc(label)}"` : ''}>${inner}</button>` : `<span class="${cls}">${inner}</span>`)
+// An icon button (class ib) shows its label as a tooltip on hover.
+const btn = (act, inner, cls = '', label = '') =>
+  act ? `<button class="nb ${cls}" data-act="${esc(act)}"${label ? ` aria-label="${esc(label)}"` : ''}${label && /\bib\b/.test(cls) ? ` data-tip="${esc(label)}"` : ''}>${inner}</button>` : `<span class="${cls}">${inner}</span>`
 
 // 1 · Header
 const drawHead = () => {
@@ -78,8 +80,8 @@ const drawCrew = () => {
   const rc = V.recap
   const recap = !rc
     ? ''
-    : rc.copy
-      ? `<div class="recap"><div class="l1">${icon('done', 'green', 15, 2)}<span class="fix b">${esc(rc.title)}</span><span class="cut dim">${esc(rc.goal)}</span><span class="time">${esc(rc.ago)}</span></div>${rc.facts.map(([k, v, role]) => `<div class="fact"><span>${esc(k)}</span><span class="cut" style="color:${color(role)}">${esc(v)}</span></div>`).join('')}</div><div style="padding-left:12px"><button class="nb u" data-copy="1">Copy as Markdown</button></div>`
+    : rc.full
+      ? `<div class="recap"><div class="l1">${icon('done', 'green', 15, 2)}<span class="fix b">${esc(rc.title)}</span><span class="cut dim">${esc(rc.goal)}</span><span class="time">${esc(rc.ago)}</span></div>${rc.facts.map(([k, v, role]) => `<div class="fact"><span>${esc(k)}</span><span class="cut" style="color:${color(role)}">${esc(v)}</span></div>`).join('')}</div>`
       : `<div class="recap"><span class="dim">${esc(rc.title)}</span></div>${rc.demo ? `<div style="padding-left:12px">${btn(rc.demo, '▶ Try a pretend session', 'u')}</div>` : ''}`
   $('crew').innerHTML = V.rows.map(card).join('') + recap
 }
@@ -97,20 +99,22 @@ const drawTouched = () => {
 // 4 · The viewer
 const drawTabs = () => {
   $('tabs').innerHTML = [
-    ...V.tabs.map(t => btn(t.act, t.t === '⌕' ? uiIcon('search') : t.t === '⚙' ? uiIcon('settings') : esc(t.t), t.on ? 'on' : '', t.label)),
+    ...V.tabs.map(t => (t.t === '⌕' || t.t === '⚙' ? btn(t.act, uiIcon(t.t === '⌕' ? 'search' : 'settings'), `ib tip-l${t.on ? ' on' : ''}`, t.label) : btn(t.act, esc(t.t), t.on ? 'on' : '', t.label))),
     `<span class="grow"></span>`,
     ...(V.tab === 'activity' && V.logActs
       ? [
           V.logSave?.busy ? `<span class="faint">saving…</span>` : V.logSave?.at ? `<span class="faint w" title="${esc(V.logSave.file)}">saved ${esc(V.logSave.at.slice(0, 5))}</span>` : '',
           btn(V.logActs.copy, uiIcon('copy'), 'ib', 'Copy the whole log as Markdown'),
-          btn(V.logActs.download, uiIcon('download'), 'ib', 'Download the whole log as a Markdown file'),
-          btn(V.logActs.save, uiIcon('save'), 'ib', 'Save the log, and a summary of it, in the project (.claude/crew-logs)'),
+          btn(V.logActs.download, uiIcon('download'), 'ib', 'Download the log as a .md file'),
+          btn(V.logActs.save, uiIcon('save'), 'ib', 'Save the log and a summary into this project'),
           `<span class="sep"></span>`,
         ]
       : []),
-    `<button class="nb ib" data-scroll="up" aria-label="Older">${uiIcon('up')}${W('older')}</button>`,
-    `<button class="nb ib" data-scroll="down" aria-label="Newer">${uiIcon('down')}${W('newer')}</button>`,
-    `<button class="nb ib" data-scroll="end" aria-label="Latest">${uiIcon('latest')}${W('latest')}</button>`,
+    `<button class="nb ib" data-scroll="up" aria-label="Older" data-tip="Older lines">${uiIcon('up')}${W('older')}</button>`,
+    `<button class="nb ib" data-scroll="down" aria-label="Newer" data-tip="Newer lines">${uiIcon('down')}${W('newer')}</button>`,
+    V.tab === 'activity' && !following()
+      ? `<button class="nb ib wake" data-scroll="end" aria-label="Latest" data-tip="Paused: jump to the newest line and follow it again">${uiIcon('latest')}${W('latest')}</button>`
+      : `<button class="nb ib" data-scroll="end" aria-label="Latest" data-tip="The newest line">${uiIcon('latest')}${W('latest')}</button>`,
   ].join('')
   const sr = $('searchRow')
   sr.hidden = V.tab !== 'search'
@@ -119,7 +123,8 @@ const drawTabs = () => {
 }
 const logLine = l => {
   const open = opened.has(l.key)
-  return `<div class="ln"><span class="when">${esc(l.time.slice(0, 5))}${W(esc(l.time.slice(5)))}</span><span style="color:${color(l.dot)}">●</span><span class="who" title="${esc(l.who)}">${esc(l.who)}</span>${icon(l.kind, l.running ? 'green' : 'dim', 13, 1.8)}<span class="cut ${l.thought ? 'thought' : l.dim ? 'dim' : ''}" title="${esc(l.full || l.text)}">${esc(l.text)}</span>${l.full ? `<button class="nb" data-open="${esc(l.key)}" aria-label="${open ? 'Fold the line' : 'Show the whole line'}">${open ? '▾' : '›'}</button>` : ''}<span class="dur${l.running ? ' run' : ''}">${l.running ? '● ' : ''}${esc(l.dur)}</span></div>${open ? `<div class="whole ${l.thought ? 'thought' : ''}">${esc(l.full)}</div>` : ''}`
+  // A click on the line opens it whole (and again folds it); › marks one with more than it shows.
+  return `<div class="ln${l.full ? ' can' : ''}${open ? ' open' : ''}" data-line="${esc(l.key)}"><span class="when">${esc(l.time.slice(0, 5))}${W(esc(l.time.slice(5)))}</span><span style="color:${color(l.dot)}">●</span><span class="who">${esc(l.who)}</span>${icon(l.kind, l.running ? 'green' : 'dim', 13, 1.8)}<span class="cut ${l.thought ? 'thought' : l.dim ? 'dim' : ''}">${esc(l.text)}</span>${l.full ? `<span class="more" aria-hidden="true">${open ? '▾' : '›'}</span>` : ''}<span class="dur${l.running ? ' run' : ''}">${l.running ? '● ' : ''}${esc(l.dur)}</span></div>${open ? `<div class="whole ${l.thought ? 'thought' : ''}">${esc(l.full || l.text)}</div>` : ''}`
 }
 const seg = g => {
   const lead = `${g.dot ? `<span style="color:${color(g.dot)}">●</span> ` : ''}${g.icon ? icon(g.icon[0], g.icon[1], 13, 1.8) : ''}${g.bar !== undefined && g.bar !== null ? `<svg width="72" height="8" viewBox="0 0 72 8" aria-hidden="true"><rect width="72" height="8" rx="4" fill="var(--line)"/><rect width="${Math.max(8, 72 * Math.min(1, g.bar))}" height="8" rx="4" fill="${color(g.role === 'red' || g.role === 'amber' ? g.role : 'dim')}"/></svg>` : ''}`
@@ -145,8 +150,10 @@ const settingsHtml = s => {
     `<div class="faint" style="margin-top:12px">Claude Crew ${esc(s.version)}</div>`,
   ].join('')
 }
-// The log follows the newest line (at the bottom) until you scroll up, and again once you scroll back down.
+// The log follows the newest line (at the bottom), as a terminal does, while you are at the bottom and
+// no line is open; scrolling up or opening a line pauses it. ⤓ latest (lit while paused) follows again.
 let stuck = true
+const following = () => stuck && !opened.size
 const drawBody = () => {
   const body = $('body')
   if (V.tab === 'settings' && V.settings) {
@@ -156,16 +163,27 @@ const drawBody = () => {
   }
   if (V.tab === 'activity') body.innerHTML = V.log.length ? V.log.map(logLine).join('') : `<div class="empty">Nothing yet: each thing a Claude does shows here.</div>`
   else body.innerHTML = V.lines.map(vLine).join('')
-  if (V.tab === 'activity' && stuck) body.scrollTop = body.scrollHeight
+  // A line the page's width cuts off can be opened too: marked like the others.
+  if (V.tab === 'activity')
+    for (const ln of body.querySelectorAll('.ln:not(.can):not(.open)')) {
+      const cut = ln.querySelector('.cut')
+      if (cut && cut.scrollWidth > cut.clientWidth + 1) {
+        ln.classList.add('can')
+        cut.insertAdjacentHTML('afterend', '<span class="more" aria-hidden="true">›</span>')
+      }
+    }
+  if (V.tab === 'activity' && following()) body.scrollTop = body.scrollHeight
 }
 $('body').addEventListener('scroll', () => {
   const body = $('body')
+  const was = following()
   stuck = body.scrollHeight - body.scrollTop - body.clientHeight < 24
+  if (V && was !== following()) drawTabs()
 })
 // The page or the drag line changes the log's height: it stays on the newest line if it was there.
 new ResizeObserver(() => {
   const body = $('body')
-  if (V?.tab === 'activity' && stuck) body.scrollTop = body.scrollHeight
+  if (V?.tab === 'activity' && following()) body.scrollTop = body.scrollHeight
 }).observe($('body'))
 // Narrow, as the design's 450 px board: the shorter words.
 new ResizeObserver(([e]) => $('app').classList.toggle('narrow', e.contentRect.width < 520)).observe($('app'))
@@ -183,31 +201,42 @@ const draw = () => {
   drawBody()
   if (fresh) {
     stuck = true
+    opened.clear()
     body.scrollTop = V.tab === 'activity' ? body.scrollHeight : 0
   }
 }
 
 // Presses
 document.addEventListener('click', ev => {
+  // A log line: opened whole, or folded again (not when you were selecting its words).
+  const ln = ev.target.closest('.ln')
+  if (ln && !ev.target.closest('button') && !String(window.getSelection?.() ?? '')) {
+    const k = ln.dataset.line
+    const cut = ln.querySelector('.cut')
+    if (opened.has(k) || ln.classList.contains('can') || (cut && cut.scrollWidth > cut.clientWidth + 1)) {
+      opened.has(k) ? opened.delete(k) : opened.add(k)
+      drawBody()
+      drawTabs()
+    }
+    return
+  }
   const b = ev.target.closest('button')
   if (!b) return
   if (b.dataset.act) send({ id: b.dataset.act })
-  else if (b.dataset.open) {
-    opened.has(b.dataset.open) ? opened.delete(b.dataset.open) : opened.add(b.dataset.open)
-    drawBody()
-  } else if (b.dataset.scroll) {
+  else if (b.dataset.scroll) {
     const body = $('body')
     const page = Math.max(19, body.clientHeight - 38)
-    if (b.dataset.scroll === 'end') body.scrollTop = V?.tab === 'activity' ? body.scrollHeight : 0
+    if (b.dataset.scroll === 'end' && V?.tab === 'activity') {
+      opened.clear()
+      stuck = true
+      drawBody()
+      drawTabs()
+      body.scrollTop = body.scrollHeight
+    } else if (b.dataset.scroll === 'end') body.scrollTop = 0
     else body.scrollBy({ top: b.dataset.scroll === 'up' ? -page : page })
   } else if (b.dataset.budget) {
     send({ set: { budget: Math.max(0, Number($('budget').value) || 0) } })
     $('budget').blur()
-  } else if (b.dataset.copy && V?.recap?.copy) {
-    navigator.clipboard?.writeText(V.recap.copy).then(
-      () => { b.textContent = 'Copied' ; setTimeout(() => (b.textContent = 'Copy as Markdown'), 1500) },
-      () => { b.textContent = "Couldn't copy here" },
-    )
   }
 })
 document.addEventListener('change', ev => {
