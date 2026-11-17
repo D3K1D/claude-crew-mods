@@ -1,7 +1,8 @@
 // This chat's Claude Crew website. The mod starts it (one per chat), pushes the view to it as JSON,
 // and reads what is pressed on the page from its output:
 //
-//   READY <port> <token>    it is up; the page is at http://127.0.0.1:<port>/<token>/
+//   READY <port> <token> <key>  it is up; the page is at http://127.0.0.1:<port>/<token>/, and the mod's
+//                               own requests (push, ping, export, reply, quit) carry <key>, which the page never sees
 //   WATCH <n>               how many pages have it open (the mod sends views only while one does)
 //   ACT {"id":"…"}          a press; the mod looks the id up in what it handed out
 //   ACT {"search":"…"}      the search field
@@ -12,7 +13,9 @@
 // The mod's replies (POST reply) and the log it exports (POST export) reach the pages as events of their own.
 //
 // Only this computer can reach it (127.0.0.1), every path starts with a random token, and a request
-// must name 127.0.0.1 as its host, so no other website can drive it.
+// must name 127.0.0.1 as its host and, when it says where it comes from, come from the page itself, so no
+// other website can drive it. The page can only press and ask; changing what it shows, or stopping it,
+// takes the mod's key as well.
 //
 // It stops when the mod stops it, and on its own when nobody needs it any more: when the process that
 // started it is gone (Claude closed or crashed), or when the mod has not been heard from (a push or
@@ -26,9 +29,12 @@ import { join } from 'node:path'
 const here = fileURLToPath(new URL('.', import.meta.url))
 // The address this chat had before (port and token, from the mod), so a page left open, or the browser
 // pane the app brings back, finds it again; a new one when there was none, or the port is taken.
-const [wantPort, wantToken] = process.argv.slice(2)
+const [wantPort, wantToken, wantKey] = process.argv.slice(2)
 const want = Number(wantPort) >= 1024 && Number(wantPort) <= 65535 ? Number(wantPort) : 0
 let token = want && /^[0-9a-f]{24}$/.test(wantToken ?? '') ? wantToken : randomBytes(12).toString('hex')
+// The mod's key: kept with the address, so the website that comes back after Claude reopens can ask the
+// old one (still winding down) to hand the address over.
+const key = /^[0-9a-f]{32}$/.test(wantKey ?? '') ? wantKey : randomBytes(16).toString('hex')
 const FILES = {
   '': ['index.html', 'text/html; charset=utf-8'],
   'app.css': ['app.css', 'text/css; charset=utf-8'],
@@ -50,26 +56,48 @@ const alive = pid => {
     return err.code === 'EPERM'
   }
 }
+const CHECK_MS = Number(process.env.CREW_CHECK_MS) || 5_000
+let checked = Date.now()
 setInterval(() => {
+  // A check far later than its interval: the computer slept, and the mod's ping is as late as this
+  // check. That silence is not the mod gone, so it starts counting again.
+  if (Date.now() - checked > CHECK_MS * 4) heard = Date.now()
+  checked = Date.now()
   if (!alive(parent) || Date.now() - heard > QUIET_MS) process.exit(0)
-}, Number(process.env.CREW_CHECK_MS) || 5_000)
+}, CHECK_MS)
 
+// A request's body, up to 8 MB (more ends the request).
+const bodyOf = (req, then) => {
+  let body = ''
+  req.on('data', d => {
+    body += d
+    if (body.length > MAX_BODY) req.destroy()
+  })
+  req.on('end', () => then(body))
+}
+const MOD_PATHS = new Set(['push', 'ping', 'export', 'reply', 'quit'])
 const srv = http.createServer((req, res) => {
   const { port } = srv.address()
-  if (req.headers.host !== `127.0.0.1:${port}`) {
+  const origin = req.headers.origin
+  if (req.headers.host !== `127.0.0.1:${port}` || (req.method === 'POST' && origin && origin !== `http://127.0.0.1:${port}`)) {
     res.writeHead(403)
     return res.end()
   }
   const [, tok, ...rest] = (req.url ?? '/').split('?')[0].split('/')
   const path = rest.join('/')
-  if (tok !== token) {
+  if (tok !== token || (MOD_PATHS.has(path) && req.headers['x-crew-key'] !== key)) {
     res.writeHead(404)
     return res.end()
   }
-  const plain = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }
+  const plain = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' }
   if (req.method === 'GET' && path in FILES) {
     const [file, type] = FILES[path]
-    res.writeHead(200, { 'content-type': type, ...plain })
+    res.writeHead(200, {
+      'content-type': type,
+      ...plain,
+      'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      'x-frame-options': 'DENY',
+    })
     return res.end(readFileSync(join(here, file)))
   }
   if (req.method === 'GET' && path === 'events') {
@@ -100,67 +128,50 @@ const srv = http.createServer((req, res) => {
     res.writeHead(204, plain)
     return res.end()
   }
-  // From the mod to the pages: the whole log as Markdown (to copy or save), or a reply to what a page asked.
-  if (req.method === 'POST' && (path === 'export' || path === 'reply')) {
-    heard = Date.now()
-    let body = ''
-    req.on('data', d => (body += d))
-    req.on('end', () => {
-      for (const w of watchers) w.write(`event: ${path}\ndata: ${body.replace(/\n/g, ' ')}\n\n`)
-      res.writeHead(204, plain)
-      res.end()
-    })
-    return
+  if (req.method !== 'POST' || !['export', 'reply', 'push', 'act'].includes(path)) {
+    res.writeHead(404)
+    return res.end()
   }
-  if (req.method === 'POST' && (path === 'push' || path === 'act')) {
-    if (path === 'push') heard = Date.now()
-    let body = ''
-    req.on('data', d => {
-      body += d
-      if (body.length > MAX_BODY) req.destroy()
-    })
-    req.on('end', () => {
-      if (path === 'push') {
-        view = body
-        for (const w of watchers) send(w, view)
-      } else {
-        try {
-          const msg = JSON.parse(body)
-          const set = msg.set && typeof msg.set === 'object' ? msg.set : undefined
-          const out =
-            typeof msg.id === 'string'
-              ? { id: msg.id.slice(0, 40) }
-              : typeof msg.search === 'string'
-                ? { search: msg.search.slice(0, 200), next: msg.next === true }
-                : typeof msg.open === 'string'
-                  ? { open: msg.open.slice(0, 60) }
-                  : Number.isFinite(msg.older)
-                    ? { older: msg.older }
-                    : set
-                      ? { set: { ...(Number.isFinite(set.budget) ? { budget: set.budget } : {}), ...(typeof set.editor === 'string' ? { editor: set.editor.slice(0, 20) } : {}) } }
-                      : undefined
-          if (out) say(`ACT ${JSON.stringify(out)}`)
-        } catch {}
-      }
-      res.writeHead(204, plain)
-      res.end()
-    })
-    return
-  }
-  res.writeHead(404)
-  res.end()
+  if (path !== 'act') heard = Date.now()
+  bodyOf(req, body => {
+    // From the mod to the pages: the view, the whole log as Markdown (to copy or save), or a reply to what a page asked.
+    if (path === 'push') {
+      view = body
+      for (const w of watchers) send(w, view)
+    } else if (path !== 'act') for (const w of watchers) w.write(`event: ${path}\ndata: ${body.replace(/\n/g, ' ')}\n\n`)
+    else
+      try {
+        const msg = JSON.parse(body)
+        const set = msg.set && typeof msg.set === 'object' ? msg.set : undefined
+        const out =
+          typeof msg.id === 'string'
+            ? { id: msg.id.slice(0, 40) }
+            : typeof msg.search === 'string'
+              ? { search: msg.search.slice(0, 200), next: msg.next === true }
+              : typeof msg.open === 'string'
+                ? { open: msg.open.slice(0, 60) }
+                : Number.isFinite(msg.older)
+                  ? { older: msg.older }
+                  : set
+                    ? { set: { ...(Number.isFinite(set.budget) ? { budget: set.budget } : {}), ...(typeof set.editor === 'string' ? { editor: set.editor.slice(0, 20) } : {}) } }
+                    : undefined
+        if (out) say(`ACT ${JSON.stringify(out)}`)
+      } catch {}
+    res.writeHead(204, plain)
+    res.end()
+  })
 })
-srv.on('listening', () => say(`READY ${srv.address().port} ${token}`))
+srv.on('listening', () => say(`READY ${srv.address().port} ${token} ${key}`))
 // The address is taken: most likely this chat's own website from before Claude reopened, still winding
-// down. Ask it to stop (only it knows the token), and try again for a few seconds; something else holds
-// the port after that, so take a new address.
+// down. Ask it to stop (only it knows the token and key), and try again for a few seconds; something else
+// holds the port after that, so take a new address.
 const TAKEOVER_MS = 6000
 let firstTry = 0
 srv.on('error', err => {
   if (err.code !== 'EADDRINUSE' || srv.address()) throw err
   if (want && !firstTry) {
     firstTry = Date.now()
-    fetch(`http://127.0.0.1:${want}/${token}/quit`, { method: 'POST' }).catch(() => {})
+    fetch(`http://127.0.0.1:${want}/${token}/quit`, { method: 'POST', headers: { 'x-crew-key': key } }).catch(() => {})
   }
   if (want && Date.now() - firstTry < TAKEOVER_MS) return setTimeout(() => srv.listen(want, '127.0.0.1'), 250)
   token = randomBytes(12).toString('hex')

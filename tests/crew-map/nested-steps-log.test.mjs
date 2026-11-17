@@ -126,6 +126,16 @@ await tick()
 check("a nested chat's new chunk is read, not the ones before it", reads.length === 1 && reads[0].endsWith('cli-kid/000002.json') && /Ran npm run deploy/.test(text(await render())), reads.join(' | '))
 $.fs.read = read0
 
+// 6 · The nested chat renamed by the app: its lines (none of its files changed) show under the new name.
+// (That they keep their keys, so the page doesn't double them, is the page test's.)
+family[0].name = 'site-docs'
+await fire('tool.call', { tool: 'mcp__ccd_session_mgmt__list_sessions', tool_use_id: 'ls2', linked: true }, async () => ({ result: {}, text: JSON.stringify(family) }))
+now += 5000
+await timer(4000)
+await tick()
+t = text(await render())
+check('a nested chat renamed: its lines show under its new name, without reading them again', /site-… ✎ {2}Editing docs\/index\.md/.test(t) && !/docs-…/.test(t), t.slice(-300))
+
 // 4 · This chat's journal: chunks of 250 lines, and only the ones that changed are written.
 const writes = []
 const write0 = $.fs.write
@@ -157,5 +167,34 @@ await tick()
 const first = JSON.parse(disk.get(`${DIR}/journals/cli-me/000001.json`).text)
 check('a line that finished late rewrites only its own (older) chunk', writes.filter(p => p.includes('/journals/')).join(' | ') === `${DIR}/journals/cli-me/000001.json` && first.some(l => l.call === 'slow' && l.took > 0), writes.join(' | '))
 $.fs.write = write0
+
+// 5 · A call that fails while the journal has its line as running: one line, marked bad (its words, its key, unchanged).
+let fail
+const failing = fire('tool.call', { tool: 'Bash', tool_use_id: 'f1', command: 'npm run build', description: 'Build the app' }, () => new Promise(r => (fail = r)))
+await tick()
+await timer(3000)
+await tick()
+fail({ isError: true, text: 'error TS2304\nExit code 2' })
+await failing
+await timer(3000)
+await tick()
+const mineNow = [...disk.entries()].filter(([p]) => p.includes('/journals/cli-me/')).flatMap(([, f]) => JSON.parse(f.text))
+const builds = mineNow.filter(l => l.text.startsWith('▸ Build the app'))
+check('a failed call is one line in the journal, marked bad', builds.length === 1 && builds[0].bad === true && typeof builds[0].took === 'number', JSON.stringify(builds.map(l => [l.text, l.bad, l.took])))
+check('...and the log shows it failed', /Build the app ✗ failed/.test(text(await render())))
+
+// 7 · A new session in the same process starts from nothing: the last chat's lines don't follow it.
+$.session.id = async () => 'cli-next'
+// (A new session's own state starts empty, as the engine keeps one per session.)
+globalThis.__store.set('crew', { ...crew(), log: [] })
+await fire('session.start', {}, async () => ({}))
+await tick()
+now += 10
+await fire('tool.call', { tool: 'Grep', tool_use_id: 'n1', pattern: 'fresh start' }, async () => ({ text: 'ok' }))
+await timer(3000)
+await tick()
+const nextFiles = [...disk.keys()].filter(p => p.includes('/journals/cli-next/'))
+const next = nextFiles.map(p => disk.get(p).text).join(' ')
+check("a new session's journal starts at its chunk 1, with none of the last one's lines", nextFiles.join() === `${DIR}/journals/cli-next/000001.json` && next.includes('fresh start') && !next.includes('Build the app') && !next.includes('searching p1'), nextFiles.join(' | '))
 console.log(`\n${fails} failing check(s)`)
 process.exit(fails ? 1 : 0)

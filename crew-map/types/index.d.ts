@@ -126,7 +126,7 @@ export type MapNode = {
 export type Trail = { a: string; b: string; w: number }
 
 /** One line of the log; 'you' is a message the person sent, 'msg' one another session sent (`who` names it). */
-export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info' | 'you' | 'msg'; text: string; /** All of what a Claude said, when the line is its gist. */ full?: string; /** The tool call it records, and how long that took once done (ms). */ call?: string; took?: number; /** What came of an action, shown when its line is opened: an edit's diff, a command's output tail, an error (capped). */ more?: string; /** The action failed. */ bad?: true; /** The file an edit changed. */ path?: string; /** A nested chat's line (its app id; `who` is then the chat's name), and the helper there who did it. */ chat?: string; by?: string }
+export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info' | 'you' | 'msg'; text: string; /** All of what a Claude said, when the line is its gist. */ full?: string; /** The tool call it records, and how long that took once done (ms). */ call?: string; took?: number; /** What came of an action, shown when its line is opened: an edit's diff, a command's output tail, an error (capped). */ more?: string; /** The action failed (refused: by a permission rule or the person). */ bad?: true; refused?: true; /** The file an edit changed. */ path?: string; /** A nested chat's line (its app id; `who` is then the chat's name), and the helper there who did it. */ chat?: string; by?: string }
 
 /** One task on Claude Code's task list, as the crew last saw it. */
 export type PlanTask = {

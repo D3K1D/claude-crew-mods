@@ -48,10 +48,14 @@ const left = []
 {
   const s = spawn(process.execPath, [SERVER], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, ...FAST } })
   left.push(s.pid)
-  const [, port, token] = (await lineOf(s, 'READY')).split(' ')
+  const [, port, token, key] = (await lineOf(s, 'READY')).split(' ')
   const base = `http://127.0.0.1:${port}/${token}`
-  const post = (path, body = '') => fetch(`${base}/${path}`, { method: 'POST', body }).then(r => r.status).catch(() => 0)
+  const post = (path, body = '', k = key) => fetch(`${base}/${path}`, { method: 'POST', body, headers: k ? { 'x-crew-key': k } : {} }).then(r => r.status).catch(() => 0)
   check('a ping is answered', (await post('ping')) === 204)
+  // The mod's own requests take its key, which the page never sees.
+  check("without the mod's key, a push or a quit is refused", (await post('push', '{}', '')) === 404 && (await post('quit', '', '')) === 404)
+  check('a POST from another origin is refused', (await fetch(`${base}/act`, { method: 'POST', body: '{}', headers: { origin: 'http://evil.example' } }).then(r => r.status)) === 403)
+  check('the page has a content security policy and may not be framed', await fetch(`${base}/`).then(r => /frame-ancestors 'none'/.test(r.headers.get('content-security-policy') ?? '') && r.headers.get('x-frame-options') === 'DENY'))
   for (let i = 0; i < 6; i++) {
     await wait(400)
     await post(i % 2 ? 'ping' : 'push', i % 2 ? '' : '{}')

@@ -336,7 +336,9 @@ const mergeLog = lines => {
     if (byKey.has(l.key)) {
       if (sigOf.get(l.key) === sig) continue
       sigOf.set(l.key, sig)
-      Object.assign(byKey.get(l.key), l)
+      // Replaced whole: a mark the line no longer has (run, bad, more) goes with the old one.
+      LOG[LOG.indexOf(byKey.get(l.key))] = l
+      byKey.set(l.key, l)
       // It finished: what came of it is asked for again if it is open.
       wholeOf.delete(l.key)
       if (opened.has(l.key) && l.more) send({ open: l.key })

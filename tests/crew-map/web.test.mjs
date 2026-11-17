@@ -38,7 +38,7 @@ const $ = {
   },
   model: { complete: async r => (asked.push(r), { isAnswered: true, text: '## Goal\nFix the loader.' }) },
   store: { get: async k => stored.get(k), set: async (k, v) => void stored.set(k, v) },
-  session: { cwd: async () => 'C:/proj' },
+  session: { cwd: async () => 'C:/proj', id: async () => 'chat-web' },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [], version: 0 }) },
   plugin: { root: join(here, '..', '..', 'crew-map') },
@@ -286,6 +286,15 @@ try {
   // That turn is not a task: the log calls it a note, and the last task stays the person's.
   await hooks['turn.start']($, { text: prompts[0]?.text ?? '', turnId: 'T9' }, async () => ({ turnId: 'T9' }))
   check("/crew's turn keeps the person's goal", globalThis.__store.get('crew')?.agents.find(a => a.id === 'main')?.goal === 'Fix the loader', globalThis.__store.get('crew')?.agents.find(a => a.id === 'main')?.goal)
+
+  // The website stops while a page has it open (as after the PC slept): it comes back at the same address.
+  const linkNow = async () => find(await render('desktop'), x => x.type === 'Link')[0]?.props?.href ?? ''
+  const servers = children.length
+  children[servers - 1].kill()
+  await until(async () => !(await linkNow()))
+  await later.splice(0).reduce((p, fn) => p.then(fn), Promise.resolve())
+  await until(async () => (await linkNow()) === url, 5000)
+  check('stopped while a page had it open: it starts again, at the same address', children.length === servers + 1 && (await linkNow()) === url, `${servers} then ${children.length}: ${await linkNow()}`)
 
   // Keep the page's address for a look in a real browser (tests/.build/web-url.txt), then stop.
   writeFileSync(join(here, '..', '.build', 'web-url.txt'), url)

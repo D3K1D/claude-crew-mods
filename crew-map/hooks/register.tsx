@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.3'
+const VERSION = '1.8.4'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -988,12 +988,15 @@ const messageOf = (l: LogLine): { from: string; body: string } | undefined =>
 /** A log line as it reads closed, and opened whole: a thought's every word, an action and what came of it. */
 const shortOf = (l: LogLine) => {
   const m = messageOf(l)
-  return m ? (m.from ? `${m.from}: ${m.body}` : m.body) : l.kind === 'think' ? l.text : l.text.replace(/^$ /, SHELL_MARK)
+  return m ? (m.from ? `${m.from}: ${m.body}` : m.body) : l.kind === 'think' ? l.text : `${l.text.replace(/^$ /, SHELL_MARK)}${failMark(l)}`
 }
+/** A failed action's words: added where it shows (its text is its key; a line from before carries them). */
+const failMark = (l: LogLine) => (l.kind !== 'act' || !l.bad || / ✗ (failed|refused)$/.test(l.text) ? '' : l.refused ? ' ✗ refused' : ' ✗ failed')
 const fullOf = (l: LogLine) => (l.kind === 'think' && l.full ? l.full : l.more ? `${shortOf(l)}\n${l.more}` : shortOf(l))
 const clock = (ms: number) => new Date(ms).toTimeString().slice(0, 8)
 /** A log line's address, for opening it: its time and what it says. */
-const logKey = (l: LogLine) => `${l.at}:${(hash(`${l.chat ? `${l.chat}|` : ''}${l.who}|${l.kind}|${l.text}`) >>> 0).toString(36)}`
+// (A nested chat's line by the chat's id and who there did it, not the chat's name, which the app may change.)
+const logKey = (l: LogLine) => `${l.at}:${(hash(`${l.chat ? `${l.chat}|${l.by ?? 'Claude'}` : l.who}|${l.kind}|${l.text}`) >>> 0).toString(36)}`
 const hash = (s: string) => {
   let h = 2166136261
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
@@ -2889,15 +2892,27 @@ let webTimer: { cancel(): void } | undefined
 let journalTimer: { cancel(): void } | undefined
 let nestedTimer: { cancel(): void } | undefined
 /** What each press on the page does, by the id the page sends back (only ids the mod handed out). */
-const webActs = new Map<string, Act>()
+// Two maps: the ids of this view and the last, so a big map makes room between views, never in the
+// middle of one (an id the page holds still works).
+let webActs = new Map<string, Act>()
+let webActsBefore = new Map<string, Act>()
+const actOf = (id: string) => webActs.get(id) ?? webActsBefore.get(id)
 const actId = (a: Act) => {
-  const id = (hash(JSON.stringify(a)) >>> 0).toString(36)
-  if (webActs.size > 4000) webActs.clear()
+  const s = JSON.stringify(a)
+  // Two hashes (about 64 bits); one that is taken by another press gets a suffix.
+  let id = `${(hash(s) >>> 0).toString(36)}${(hash(`crew|${s}`) >>> 0).toString(36)}`
+  for (let n = 1; n <= 50 && actOf(id) && JSON.stringify(actOf(id)) !== s; n++) id = `${id.replace(/-\d+$/, '')}-${n}`
   webActs.set(id, a)
   return id
 }
+const newActs = () => {
+  if (webActs.size < 4000) return
+  webActsBefore = webActs
+  webActs = new Map()
+}
 /** The website's view: the pane's model as data, each press an id. */
 const webView = async ($: EngineInterface) => {
+  newActs()
   const m = await paneModel($, 160, 700, true)
   const seg = (g: Seg) => ({
     t: g.t ?? '',
@@ -3011,6 +3026,10 @@ const journal = new Map<string, LogLine>()
 const CHUNK = 250
 const JOURNAL_KEEP = 5000
 let journalDir = ''
+/** Read in (or there was nothing to read): lines can be added. */
+let journalOpen = false
+/** Its oldest lines were left out (it keeps the newest 5,000): exports say so. */
+let journalCut = false
 let journalSid = ''
 /** Which chunk each line is in, each chunk's lines in order, and the chunks to write. */
 const chunkOf = new Map<string, number>()
@@ -3038,6 +3057,7 @@ const addToJournal = (l: LogLine, chunk?: number) => {
   if (chunk === undefined) dirtyChunks.add(n)
   // Bounded: the oldest chunk leaves memory (its file stays, until it is pruned).
   while (journal.size > JOURNAL_KEEP && chunks.size > 1) {
+    journalCut = true
     const first = Math.min(...chunks.keys())
     for (const x of chunks.get(first) ?? []) {
       journal.delete(x)
@@ -3048,6 +3068,15 @@ const addToJournal = (l: LogLine, chunk?: number) => {
   }
 }
 const later$ = <T,>(fn: () => Promise<T> | T) => Promise.resolve().then(fn)
+/**
+ * Sets one chat's entry in a store map every chat shares (webAddress, logFiles, summarised): read again
+ * right before the write, so another chat's entry written meanwhile stays; the newest `keep` stay.
+ */
+const storeEntry = async ($: EngineInterface, key: string, id: string, value: unknown, keep: number) => {
+  const now = ((await $.store.get(key).catch(() => undefined)) ?? {}) as Record<string, unknown>
+  const { [id]: _, ...rest } = now
+  await $.store.set(key, Object.fromEntries([...Object.entries(rest), [id, value]].slice(-keep))).catch(() => undefined)
+}
 const journalLines = () => [...journal.values()].sort((x, y) => x.at - y.at)
 const listDir = (path: string) => later$(() => fsList?.(path) ?? []).catch(() => []) as Promise<{ name: string; mtimeMs?: number }[]>
 const readJson = (path: string) => later$(async () => JSON.parse(String(await fsRead?.(path))) as unknown).catch(() => undefined)
@@ -3061,8 +3090,19 @@ const chunkList = async (dir: string) =>
 let fsList: ((path: string) => Promise<unknown[]>) | undefined
 let fsRead: ((path: string) => Promise<unknown>) | undefined
 const openJournal = async ($: EngineInterface) => {
-  // Written only once what was there is read in (the timer may tick before then).
+  // Written only once what was there is read in (the timer may tick before then). A new session in the
+  // same process starts from nothing: the last one's lines, chunks and nested chats go.
   journalDir = ''
+  journalOpen = false
+  journalCut = false
+  journal.clear()
+  chunkOf.clear()
+  chunks.clear()
+  dirtyChunks.clear()
+  lastChunk = 1
+  selfSent = ''
+  nested.clear()
+  nestedVer++
   fsList = p => $.fs.list(p)
   fsRead = p => $.fs.read(p)
   journalSid = String((await later$(() => $.session.id()).catch(() => '')) ?? '')
@@ -3071,8 +3111,9 @@ const openJournal = async ($: EngineInterface) => {
   hostId = String((await later$(() => $.env.get('CLAUDE_CODE_HOST_SESSION_ID')).catch(() => undefined)) ?? '')
   if (!/^local_[\w-]+$/.test(hostId)) hostId = ''
   const dir = journalSid && home ? `${home}/.claude/crew-map/journals/${journalSid}` : ''
-  if (!dir) return
+  if (!dir) return void (journalOpen = true)
   const have = await chunkList(dir)
+  if (have.length > Math.ceil(JOURNAL_KEEP / CHUNK)) journalCut = true
   for (const { n } of have.slice(-Math.ceil(JOURNAL_KEEP / CHUNK))) {
     const lines = await readJson(`${dir}/${chunkName(n)}`)
     if (Array.isArray(lines)) for (const l of lines) if (isLine(l) && !journal.has(logKey(l))) addToJournal(l, n)
@@ -3083,6 +3124,7 @@ const openJournal = async ($: EngineInterface) => {
     if (Array.isArray(old)) for (const l of old.slice(-JOURNAL_KEEP)) if (isLine(l)) addToJournal(l)
   }
   journalDir = dir
+  journalOpen = true
 }
 /**
  * Old journals and steps files go (none written for 30 days, or past the newest 300 journals): $.fs
@@ -3097,7 +3139,8 @@ const pruneOld = async ($: EngineInterface) => {
 /** Takes the log's new lines into the journal (a pretend session's stay out), and writes the chunks that changed. */
 const syncJournal = async ($: EngineInterface) => {
   const c = await readCrew?.()
-  if (!c) return
+  // Not until the journal is open: what is on disk goes in first, in its own chunks.
+  if (!c || !journalOpen) return
   const demoNames = new Set(c.agents.filter(a => a.id.startsWith('demo-')).map(a => a.name))
   const demoOn = demoNames.size > 0
   for (const l of c.log) if (!demoNames.has(l.who) && !(demoOn && l.who === 'Claude')) addToJournal(l)
@@ -3136,7 +3179,7 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
   await later$(() => $.fs.write(`${homeDir}/.claude/crew-map/chats/${hostId}.json`, `${s.slice(0, -1)},"at":${selfAt}}`)).catch(() => undefined)
 }
 /** What this chat knows of each nested chat: its file, and its journal's chunks (lines as this log shows them). */
-type Nested = { file?: ChatFile; fileM: number; title?: string; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
+type Nested = { file?: ChatFile; fileM: number; title?: string; name?: string; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
 const nested = new Map<string, Nested>()
 /** A nested chat's colour (its card's): an index into PALETTE. */
 const chatHue = (id: string) => [...id].reduce((n, x) => n + x.charCodeAt(0), 0) % PALETTE.length
@@ -3146,7 +3189,8 @@ let sortedVer = -1
 let sortedNested: LogLine[] = []
 const nestedLines = () => {
   if (sortedVer !== nestedVer) {
-    sortedNested = [...nested.values()].flatMap(x => x.lines).sort((x, y) => x.at - y.at)
+    // Under the chat's name now (the app may rename it; the lines keep their keys, which use its id).
+    sortedNested = [...nested.values()].flatMap(x => x.lines.map(l => ({ ...l, who: x.name ?? l.who }))).sort((x, y) => x.at - y.at)
     sortedVer = nestedVer
   }
   return sortedNested
@@ -3194,7 +3238,10 @@ const readNested = async ($: EngineInterface) => {
       const files = await listDir(`${dir}/chats`)
       for (const ch of chats) {
         const cur: Nested = nested.get(ch.id) ?? { fileM: 0, chunkM: new Map(), chunkLines: new Map(), lines: [] }
+        const name = trunc(ch.name || ch.title, 24)
+        if (cur.name !== name || cur.title !== ch.title) changed = true
         cur.title = ch.title
+        cur.name = name
         nested.set(ch.id, cur)
         const fm = files.find(f => f.name === `${ch.id}.json`)?.mtimeMs ?? 0
         if (fm && fm !== cur.fileM) {
@@ -3207,8 +3254,7 @@ const readNested = async ($: EngineInterface) => {
         }
         if (!cur.file) continue
         // Only the chunks that changed since the last read, of its newest 5,000 lines.
-        const name = trunc(ch.name || ch.title, 24)
-        const asHere = (l: LogLine): LogLine => ({ ...l, chat: ch.id, who: name, ...(l.who !== 'Claude' ? { by: l.who } : {}) })
+        const asHere = (l: LogLine): LogLine => ({ ...l, chat: ch.id, ...(l.who !== 'Claude' ? { by: l.who } : {}) })
         const have = (await chunkList(`${dir}/journals/${cur.file.journal}`)).slice(-Math.ceil(JOURNAL_KEEP / CHUNK))
         let mine = false
         for (const n of [...cur.chunkLines.keys()])
@@ -3256,11 +3302,12 @@ const logMarkdown = (lines: LogLine[], c: Crew) => {
     `- Project: \`${sessionDir || 'unknown'}\``,
     `- Chat: ${journalSid || 'this chat'}`,
     first ? `- From ${localDay(first.at)} ${clock(first.at)} to ${localDay(last.at)} ${clock(last.at)}` : '- Nothing happened yet',
+    ...(journalCut ? [`- Earlier lines are left out: the log keeps the newest ${JOURNAL_KEEP.toLocaleString("en-US")} lines`] : []),
     `- Cost so far: ${fmtUsd(c.chatCost ?? c.spent?.cost ?? 0)}`,
     '',
     '## Activity',
     '',
-    ...lines.map(l => `- ${clock(l.at)} **${l.who}** ${what(l)}: ${oneLine(l.text)}${l.took !== undefined ? ` _(${took(l.took)})_` : ''}${l.full && oneLine(l.full) !== oneLine(l.text) ? `\n  > ${oneLine(l.full)}` : ''}`),
+    ...lines.map(l => `- ${clock(l.at)} **${l.who}** ${what(l)}: ${oneLine(l.text)}${failMark(l)}${l.took !== undefined ? ` _(${took(l.took)})_` : ''}${l.full && oneLine(l.full) !== oneLine(l.text) ? `\n  > ${oneLine(l.full)}` : ''}`),
     '',
   ].join('\n')
 }
@@ -3294,7 +3341,7 @@ const saveLog = async ($: EngineInterface, why: 'button' | 'task') => {
     const names = ((await $.store.get('logFiles').catch(() => undefined)) ?? {}) as Record<string, string>
     const key = journalSid || 'chat'
     const base = names[key] ?? `${localDay(lines[0].at)}-${slugOf(promptOf(lines.find(l => l.kind === 'you')?.text ?? 'chat'))}-${key.slice(0, 8)}`
-    if (!names[key]) await $.store.set('logFiles', { ...names, [key]: base }).catch(() => undefined)
+    if (!names[key]) await storeEntry($, 'logFiles', key, base, 200)
     const md = logMarkdown(lines, c)
     const dir = `${sessionDir}/${LOG_DIR}`
     await $.fs.write(`${dir}/${base}.md`, md)
@@ -3312,7 +3359,7 @@ const saveLog = async ($: EngineInterface, why: 'button' | 'task') => {
         : ((await later$(() => $.model.complete({ model: 'haiku', system: SUMMARY_SYSTEM, prompt: ask, maxTokens: 1500, timeoutMs: 120_000 })).catch(() => undefined)) as { isAnswered?: boolean; text?: string } | undefined)
     const summary = r?.isAnswered && r.text ? r.text.trim() : ''
     if (summary && summary !== before) await $.fs.write(`${dir}/${base}.summary.md`, `${summary}\n`)
-    if (summary) await $.store.set('summarised', Object.fromEntries(Object.entries({ ...marks, [key]: lines[lines.length - 1]?.at ?? 0 }).slice(-200))).catch(() => undefined)
+    if (summary) await storeEntry($, 'summarised', key, lines[lines.length - 1]?.at ?? 0, 200)
     lastSave = { at: Date.now(), file: `${LOG_DIR}/${base}.md`, summary: !!summary }
     if (why === 'button') void $.ui.toast(`Log saved to ${LOG_DIR}/${base}.md${summary ? ', with a summary beside it' : " (the summary couldn't be written)"}`)
   } catch (err) {
@@ -3374,6 +3421,7 @@ const findLogs = async ($: EngineInterface) => {
 let webState: 'off' | 'checking' | 'starting' | 'on' = 'off'
 /** It could not start at all (no Node): the pane then draws the whole view itself. */
 let webFailed = false
+let restarts: number[] = []
 const startWeb = ($: EngineInterface, onlyIfKept = false) => {
   if (webState !== 'off') return
   // At session start it only looks for a saved address first; "Starting…" shows once it starts.
@@ -3386,7 +3434,7 @@ const startWeb = ($: EngineInterface, onlyIfKept = false) => {
       const sid = await Promise.resolve()
         .then(() => $.session.id())
         .catch(() => '')
-      const kept = ((await $.store.get('webAddress').catch(() => undefined)) ?? {}) as Record<string, { port: number; token: string; at: number }>
+      const kept = ((await $.store.get('webAddress').catch(() => undefined)) ?? {}) as Record<string, { port: number; token: string; key?: string; at: number }>
       const was = sid ? kept[sid] : undefined
       if (onlyIfKept && !was) {
         webState = 'off'
@@ -3394,7 +3442,7 @@ const startWeb = ($: EngineInterface, onlyIfKept = false) => {
       }
       webState = 'starting'
       void later$(() => $.ui.invalidate('ui.render')).catch(() => undefined)
-      const server = $.process.spawn({ argv: ['node', `${$.plugin.root}/web/server.mjs`, ...(was ? [String(was.port), was.token] : [])] })
+      const server = $.process.spawn({ argv: ['node', `${$.plugin.root}/web/server.mjs`, ...(was ? [String(was.port), was.token, ...(was.key ? [was.key] : [])] : [])] })
       let buf = ''
       for await (const piece of server as AsyncIterable<{ text: string }>) {
         buf += piece.text
@@ -3402,18 +3450,15 @@ const startWeb = ($: EngineInterface, onlyIfKept = false) => {
           const line = buf.slice(0, nl).trim()
           buf = buf.slice(nl + 1)
           if (line.startsWith('READY ')) {
-            const [port, token] = line.slice(6).split(' ')
+            const [port, token, key = ''] = line.slice(6).split(' ')
             const base = `http://127.0.0.1:${port}/${token}`
             webUrl = `${base}/`
             webState = 'on'
             webFailed = false
             if (sid) {
-              const keep = Object.entries({ ...kept, [sid]: { port: Number(port), token, at: Date.now() } })
-                .sort((x, y) => y[1].at - x[1].at)
-                .slice(0, 40)
-              void $.store.set('webAddress', Object.fromEntries(keep)).catch(() => undefined)
+              void storeEntry($, 'webAddress', sid, { port: Number(port), token, key, at: Date.now() }, 40)
             }
-            webPost = (path, body = '') => $.http.fetch(`${base}/${path}`, { method: 'POST', body }).catch(() => undefined)
+            webPost = (path, body = '') => $.http.fetch(`${base}/${path}`, { method: 'POST', body, headers: { 'x-crew-key': key } }).catch(() => undefined)
             $.ui.invalidate('ui.render')
           } else if (line.startsWith('WATCH ')) {
             webWatchers = Number(line.slice(6)) || 0
@@ -3424,7 +3469,7 @@ const startWeb = ($: EngineInterface, onlyIfKept = false) => {
             try {
               msg = JSON.parse(line.slice(4))
             } catch {}
-            const act = typeof msg.id === 'string' ? webActs.get(msg.id) : undefined
+            const act = typeof msg.id === 'string' ? actOf(msg.id) : undefined
             if (act) await doAction($, act, undefined)
             else if (typeof msg.search === 'string') await searchFor($, msg.search.slice(0, 200), msg.next === true)
             // The page's own asks (a line opened, older lines): answered with a reply, the view is unchanged.
@@ -3449,13 +3494,21 @@ const startWeb = ($: EngineInterface, onlyIfKept = false) => {
       note(`web server: ${String(err).slice(0, 160)}`)
     }
     const was = webUrl
+    const watched = webWatchers > 0
     webUrl = ''
     webState = 'off'
     if (!was) webFailed = true
     webPost = undefined
     webWatchers = 0
-    $.ui.invalidate('ui.render')
+    void later$(() => $.ui.invalidate('ui.render')).catch(() => undefined)
     if (!was) void Promise.resolve().then(() => $.ui.open({ id: PANE, title: 'Claude Crew' })).catch(() => undefined)
+    // It stopped while a page had it open (after the PC slept, say): back at the same address, so the
+    // page finds it again. A few times at most in ten minutes.
+    restarts = restarts.filter(t => Date.now() - t < 600_000)
+    if (was && watched && restarts.length < 3) {
+      restarts.push(Date.now())
+      $.clock.after(1000, () => startWeb($))
+    }
   })()
 }
 
@@ -4167,12 +4220,11 @@ export const register: Register = on => {
           if (stuckNote) d = log(d, id, 'info', stuckNote)
         }
         if (!ok) {
-          // Mark the call failed (or refused) where it was logged and in the window.
-          const who = d.agents.find(x => x.id === id)?.name
-          const at = d.log.map(l => l.who === who && l.kind === 'act' && l.text === line).lastIndexOf(true)
-          const mark = (ran as { deny?: string } | undefined)?.deny ? ' ✗ refused' : ' ✗ failed'
-          if (at >= 0) d = { ...d, log: d.log.map((l, i) => (i === at ? { ...l, text: l.text + mark } : l)) }
-          d = upsert(d, id, x => ({ ...x, actions: x.actions.map((t, i) => (i === x.actions.indexOf(line) ? t + mark : t)) }))
+          // Mark the call failed (or refused) in the window. Its log line keeps its words (they are its
+          // key) and is marked `bad` above; a refusal is marked too, and the words are added where it shows.
+          const refused = !!(ran as { deny?: string } | undefined)?.deny
+          if (refused) d = { ...d, log: d.log.map(l => (l.call === callId ? { ...l, refused: true as const } : l)) }
+          d = upsert(d, id, x => ({ ...x, actions: x.actions.map((t, i) => (i === x.actions.indexOf(line) ? t + (refused ? ' ✗ refused' : ' ✗ failed') : t)) }))
         }
         d = upsert(d, id, x => {
           const pending = x.pending.filter(p => p !== callId)

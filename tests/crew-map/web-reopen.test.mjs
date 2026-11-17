@@ -106,7 +106,7 @@ try {
 
   // Claude reopened before the old website had wound down: the new one asks it to stop, and keeps the address.
   await close()
-  const old = spawn(process.execPath, [join(here, '..', '..', 'crew-map', 'web', 'server.mjs'), new URL(first).port, first.split('/')[3]])
+  const old = spawn(process.execPath, [join(here, '..', '..', 'crew-map', 'web', 'server.mjs'), new URL(first).port, first.split('/')[3], kept.get('webAddress')?.['chat-1']?.key])
   await new Promise(r => old.stdout.once('data', r))
   check('(the old website is still up at that address)', (await fetch(first)).ok)
   const oldGone = new Promise(r => old.once('exit', () => r(true)))

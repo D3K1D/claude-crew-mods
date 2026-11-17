@@ -136,14 +136,15 @@ await hooks['turn.complete']($, { reason: 'answer', answer: 'Fixed.', durationMs
 check('main idle after its turn', main().state === 'idle')
 check('main progress 100 after answer', main().progress === 100)
 check('no stale todo after the turn', main().doing === '')
-check('failed edit and test marked in the log', crew().log.some(l => l.text === '✎ editing chunk.rs ✗ failed') && crew().log.some(l => l.text === '▸ ran cargo test ✗ failed'))
+// Marked bad, its words (its key) unchanged: the line stays the same line from running to failed.
+check('failed edit and test marked in the log', crew().log.some(l => l.text === '✎ editing chunk.rs' && l.bad) && crew().log.some(l => l.text === '▸ ran cargo test' && l.bad))
 check('failed test marked in the window', main().actions.includes('▸ ran cargo test ✗ failed'), main().actions.join(' | '))
 w = await windows()
 console.log('\n--- main window after turn ---\n' + w.wins[0])
 console.log('\n--- log ---\n' + w.log.join('\n'))
 
 const lines = crew().log
-const dupes = lines.filter((l, i) => i && l.text === lines[i - 1].text && l.who === lines[i - 1].who)
+const dupes = lines.filter((l, i) => i && l.text === lines[i - 1].text && l.who === lines[i - 1].who && !!l.bad === !!lines[i - 1].bad)
 check('no repeated log lines', dupes.length === 0, dupes.map(d => d.text).join(' | '))
 check('log is in time order', lines.every((l, i) => !i || l.at >= lines[i - 1].at))
 const acts = lines.filter(l => l.kind === 'act').map(l => l.text)
