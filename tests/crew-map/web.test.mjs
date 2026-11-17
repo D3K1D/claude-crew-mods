@@ -23,6 +23,7 @@ const later = []
 const written = new Map()
 const asked = []
 const exports = []
+const replies = []
 const $ = {
   command: { register: async () => {} },
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {}, invalidate: () => {} },
@@ -113,6 +114,10 @@ try {
   const stream = await fetch(`${url}events`, { signal: ac.signal })
   const reader = stream.body.getReader()
   let got = ''
+  // Everything the page is sent, as it comes (a read left waiting would swallow what arrives next).
+  void (async () => {
+    for (let r = await reader.read(); !r.done; r = await reader.read()) got += new TextDecoder().decode(r.value)
+  })().catch(() => {})
   const nextView = async () => {
     const until = Date.now() + 4000
     while (Date.now() < until) {
@@ -123,11 +128,11 @@ try {
         const data = chunk.split('\n').find(l => l.startsWith('data: '))
         // An export (the whole log for the page to copy or save) is kept apart from the views.
         if (data && chunk.startsWith('event: export')) exports.push(JSON.parse(data.slice(6)))
+        else if (data && chunk.startsWith('event: reply')) replies.push(JSON.parse(data.slice(6)))
         else if (data) return JSON.parse(data.slice(6))
         continue
       }
-      const r = await Promise.race([reader.read(), wait(300).then(() => null)])
-      if (r?.value) got += new TextDecoder().decode(r.value)
+      await wait(30)
     }
     return null
   }
@@ -188,6 +193,56 @@ try {
   const mcp = va?.log?.find(l => l.kind === 'mcp')
   check('an MCP tool call is in the log, with the MCP icon', !!mcp, JSON.stringify(va?.log?.map(l => [l.kind, l.text]) ?? []).slice(0, 300))
   check('the page has the MCP icon to draw', !!va?.icons?.mcp)
+
+  // An action opened: what came of it, asked for by the page (kept small, not sent with every view).
+  await hooks['tool.call']($, { tool_use_id: 'e1', tool: 'Edit', file_path: 'C:/proj/src/loader.ts', old_string: 'a\nold line\nb', new_string: 'a\nnew line\nb' }, async () => ({ text: 'ok' }))
+  await hooks['tool.call']($, { tool_use_id: 'b9', tool: 'Bash', command: 'npm run build', description: 'Build it' }, async () => ({ isError: true, text: `${'noise\n'.repeat(4000)}error TS2304: Cannot find name 'x'\nExit code 2` }))
+  let vd
+  for (let i = 0; i < 6 && !vd?.log?.some(l => l.bad); i++) {
+    await pub?.fn()
+    vd = (await nextView()) ?? vd
+  }
+  const edit = vd?.log?.find(l => l.kind === 'edit')
+  const build = vd?.log?.find(l => l.bad)
+  check('an edit can be opened (more), a failed command is marked bad', edit?.more === true && build?.more === true && build.kind === 'shell', JSON.stringify([edit, build]).slice(0, 300))
+  check('the view carries no diff or output itself', !JSON.stringify(vd).includes('old line') && !JSON.stringify(vd).includes('TS2304'))
+  const kept = globalThis.__store.get('crew')?.log.find(l => l.call === 'b9')
+  check('what is kept of a long output is capped', !!kept?.more && kept.more.length <= 1200, String(kept?.more?.length))
+  const ask = async msg => {
+    replies.length = 0
+    await fetch(`${url}act`, { method: 'POST', body: JSON.stringify(msg) })
+    for (let i = 0; i < 20 && !replies.length; i++) await nextView()
+    return replies[0]
+  }
+  const opened = await ask({ open: edit?.key })
+  check('opening the edit gets its file, +added −removed, and its diff', opened?.open?.key === edit?.key && /^src\/loader\.ts \+1 −1\n/.test(opened.open.text) && /- old line/.test(opened.open.text) && /\+ new line/.test(opened.open.text), JSON.stringify(opened))
+  check('with an Open diff to press', typeof opened?.open?.act === 'string' && opened.open.act.length > 0)
+  const openedB = await ask({ open: build?.key })
+  check('opening the failed build gets the command, the end of its output, and how it ended', /^\$ npm run build\n… \d+ earlier lines\n/.test(openedB?.open?.text) && /TS2304/.test(openedB.open.text) && /\n✕ Exit 2 · \d/.test(openedB.open.text), String(openedB?.open?.text).slice(0, 200))
+  // Older lines: the page asks for the lines before its oldest, from the journal on disk.
+  await timers.find(t => t.ms === 3000)?.fn()
+  await pub?.fn()
+  const vo = await nextView()
+  check('the view says how many lines are saved before its oldest', vo?.older && typeof vo.older.left === 'number' && /^\d\d:\d\d$/.test(vo.older.first), JSON.stringify(vo?.older))
+  const old = await ask({ older: edit?.at })
+  check('the page can load older lines from the journal', old?.older?.before === edit?.at && old.older.lines.some(l => /loader\.ts/.test(l.text)) && old.older.lines.every(l => l.at < edit.at) && old.older.end === true, JSON.stringify(old).slice(0, 200))
+  // A running call: its timer counts on the page, the view stays the same each second.
+  let finish
+  const running = hooks['tool.call']($, { tool_use_id: 'r1', tool: 'Bash', command: 'sleep 5', description: 'Wait a while' }, () => new Promise(r => (finish = r)))
+  await wait(50)
+  let vr
+  for (let i = 0; i < 4; i++) {
+    await pub?.fn()
+    vr = (await nextView()) ?? vr
+  }
+  check('a running line is marked for the page to time', vr?.log?.some(l => l.run && !l.dur) && JSON.stringify(vr.rows).includes('\uE000'), JSON.stringify(vr?.rows?.[0] ?? {}).slice(0, 200))
+  const still = got
+  await wait(1100)
+  await pub?.fn()
+  await wait(150)
+  check('and nothing is sent as the seconds pass', got === still)
+  finish({ text: 'ok' })
+  await running
 
   // The whole log: copied on the page, and saved in the project with a summary beside it.
   await fetch(`${url}act`, { method: 'POST', body: JSON.stringify({ id: va?.logActs?.copy }) })

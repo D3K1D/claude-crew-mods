@@ -68,7 +68,8 @@ await say(undefined, long)
 let t = await render()
 check('the viewer is its 12 rows', viewHeight(t) === 12 && logRows(t).length <= 12, String(logRows(t).length))
 check('a thought cut short has a › to open it', logRows(t).some(r => /^\S+ Claude The save bug .*… ›/.test(r)), logRows(t).at(-1))
-check('a line that fits has no ›', logRows(t).filter(r => /Step number 14/.test(r)).every(r => !r.includes('›')))
+// (A command that fits still opens: to its exit and output.)
+check('a command has a › to its output', (rs => rs.length > 0 && rs.every(r => r.includes('›')))(logRows(t).filter(r => /Step number 14/.test(r))))
 check('following: ▼ newer is dim (nowhere newer to go), and so is ⤓ latest', mark(t, '▼ newer')?.role === 'dim' && mark(t, '⤓ latest')?.role === 'dim')
 
 // Open it: all of it, over as many rows as it takes, every word; the log holds still.

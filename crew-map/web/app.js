@@ -1,9 +1,37 @@
 // Claude Crew's page: draws the view the mod sends (over /events), and sends each press back to it
-// (/act) as the id the mod gave that button. Scrolling the log, opening a long line and the drag line
-// are the page's own; everything else is the mod's.
+// (/act) as the id the mod gave that button. Scrolling the log, opening a line, the timers and the drag
+// line are the page's own; everything else is the mod's.
+//
+// Only what changed is drawn again: a band whose part of the view is the same is left alone (so hover,
+// a selection and a press in it survive), and the log keeps its lines, adding the new ones at the end.
 'use strict'
 const $ = id => document.getElementById(id)
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+// Timers: the mod marks "time since" as <kind><ms> and the page counts them up each second.
+const elapsed = ms => {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, '0')}m`
+}
+const shortTime = ms => {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, '0')}`
+}
+const took = ms => (ms < 1000 ? `${Math.max(1, Math.round(ms))}ms` : ms < 60_000 ? `${(Math.floor(ms / 100) / 10).toFixed(1)}s` : elapsed(ms))
+// e, s, t: as the mod writes them; r: a log line still running (shown from its first second).
+const since = (f, from) => {
+  const ms = Date.now() - from
+  return f === 'e' ? elapsed(ms) : f === 's' ? shortTime(ms) : f === 't' ? took(ms) : ms < 1000 ? '' : `● ${took(ms)}`
+}
+const timer = (f, from) => `<span data-t="${f}${from}">${since(f, from)}</span>`
+const esc = s =>
+  String(s ?? '')
+    .replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+    .replace(/([est])(\d+)/g, (_, f, n) => timer(f, Number(n)))
+setInterval(() => {
+  for (const el of document.querySelectorAll('[data-t]')) {
+    const t = since(el.dataset.t[0], Number(el.dataset.t.slice(1)))
+    if (el.textContent !== t) el.textContent = t
+  }
+}, 1000)
 const store = {
   get: k => { try { return localStorage.getItem(k) } catch { return null } },
   set: (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v) } catch {} },
@@ -97,19 +125,74 @@ const drawTouched = () => {
 }
 
 // 4 · The viewer
-const drawTabs = () => {
+const drawTabs = () => band('tabs', [V.tabs, V.tab, V.q, following()], paintTabs)
+// The log's tools row (Activity only): whose lines and which, clear; the count; copy, download, save.
+const KINDS = [
+  ['', 'All lines', 'lines'],
+  ['nothought', 'No thoughts', 'lines'],
+  ['edit', 'Edits', 'edits'],
+  ['shell', 'Commands', 'commands'],
+  ['bad', 'Failures', 'failures'],
+]
+const filt = (() => {
+  try {
+    const f = JSON.parse(store.get('crew.filter') || '{}')
+    return { who: String(f.who ?? ''), kind: KINDS.some(k => k[0] === f.kind) ? f.kind : '' }
+  } catch {
+    return { who: '', kind: '' }
+  }
+})()
+const filtered = () => !!(filt.who || filt.kind)
+const shown = l =>
+  (!filt.who || l.who === filt.who) &&
+  (!filt.kind || (filt.kind === 'nothought' ? !l.thought : filt.kind === 'bad' ? !!l.bad : l.kind === filt.kind))
+const whoList = () => {
+  const names = ['You']
+  for (const l of LOG) if (!names.includes(l.who)) names.push(l.who)
+  for (const r of V.rows ?? []) if (!names.includes(r.name)) names.push(r.name)
+  if (filt.who && !names.includes(filt.who)) names.push(filt.who)
+  return names
+}
+const countHtml = () => {
+  const n = LOG.length
+  if (!filtered()) return W(`${n} line${n === 1 ? '' : 's'}`)
+  const k = LOG.reduce((s, l) => s + (shown(l) ? 1 : 0), 0)
+  return W(`${k} of ${n} lines`, `${k}/${n}`)
+}
+const drawTools = () => {
+  const row = $('tools')
+  row.hidden = V.tab !== 'activity'
+  if (row.hidden) return
+  const names = whoList()
+  band('toolsWho', [names, filt.who], () => {
+    const w = $('fWho')
+    w.innerHTML = [`<option value="">Everyone</option>`, ...names.map(n => `<option value="${esc(n)}"${filt.who === n ? ' selected' : ''}>${esc(n)}</option>`)].join('')
+    w.classList.toggle('on', !!filt.who)
+  })
+  band('toolsKind', filt.kind, () => {
+    const k = $('fKind')
+    k.innerHTML = KINDS.map(([v, t]) => `<option value="${v}"${filt.kind === v ? ' selected' : ''}>${t}</option>`).join('')
+    k.classList.toggle('on', !!filt.kind)
+  })
+  band('toolsRest', [filtered(), V.logActs, V.logSave], () => {
+    $('toolsRest').innerHTML = [
+      filtered() ? `<button class="nb u dim" data-clear="1" aria-label="Clear the filter">${W('✕ clear', '✕')}</button>` : '',
+      `<span class="grow"></span>`,
+      `<span id="count" class="count"></span>`,
+      V.logSave?.busy ? `<span class="faint">saving…</span>` : V.logSave?.at ? `<span class="faint w" title="${esc(V.logSave.file)}">saved ${esc(V.logSave.at.slice(0, 5))}</span>` : '',
+      btn(V.logActs.copy, uiIcon('copy'), 'ib', 'Copy the whole log as Markdown'),
+      btn(V.logActs.download, uiIcon('download'), 'ib', 'Download the log as a .md file'),
+      btn(V.logActs.save, uiIcon('save'), 'ib', 'Save the log and a summary into this project'),
+    ].join('')
+    last.count = ''
+  })
+  // The count changes with every line: only its words.
+  band('count', [LOG.length, filtered() && LOG.filter(shown).length], () => ($('count').innerHTML = countHtml()))
+}
+const paintTabs = () => {
   $('tabs').innerHTML = [
     ...V.tabs.map(t => (t.t === '⌕' || t.t === '⚙' ? btn(t.act, uiIcon(t.t === '⌕' ? 'search' : 'settings'), `ib tip-l${t.on ? ' on' : ''}`, t.label) : btn(t.act, esc(t.t), t.on ? 'on' : '', t.label))),
     `<span class="grow"></span>`,
-    ...(V.tab === 'activity' && V.logActs
-      ? [
-          V.logSave?.busy ? `<span class="faint">saving…</span>` : V.logSave?.at ? `<span class="faint w" title="${esc(V.logSave.file)}">saved ${esc(V.logSave.at.slice(0, 5))}</span>` : '',
-          btn(V.logActs.copy, uiIcon('copy'), 'ib', 'Copy the whole log as Markdown'),
-          btn(V.logActs.download, uiIcon('download'), 'ib', 'Download the log as a .md file'),
-          btn(V.logActs.save, uiIcon('save'), 'ib', 'Save the log and a summary into this project'),
-          `<span class="sep"></span>`,
-        ]
-      : []),
     `<button class="nb ib" data-scroll="up" aria-label="Older" data-tip="Older lines">${uiIcon('up')}${W('older')}</button>`,
     `<button class="nb ib" data-scroll="down" aria-label="Newer" data-tip="Newer lines">${uiIcon('down')}${W('newer')}</button>`,
     V.tab === 'activity' && !following()
@@ -121,10 +204,206 @@ const drawTabs = () => {
   const box = $('search')
   if (document.activeElement !== box) box.value = V.q ?? ''
 }
+// The log as the page holds it: every line it was sent or loaded, oldest first, by key.
+const LOG = []
+const byKey = new Map()
+const sigOf = new Map()
+const LOG_MAX = 5000
+// All of an opened line, as the mod sent it back (asked for when the line is opened).
+const wholeOf = new Map()
+// One line of the log, in its wrapper (the line, and all of it below when it is open).
+// The box under an opened line: what happened, as rows of a gutter mark, words and a button, at most
+// 12 rows of content (a faint row says how many more).
+const MAX_ROWS = 12
+const row = (t, role, o = {}) =>
+  `<div class="br${o.gap ? ' gap' : ''}">${o.g ? `<span class="g" style="color:${color(o.gc ?? 'dim')}">${o.g}</span>` : ''}<span class="bt${o.b ? ' b' : ''}${o.i ? ' i' : ''}" style="color:${color(role)}">${o.html ?? esc(t)}</span>${o.btn ?? ''}</div>`
+const faintRow = t => row(t, 'faint', { gap: true })
+const boxHtml = l => {
+  const got = wholeOf.get(l.key)
+  const t = got?.text
+  if (l.thought) return [row(t ?? l.text, 'dim', { i: true })]
+  if (!l.more) return [row(l.text, 'text')]
+  if (t === undefined) return [row('…', 'faint')]
+  const lines = t.split('\n')
+  const earlier = (s, n) => Number(s?.match(/^… (\d+) earlier lines$/)?.[1] ?? 0) + n
+  if (l.kind === 'shell') {
+    // $ the command, the last lines of its output, and how it ended.
+    const [cmd, ...rest] = lines
+    const end = /^(✓|✕|started in the background)/.test(rest[rest.length - 1] ?? '') ? rest.pop() : ''
+    const cut = /^… \d+ earlier lines$/.test(rest[0] ?? '') ? rest.shift() : ''
+    const out = rest.slice(-MAX_ROWS)
+    const before = earlier(cut, rest.length - out.length)
+    return [
+      row(cmd, 'text', { b: true }),
+      ...(before ? [faintRow(`… ${before} earlier lines`)] : []),
+      ...out.map((x, i) => row(x, 'dim', { gap: i === 0 && !before })),
+      ...(end ? [row(end, end.startsWith('✓') ? 'green' : end.startsWith('✕') ? 'red' : 'faint', { b: true, gap: true })] : []),
+      ...(l.run ? [faintRow('Still running: its output shows here when it ends.')] : []),
+    ]
+  }
+  if (l.bad) {
+    // What it tried, that it failed, and the error.
+    const cut = /^… \d+ earlier lines$/.test(lines[0]) ? lines.shift() : ''
+    const err = lines.slice(-MAX_ROWS)
+    const before = earlier(cut, lines.length - err.length)
+    return [row(l.text, 'text'), row('✕ Failed', 'red', { b: true, gap: true }), ...(before ? [row(`… ${before} earlier lines`, 'faint')] : []), ...err.map(x => row(x, 'text'))]
+  }
+  const head = lines[0].match(/^(.*) \+(\d+) −(\d+)$/)
+  if (head) {
+    // An edit: its file, +added −removed, Open diff; the lines it took out and put in.
+    const [, path, add, del] = head
+    const diff = lines.slice(1)
+    const more = /^… \d+ more changed lines$/.test(diff[diff.length - 1] ?? '') ? Number(diff.pop().match(/\d+/)[0]) : 0
+    const shownDiff = diff.slice(0, MAX_ROWS)
+    const left = more + diff.length - shownDiff.length
+    const name = path.split('/').pop()
+    return [
+      row('', 'text', {
+        html: `${W(esc(path), esc(name))} <span class="green">+${add}</span><span class="dim"> −${del}</span>`,
+        btn: got.act ? btn(got.act, 'Open diff', 'u fix') : '',
+      }),
+      ...shownDiff.map((x, i) => (x.startsWith('+ ') ? row(x.slice(2), 'text', { g: '+', gc: 'green', gap: i === 0 }) : row(x.slice(2), 'dim', { g: '−', gap: i === 0 }))),
+      ...(left ? [faintRow(`… ${left} more changed lines`)] : []),
+    ]
+  }
+  return lines.slice(0, MAX_ROWS).map(x => row(x, 'text'))
+}
+// One line of the log, in its wrapper (the line, and its box below when it is open).
 const logLine = l => {
   const open = opened.has(l.key)
-  // A click on the line opens it whole (and again folds it); › marks one with more than it shows.
-  return `<div class="ln${l.full ? ' can' : ''}${open ? ' open' : ''}" data-line="${esc(l.key)}"><span class="when">${esc(l.time.slice(0, 5))}${W(esc(l.time.slice(5)))}</span><span style="color:${color(l.dot)}">●</span><span class="who">${esc(l.who)}</span>${icon(l.kind, l.running ? 'green' : 'dim', 13, 1.8)}<span class="cut ${l.thought ? 'thought' : l.dim ? 'dim' : ''}">${esc(l.text)}</span>${l.full ? `<span class="more" aria-hidden="true">${open ? '▾' : '›'}</span>` : ''}<span class="dur${l.running ? ' run' : ''}">${l.running ? '● ' : ''}${esc(l.dur)}</span></div>${open ? `<div class="whole ${l.thought ? 'thought' : ''}">${esc(l.full || l.text)}</div>` : ''}`
+  // A click on the line opens it (and again folds it); › marks one with more than it shows.
+  return `<div class="lw" data-k="${esc(l.key)}"><div class="ln${l.more ? ' can' : ''}${open ? ' open' : ''}" data-line="${esc(l.key)}"><span class="when">${esc(l.time.slice(0, 5))}${W(esc(l.time.slice(5)))}</span><span style="color:${color(l.dot)}">●</span><span class="who">${esc(l.who)}</span>${icon(l.kind, l.run ? 'green' : l.bad ? 'red' : 'dim', 13, 1.8)}<span class="cut ${l.thought ? 'thought' : l.dim ? 'dim' : ''}">${esc(l.text)}</span>${l.more ? `<span class="more" aria-hidden="true">${open ? '▾' : '›'}</span>` : ''}${l.run ? `<span class="dur run">${timer('r', l.at)}</span>` : `<span class="dur${l.bad ? ' red' : ''}">${l.bad ? '✕ ' : ''}${esc(l.dur)}</span>`}</div>${open ? `<div class="box${l.bad ? ' bad' : ''}">${boxHtml(l).join('')}</div>` : ''}</div>`
+}
+// A line the page's width cuts off can be opened too: marked like the others.
+const markCut = root => {
+  for (const ln of root.querySelectorAll('.ln:not(.can):not(.open)')) {
+    const cut = ln.querySelector('.cut')
+    if (cut && cut.scrollWidth > cut.clientWidth + 1) {
+      ln.classList.add('can')
+      cut.insertAdjacentHTML('afterend', '<span class="more" aria-hidden="true">›</span>')
+    }
+  }
+}
+const lineEl = k => $('body').querySelector(`.lw[data-k="${CSS.escape(k)}"]`)
+// Puts a line's element in by its place in LOG, before the next line that is drawn (or at the end).
+const place = (l, i) => {
+  const body = $('body')
+  body.querySelector('.empty')?.remove()
+  let next
+  for (let j = i + 1; j < LOG.length && !next; j++) next = lineEl(LOG[j].key)
+  if (next) next.insertAdjacentHTML('beforebegin', logLine(l))
+  else body.insertAdjacentHTML('beforeend', logLine(l))
+  const el = lineEl(l.key)
+  if (el) markCut(el)
+}
+// Draws one line again where it is (it changed, or was opened or folded), or takes it out if the filter hides it now.
+const redrawLine = k => {
+  const el = lineEl(k)
+  const l = byKey.get(k)
+  if (!l) return
+  if (!shown(l)) return el?.remove()
+  if (!el) return place(l, LOG.indexOf(l))
+  el.outerHTML = logLine(l)
+  const now = lineEl(k)
+  if (now) markCut(now)
+}
+// New and changed lines from the mod: a changed one is drawn again in place, a new one put in by its
+// time (nearly always at the end).
+const mergeLog = lines => {
+  const drawn = bodyMode === 'activity'
+  for (const l of lines) {
+    const sig = JSON.stringify(l)
+    if (byKey.has(l.key)) {
+      if (sigOf.get(l.key) === sig) continue
+      sigOf.set(l.key, sig)
+      Object.assign(byKey.get(l.key), l)
+      // It finished: what came of it is asked for again if it is open.
+      wholeOf.delete(l.key)
+      if (opened.has(l.key) && l.more) send({ open: l.key })
+      if (drawn) redrawLine(l.key)
+      continue
+    }
+    let i = LOG.length
+    while (i > 0 && LOG[i - 1].at > l.at) i--
+    LOG.splice(i, 0, l)
+    byKey.set(l.key, l)
+    sigOf.set(l.key, sig)
+    if (drawn && shown(l)) place(l, i)
+  }
+  // A very long log drops its oldest lines (Load older brings them back).
+  while (LOG.length > LOG_MAX) {
+    const l = LOG.shift()
+    byKey.delete(l.key)
+    sigOf.delete(l.key)
+    wholeOf.delete(l.key)
+    if (drawn) lineEl(l.key)?.remove()
+    older = 'idle'
+  }
+}
+// The log whole: its Load older row, then the lines the filter shows (or why there are none).
+const renderLog = () => {
+  const body = $('body')
+  const lines = LOG.filter(shown)
+  const none = LOG.length
+    ? `<div class="empty">No ${KINDS.find(k => k[0] === filt.kind)[2]} from ${esc(filt.who || 'anyone')} in the last ${LOG.length} lines.</div>`
+    : EMPTY
+  body.innerHTML = `<div id="olderRow" class="older"></div>${lines.length ? lines.map(logLine).join('') : none}`
+  last.older = ''
+  drawOlder()
+  markCut(body)
+}
+// Load older: the journal on disk has the lines before the page's oldest. Only on a press.
+let older = 'idle'
+const savedLeft = () => {
+  // The mod counts what is saved before the oldest line it sends; lines the page kept from before then are not left.
+  const from = V.log[0]?.at ?? Infinity
+  let had = 0
+  while (had < LOG.length && LOG[had].at < from) had++
+  return Math.max(0, (V.older?.left ?? 0) - had)
+}
+const drawOlder = () => {
+  const el = $('olderRow')
+  if (!el) return
+  const left = older === 'end' ? 0 : savedLeft()
+  band('older', [older, left, V.older?.first, LOG[0]?.time], () => {
+    el.hidden = !LOG.length
+    el.innerHTML =
+      older === 'asking'
+        ? `<span class="cut faint">Loading older lines…</span>`
+        : left
+          ? `<button class="nb ib u text" data-older="1">${uiIcon('up')}${W('Load 200 older', '200 older')}</button><span class="cut faint">${W(`${left} more saved, back to ${esc(V.older.first)}`, `${left} more, back to ${esc(V.older.first)}`)}</span>`
+          : `<span class="cut faint">Start of this chat · ${esc(LOG[0]?.time ?? '')}</span>`
+  })
+}
+const askOlder = () => {
+  if (older === 'asking' || !LOG.length) return
+  older = 'asking'
+  drawOlder()
+  send({ older: LOG[0].at })
+  // No answer (the mod was busy, or reloaded): the button comes back.
+  setTimeout(() => {
+    if (older !== 'asking') return
+    older = 'idle'
+    drawOlder()
+  }, 8000)
+}
+const addOlder = x => {
+  if (older !== 'asking' || !LOG.length || x.before !== LOG[0].at) return
+  const fresh = x.lines.filter(l => !byKey.has(l.key))
+  older = x.end ? 'end' : 'idle'
+  for (const l of fresh) {
+    byKey.set(l.key, l)
+    sigOf.set(l.key, JSON.stringify(l))
+  }
+  LOG.unshift(...fresh)
+  if (bodyMode !== 'activity') return
+  // Kept where it was: the lines go in above what you were reading.
+  const body = $('body')
+  const h = body.scrollHeight
+  const top = body.scrollTop
+  renderLog()
+  body.scrollTop = top + body.scrollHeight - h
+  drawTools()
 }
 const seg = g => {
   const lead = `${g.dot ? `<span style="color:${color(g.dot)}">●</span> ` : ''}${g.icon ? icon(g.icon[0], g.icon[1], 13, 1.8) : ''}${g.bar !== undefined && g.bar !== null ? `<svg width="72" height="8" viewBox="0 0 72 8" aria-hidden="true"><rect width="72" height="8" rx="4" fill="var(--line)"/><rect width="${Math.max(8, 72 * Math.min(1, g.bar))}" height="8" rx="4" fill="${color(g.role === 'red' || g.role === 'amber' ? g.role : 'dim')}"/></svg>` : ''}`
@@ -154,56 +433,94 @@ const settingsHtml = s => {
 // no line is open; scrolling up or opening a line pauses it. ⤓ latest (lit while paused) follows again.
 let stuck = true
 const following = () => stuck && !opened.size
+// What #body holds now: 'activity' (the log, kept and added to), or another tab's lines, drawn whole when they change.
+let bodyMode = ''
 const drawBody = () => {
   const body = $('body')
   if (V.tab === 'settings' && V.settings) {
     // Not while you are typing a budget or picking an editor.
-    if (!body.contains(document.activeElement) || document.activeElement === body) body.innerHTML = settingsHtml(V.settings)
+    if (!body.contains(document.activeElement) || document.activeElement === body) band('body', ['settings', V.settings], () => (body.innerHTML = settingsHtml(V.settings)))
+    bodyMode = 'settings'
     return
   }
-  if (V.tab === 'activity') body.innerHTML = V.log.length ? V.log.map(logLine).join('') : `<div class="empty">Nothing yet: each thing a Claude does shows here.</div>`
-  else body.innerHTML = V.lines.map(vLine).join('')
-  // A line the page's width cuts off can be opened too: marked like the others.
-  if (V.tab === 'activity')
-    for (const ln of body.querySelectorAll('.ln:not(.can):not(.open)')) {
-      const cut = ln.querySelector('.cut')
-      if (cut && cut.scrollWidth > cut.clientWidth + 1) {
-        ln.classList.add('can')
-        cut.insertAdjacentHTML('afterend', '<span class="more" aria-hidden="true">›</span>')
-      }
-    }
-  if (V.tab === 'activity' && following()) body.scrollTop = body.scrollHeight
+  if (V.tab !== 'activity') {
+    band('body', [V.tab, V.lines], () => (body.innerHTML = V.lines.map(vLine).join('')))
+    bodyMode = 'lines'
+    return
+  }
+  if (bodyMode !== 'activity') {
+    bodyMode = 'activity'
+    last.body = ''
+    mergeLog(V.log)
+    renderLog()
+  } else {
+    const was = LOG.length
+    mergeLog(V.log)
+    // The first line came: the empty word goes, the Load older row shows.
+    if (!was && LOG.length) renderLog()
+    drawOlder()
+  }
+  if (following()) body.scrollTop = body.scrollHeight
 }
 $('body').addEventListener('scroll', () => {
   const body = $('body')
-  const was = following()
   stuck = body.scrollHeight - body.scrollTop - body.clientHeight < 24
-  if (V && was !== following()) drawTabs()
+  if (V) drawTabs()
 })
 // The page or the drag line changes the log's height: it stays on the newest line if it was there.
+// A new width cuts other lines: their › is set again.
+let logW = 0
 new ResizeObserver(() => {
   const body = $('body')
+  if (bodyMode === 'activity' && body.clientWidth !== logW) {
+    logW = body.clientWidth
+    for (const ln of body.querySelectorAll('.ln.can:not(.open)'))
+      if (!byKey.get(ln.dataset.line)?.more) {
+        ln.classList.remove('can')
+        ln.querySelector('.more')?.remove()
+      }
+    markCut(body)
+  }
   if (V?.tab === 'activity' && following()) body.scrollTop = body.scrollHeight
 }).observe($('body'))
 // Narrow, as the design's 450 px board: the shorter words.
 new ResizeObserver(([e]) => $('app').classList.toggle('narrow', e.contentRect.width < 520)).observe($('app'))
 
+// A band is drawn again only when its part of the view changed.
+const last = {}
+const band = (id, data, paint) => {
+  const k = JSON.stringify(data)
+  if (last[id] === k) return
+  last[id] = k
+  paint()
+}
 let lastTab = ''
 const draw = () => {
-  document.documentElement.dataset.theme = V.theme || 'auto'
-  drawHead()
-  drawCrew()
-  drawTouched()
-  drawTabs()
+  const theme = V.theme || 'auto'
+  if (document.documentElement.dataset.theme !== theme) document.documentElement.dataset.theme = theme
+  band('head', [V.head, V.v], drawHead)
+  band('crew', [V.rows, V.recap], drawCrew)
+  band('touched', V.touched, drawTouched)
   const body = $('body')
   const fresh = V.tab !== lastTab
   lastTab = V.tab
-  drawBody()
   if (fresh) {
     stuck = true
     opened.clear()
-    body.scrollTop = V.tab === 'activity' ? body.scrollHeight : 0
+    bodyMode = ''
   }
+  drawBody()
+  drawTabs()
+  drawTools()
+  if (fresh) body.scrollTop = V.tab === 'activity' ? body.scrollHeight : 0
+}
+// A filter picked or cleared: kept for next time, and the log drawn again with it.
+const setFilter = f => {
+  Object.assign(filt, f)
+  store.set('crew.filter', filtered() ? JSON.stringify(filt) : null)
+  if (bodyMode === 'activity') renderLog()
+  drawTools()
+  if (following()) $('body').scrollTop = $('body').scrollHeight
 }
 
 // Presses
@@ -215,7 +532,9 @@ document.addEventListener('click', ev => {
     const cut = ln.querySelector('.cut')
     if (opened.has(k) || ln.classList.contains('can') || (cut && cut.scrollWidth > cut.clientWidth + 1)) {
       opened.has(k) ? opened.delete(k) : opened.add(k)
-      drawBody()
+      // All of it comes from the mod (an action's diff or output, a thought whole), asked for the first time.
+      if (opened.has(k) && byKey.get(k)?.more && !wholeOf.has(k)) send({ open: k })
+      redrawLine(k)
       drawTabs()
     }
     return
@@ -227,9 +546,10 @@ document.addEventListener('click', ev => {
     const body = $('body')
     const page = Math.max(19, body.clientHeight - 38)
     if (b.dataset.scroll === 'end' && V?.tab === 'activity') {
+      const was = [...opened]
       opened.clear()
+      for (const k of was) redrawLine(k)
       stuck = true
-      drawBody()
       drawTabs()
       body.scrollTop = body.scrollHeight
     } else if (b.dataset.scroll === 'end') body.scrollTop = 0
@@ -237,13 +557,15 @@ document.addEventListener('click', ev => {
   } else if (b.dataset.budget) {
     send({ set: { budget: Math.max(0, Number($('budget').value) || 0) } })
     $('budget').blur()
-  }
+  } else if (b.dataset.older) askOlder()
+  else if (b.dataset.clear) setFilter({ who: '', kind: '' })
 })
 document.addEventListener('change', ev => {
   if (ev.target.id === 'editor') {
     send({ set: { editor: ev.target.value } })
     ev.target.blur()
-  }
+  } else if (ev.target.id === 'fWho') setFilter({ who: ev.target.value })
+  else if (ev.target.id === 'fKind') setFilter({ kind: ev.target.value })
 })
 document.addEventListener('keydown', ev => {
   if (ev.target.id === 'budget' && ev.key === 'Enter') document.querySelector('[data-budget]')?.click()
@@ -306,6 +628,20 @@ events.onmessage = ev => {
   $('gone').hidden = true
   draw()
 }
+// The mod's answers to what this page asked: all of an opened line, or older lines.
+events.addEventListener('reply', ev => {
+  let x
+  try {
+    x = JSON.parse(ev.data)
+  } catch {
+    return
+  }
+  if (x.open && byKey.has(x.open.key)) {
+    wholeOf.set(x.open.key, { text: x.open.text || byKey.get(x.open.key).text, act: x.open.act || '' })
+    if (opened.has(x.open.key)) redrawLine(x.open.key)
+  }
+  if (x.older) addOlder(x.older)
+})
 // The whole log as Markdown, from the mod: copied, or saved as a file.
 const showText = text => {
   const box = $('copybox')

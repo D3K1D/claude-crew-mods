@@ -6,6 +6,10 @@
 //   ACT {"id":"…"}          a press; the mod looks the id up in what it handed out
 //   ACT {"search":"…"}      the search field
 //   ACT {"set":{…}}         Settings' budget box or editor list
+//   ACT {"open":"<key>"}    a log line opened: the mod replies with all of it
+//   ACT {"older":<ms>}      the log scrolled back: the mod replies with the lines before that time
+//
+// The mod's replies (POST reply) and the log it exports (POST export) reach the pages as events of their own.
 //
 // Only this computer can reach it (127.0.0.1), every path starts with a random token, and a request
 // must name 127.0.0.1 as its host, so no other website can drive it.
@@ -96,13 +100,13 @@ const srv = http.createServer((req, res) => {
     res.writeHead(204, plain)
     return res.end()
   }
-  // The whole log as Markdown, from the mod, for the page to copy or save as a file.
-  if (req.method === 'POST' && path === 'export') {
+  // From the mod to the pages: the whole log as Markdown (to copy or save), or a reply to what a page asked.
+  if (req.method === 'POST' && (path === 'export' || path === 'reply')) {
     heard = Date.now()
     let body = ''
     req.on('data', d => (body += d))
     req.on('end', () => {
-      for (const w of watchers) w.write(`event: export\ndata: ${body.replace(/\n/g, ' ')}\n\n`)
+      for (const w of watchers) w.write(`event: ${path}\ndata: ${body.replace(/\n/g, ' ')}\n\n`)
       res.writeHead(204, plain)
       res.end()
     })
@@ -128,9 +132,13 @@ const srv = http.createServer((req, res) => {
               ? { id: msg.id.slice(0, 40) }
               : typeof msg.search === 'string'
                 ? { search: msg.search.slice(0, 200), next: msg.next === true }
-                : set
-                  ? { set: { ...(Number.isFinite(set.budget) ? { budget: set.budget } : {}), ...(typeof set.editor === 'string' ? { editor: set.editor.slice(0, 20) } : {}) } }
-                  : undefined
+                : typeof msg.open === 'string'
+                  ? { open: msg.open.slice(0, 60) }
+                  : Number.isFinite(msg.older)
+                    ? { older: msg.older }
+                    : set
+                      ? { set: { ...(Number.isFinite(set.budget) ? { budget: set.budget } : {}), ...(typeof set.editor === 'string' ? { editor: set.editor.slice(0, 20) } : {}) } }
+                      : undefined
           if (out) say(`ACT ${JSON.stringify(out)}`)
         } catch {}
       }

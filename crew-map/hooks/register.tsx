@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.7.8'
+const VERSION = '1.8.0'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -984,6 +984,12 @@ const promptOf = (t: string) => relayedOf(t)?.body || t
 /** A message in the log: yours, or another session's (also one logged as yours before this was told apart). */
 const messageOf = (l: LogLine): { from: string; body: string } | undefined =>
   l.kind === 'msg' ? { from: l.who, body: l.text } : l.kind === 'you' ? (relayedOf(l.text) ?? { from: '', body: l.text }) : undefined
+/** A log line as it reads closed, and opened whole: a thought's every word, an action and what came of it. */
+const shortOf = (l: LogLine) => {
+  const m = messageOf(l)
+  return m ? (m.from ? `${m.from}: ${m.body}` : m.body) : l.kind === 'think' ? l.text : l.text.replace(/^$ /, SHELL_MARK)
+}
+const fullOf = (l: LogLine) => (l.kind === 'think' && l.full ? l.full : l.more ? `${shortOf(l)}\n${l.more}` : shortOf(l))
 const clock = (ms: number) => new Date(ms).toTimeString().slice(0, 8)
 /** A log line's address, for opening it: its time and what it says. */
 const logKey = (l: LogLine) => `${l.at}:${(hash(`${l.who}|${l.kind}|${l.text}`) >>> 0).toString(36)}`
@@ -1203,6 +1209,28 @@ const lineDiff = (before: string, after: string) => {
   let removed = 0
   for (const n of left.values()) removed += n
   return { added, removed }
+}
+
+/** What an action came to, kept on its log line for when it is opened: capped, so the log and the journal stay small. */
+const MORE_MAX = 1400
+const clipLines = (lines: string[]) => lines.map(l => trunc(l.replace(/\s+$/, ''), 200))
+/** The last lines of an output (at most n, and about 900 characters), saying how many came before. */
+const tailOf = (s: string, n = 15) => {
+  const all = s.replace(/\s+$/, '').split('\n')
+  let k = Math.max(0, all.length - n)
+  while (k < all.length - 1 && all.slice(k).join('\n').length > 900) k++
+  return [...(k ? [`… ${k} earlier lines`] : []), ...clipLines(all.slice(k))].join('\n')
+}
+/** A small diff of one edit: the lines it changes (what both sides share at the ends is left out). */
+const editDiff = (before: string, after: string, max = 16) => {
+  const a = before ? before.split('\n') : []
+  const b = after ? after.split('\n') : []
+  let i = 0
+  while (i < a.length && i < b.length && a[i] === b[i]) i++
+  let j = 0
+  while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++
+  const lines = clipLines([...a.slice(i, a.length - j).map(l => `- ${l}`), ...b.slice(i, b.length - j).map(l => `+ ${l}`)])
+  return (lines.length > max ? [...lines.slice(0, max), `… ${lines.length - max} more changed lines`] : lines).join('\n')
 }
 
 const record = (c: Crew, path: string, id: string, delta: { added: number; removed: number } | 'read'): Crew => {
@@ -2225,7 +2253,9 @@ const windowOf = (model: string) => (/\[1m\]|-1m\b/i.test(model) ? 1_000_000 : m
  * What the pane shows, worked out once for any surface: the counts and cost, each Claude's row, the last
  * task, Touched, the tabs and the lines of the one shown. The pane draws it; the website gets it as data.
  */
-const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => {
+const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web = false) => {
+    // Time since a moment: for the website, a mark its page counts up itself (so the view stays the same each second).
+    const since = (from: number, f: 'e' | 's' | 't') => (web ? `\uE000${f}${Math.round(from)}\uE001` : (f === 'e' ? elapsed : f === 's' ? shortTime : took)(Date.now() - from))
     // Every value the pane draws from, read side by side (one round trip, not nine in a row).
     const [c, , codexPublished, sq] = await Promise.all([
       read($, crew),
@@ -2287,11 +2317,6 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
     // The log: its lines, scrolled (held at a line while new ones come in below), and the ones opened whole.
     const lv = c.logView ?? {}
     const openLog = new Set(lv.open ?? [])
-    const shortOf = (l: LogLine) => {
-      const m = messageOf(l)
-      return m ? (m.from ? `${m.from}: ${m.body}` : m.body) : l.kind === 'think' ? l.text : l.text.replace(/^$ /, SHELL_MARK)
-    }
-    const fullOf = (l: LogLine) => (l.kind === 'think' && l.full ? l.full : shortOf(l))
     const allLog = [...c.log, ...codexLog].sort((x, y) => x.at - y.at)
     const held = typeof lv.anchor === 'number'
     let upto = held ? allLog.filter(l => l.at <= (lv.anchor as number)) : allLog
@@ -2381,10 +2406,10 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
                   : ''
                 : a.state === 'thinking'
                   ? // How long its model step has run, and what it last said.
-                    [stepStart.has(a.id) ? elapsed(now - (stepStart.get(a.id) ?? 0)) : '', a.thoughts[0] ? oneLine(a.thoughts[0]) : ''].filter(Boolean).join(' · ')
+                    [stepStart.has(a.id) ? since(stepStart.get(a.id) ?? 0, 'e') : '', a.thoughts[0] ? oneLine(a.thoughts[0]) : ''].filter(Boolean).join(' · ')
                   : runFrom && now - runFrom >= 1000
                     ? // A test run by what it is for (JS tests (jest): auth), else the command in Claude's words; and how long.
-                      `${(t => (t ? t.purpose || testPurpose(t.command, '') : ''))((src.tests ?? []).find(x => x.agentId === a.id && x.status === 'running')) || wait0?.what || what} · ${elapsed(now - runFrom)}`
+                      `${(t => (t ? t.purpose || testPurpose(t.command, '') : ''))((src.tests ?? []).find(x => x.agentId === a.id && x.status === 'running')) || wait0?.what || what} · ${since(runFrom, 'e')}`
                     : what
       const tasks = tasksOf(a, src)
       const total = tasks.length || a.todosTotal
@@ -2407,7 +2432,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
         kind,
         status,
         object,
-        time: at && a.since ? shortTime(now - a.since) : state === 'done' && a.since ? shortTime((a.doneAt || now) - a.since) : '',
+        time: at && a.since ? since(a.since, 's') : state === 'done' && a.since ? shortTime((a.doneAt || now) - a.since) : '',
         total,
         done,
         progress: a.stuck && state !== 'done' ? `Stuck? It ${a.stuck}.` : progress,
@@ -2432,7 +2457,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
         kind,
         status: running ? KIND_WORDS[kind] : 'Done',
         object: last ? (last.kind === 'cmd' ? cmdGist(last.text).replace(/^ran /, '') : baseName(last.text)) : r.activity || oneLine(r.task),
-        time: running && r.startedAt ? shortTime(Date.now() - r.startedAt) : '',
+        time: running && r.startedAt ? since(r.startedAt, 's') : '',
         total: 0,
         done: 0,
         progress: `${fmtK(r.commands)} command${r.commands === 1 ? '' : 's'} · ${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'}${r.thread ? ` · ${r.thread}` : ''}`,
@@ -2460,7 +2485,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
       state: ch.running ? 'work' : 'idle',
       kind: ch.running ? 'msg' : 'idle',
       status: ch.running ? 'Working' : 'Idle',
-      object: ch.running ? 'in its own chat' : ch.at ? `last active ${shortTime(Date.now() - ch.at)} ago` : '',
+      object: ch.running ? 'in its own chat' : ch.at ? `last active ${since(ch.at, 's')} ago` : '',
       time: '',
       total: 0,
       done: 0,
@@ -2552,7 +2577,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
         ? {
             title: `Last task done in ${elapsed(sm.ms)}`,
             goal: sm.goal ? oneLine(promptOf(sm.goal)) : '',
-            ago: `${shortTime(now - sm.at)} ago`,
+            ago: `${since(sm.at, 's')} ago`,
             facts: [
               ['Changed', sm.files.length ? `${fmtK(sm.files.length)} file${sm.files.length === 1 ? '' : 's'} · +${fmtK(sm.files.reduce((k, f) => k + f.added, 0))} −${fmtK(sm.files.reduce((k, f) => k + f.removed, 0))}` : 'no files', 'text'],
               ['Tests', sm.tests.runs ? (sm.tests.failed ? `✕ ${fmtK(sm.tests.failed)} failed · last ${sm.tests.last}` : `✓ ${sm.tests.last}`) : 'none run', sm.tests.runs ? (sm.tests.failed ? 'red' : 'green') : 'dim'],
@@ -2609,7 +2634,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
       // Words start with a capital; a path or a file name keeps its own case.
       const first = rowsOf[0] && !/^\S*[/.\\]/.test(rowsOf[0]) ? `${rowsOf[0].charAt(0).toUpperCase()}${rowsOf[0].slice(1)}` : rowsOf[0] ?? ''
       const running = l.took === undefined && !!l.call && now - l.at >= 1000 && now - l.at < SHELL_GIVE_UP_MS
-      const dur = l.took !== undefined ? took(l.took) : running ? `● ${took(now - l.at)}` : ''
+      const dur = l.took !== undefined ? took(l.took) : running ? `● ${since(l.at, 't')}` : ''
       const who = m ? (m.from ? trunc(m.from, 6) : 'You') : trunc(l.who, 6)
       const tone = l.kind === 'think' || l.kind === 'info' ? 'dim' : 'text'
       return [
@@ -2779,34 +2804,37 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
       run: x.id === 'claude' ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: x.id as NonNullable<Crew['pane']>['tab'], top: 0 }),
     }))
     // The website's log: each line whole (the page cuts it to fit and opens it), oldest first.
-    const webLog = allLog.slice(-400).map(l => {
-      const m = messageOf(l)
-      const kind = l.kind === 'think' ? 'thought' : m ? 'msg' : LOG_GLYPH[[...l.text][0]] ?? (l.kind === 'info' ? 'plan' : 'tool')
-      const said = oneLine(shortOf(l))
-      const t = l.kind === 'think' || m ? said : said.replace(/^[^\p{L}\p{N}"'(\[$~./]+/u, '')
-      const running = l.took === undefined && !!l.call && now - l.at >= 1000 && now - l.at < SHELL_GIVE_UP_MS
-      const full = oneLine(fullOf(l))
-      return {
-        key: logKey(l),
-        time: clock(l.at),
-        dot: m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}`,
-        who: m ? m.from || 'You' : l.who,
-        kind,
-        running,
-        text: t && !/^\S*[/.\\]/.test(t) ? `${t.charAt(0).toUpperCase()}${t.slice(1)}` : t,
-        full: full !== said ? fullOf(l) : '',
-        dim: l.kind === 'think' || l.kind === 'info',
-        thought: l.kind === 'think',
-        dur: l.took !== undefined ? took(l.took) : running ? took(now - l.at) : '',
-      }
-    })
+    const webLog = allLog.slice(-400).map(webLine)
     return { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, BODY_ROWS, listed, top0, scroll, tabs, webLog }
+}
+
+/** A log line for the website: what it shows closed; `more` when opening it shows more than its words (the page asks for that). */
+const webLine = (l: LogLine) => {
+  const m = messageOf(l)
+  const said = oneLine(shortOf(l))
+  const t = l.kind === 'think' || m ? said : said.replace(/^[^\p{L}\p{N}"'(\[$~./]+/u, '')
+  return {
+    key: logKey(l),
+    at: l.at,
+    time: clock(l.at),
+    dot: m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}`,
+    who: m ? m.from || 'You' : l.who,
+    kind: l.kind === 'think' ? 'thought' : m ? 'msg' : LOG_GLYPH[[...l.text][0]] ?? (l.kind === 'info' ? 'plan' : 'tool'),
+    // Still running: the page counts its time up.
+    run: l.took === undefined && !!l.call && Date.now() - l.at < SHELL_GIVE_UP_MS ? true : undefined,
+    text: t && !/^\S*[/.\\]/.test(t) ? `${t.charAt(0).toUpperCase()}${t.slice(1)}` : t,
+    more: oneLine(fullOf(l)) !== said ? true : undefined,
+    bad: l.bad,
+    dim: l.kind === 'think' || l.kind === 'info' ? true : undefined,
+    thought: l.kind === 'think' ? true : undefined,
+    dur: l.took !== undefined ? took(l.took) : '',
+  }
 }
 
 /** The chat's Claude Crew website: the server this mod runs for it, its address, and who has it open. */
 let webUrl = ''
 /** Posts to the website: the view ('push'), or 'ping' so it knows the mod is still here (it stops after a quiet minute). */
-let webPost: ((path: 'push' | 'ping' | 'export', body?: string) => Promise<unknown>) | undefined
+let webPost: ((path: 'push' | 'ping' | 'export' | 'reply', body?: string) => Promise<unknown>) | undefined
 let webPinged = 0
 let webWatchers = 0
 let webSent = ''
@@ -2823,7 +2851,7 @@ const actId = (a: Act) => {
 }
 /** The website's view: the pane's model as data, each press an id. */
 const webView = async ($: EngineInterface) => {
-  const m = await paneModel($, 160, 700)
+  const m = await paneModel($, 160, 700, true)
   const seg = (g: Seg) => ({
     t: g.t ?? '',
     role: g.role,
@@ -2897,6 +2925,8 @@ const webView = async ($: EngineInterface) => {
           }
         : null,
     log: m.tab === 'activity' ? m.webLog : [],
+    // Saved on disk before the oldest line sent: how many, and back to when (Load older says so).
+    older: m.tab === 'activity' ? savedBefore(m.webLog[0]?.at ?? Infinity) : null,
     logActs: { copy: actId({ k: 'logout', how: 'copy' }), download: actId({ k: 'logout', how: 'download' }), save: actId({ k: 'logout', how: 'save' }) },
     logSave: { busy: saving, at: lastSave ? clock(lastSave.at) : '', file: lastSave?.file ?? '', summary: !!lastSave?.summary },
     lines: m.tab === 'activity' ? [] : m.listed.slice(0, 600).map(line),
@@ -2932,6 +2962,15 @@ let journalPath = ''
 let journalSid = ''
 let journalDirty = false
 const JOURNAL_KEEP = 5000
+const savedBefore = (at: number) => {
+  let left = 0
+  let first = Infinity
+  for (const l of journal.values()) {
+    if (l.at < at) left++
+    first = Math.min(first, l.at)
+  }
+  return { left, first: Number.isFinite(first) ? clock(first).slice(0, 5) : '' }
+}
 const later$ = <T,>(fn: () => Promise<T> | T) => Promise.resolve().then(fn)
 const journalLines = () => [...journal.values()].sort((x, y) => x.at - y.at)
 const openJournal = async ($: EngineInterface) => {
@@ -3054,6 +3093,21 @@ const exportLog = async ($: EngineInterface, how: 'copy' | 'download') => {
   }
   await webPost?.('export', JSON.stringify({ how, name: `claude-crew-log-${localDay(Date.now())}.md`, text }))
 }
+/** A log line opened on the page: all of it (a thought whole, an action and what came of it), from the log or the journal. */
+const openLine = async (key: string) => {
+  const c = await readCrew?.()
+  const l = c?.log.find(x => logKey(x) === key) ?? journal.get(key)
+  // An action's line already says what it was: below it, what came of it (an edit with its Open diff).
+  const act = l?.path ? actId({ k: 'file', path: l.path, name: baseName(l.path), edits: true }) : ''
+  await webPost?.('reply', JSON.stringify({ open: { key, text: l ? (l.kind !== 'think' && l.more) || fullOf(l) : '', act } }))
+}
+/** Load older on the page: the journal's lines before its oldest, a page at a time. */
+const OLDER_PAGE = 200
+const olderLines = async ($: EngineInterface, before: number) => {
+  await syncJournal($)
+  const all = journalLines().filter(l => l.at < before)
+  await webPost?.('reply', JSON.stringify({ older: { before, lines: all.slice(-OLDER_PAGE).map(webLine), end: all.length <= OLDER_PAGE } }))
+}
 /** Tells new chats in the project that earlier chats left logs and summaries, so Claude reads them when useful. */
 let logsNote = ''
 const findLogs = async ($: EngineInterface) => {
@@ -3103,13 +3157,21 @@ const startWeb = ($: EngineInterface) => {
             webSent = ''
             void publishWeb($)
           } else if (line.startsWith('ACT ')) {
-            let msg: { id?: unknown; search?: unknown; next?: unknown; set?: { budget?: unknown; editor?: unknown } } = {}
+            let msg: { id?: unknown; search?: unknown; next?: unknown; open?: unknown; older?: unknown; set?: { budget?: unknown; editor?: unknown } } = {}
             try {
               msg = JSON.parse(line.slice(4))
             } catch {}
             const act = typeof msg.id === 'string' ? webActs.get(msg.id) : undefined
             if (act) await doAction($, act, undefined)
             else if (typeof msg.search === 'string') await searchFor($, msg.search.slice(0, 200), msg.next === true)
+            // The page's own asks (a line opened, older lines): answered with a reply, the view is unchanged.
+            else if (typeof msg.open === 'string') {
+              await openLine(msg.open)
+              continue
+            } else if (typeof msg.older === 'number') {
+              await olderLines($, msg.older)
+              continue
+            }
             else if (msg.set && typeof msg.set === 'object') {
               // Settings' budget box and editor list: only values the pane's own choices could set.
               const { budget, editor } = msg.set
@@ -3572,6 +3634,7 @@ export const register: Register = on => {
     const node = nodeOf(e.tool, a)
     const detail = detailOf(e.tool, a).slice(0, 300)
     const callId = e.tool_use_id ?? `call-${Date.now()}-${Math.random()}`
+    const started = Date.now()
     const line = trunc(actionLine(e.tool, node, detail, typeof a.description === 'string' ? a.description : ''), 200)
 
     // Todo lists are the agent's own word on how far along it is.
@@ -3684,7 +3747,9 @@ export const register: Register = on => {
       }
       const logged = log({ ...d, calls: d.calls + 1 }, id, 'act', line)
       const last = logged.log[logged.log.length - 1]
-      return last && last !== d.log[d.log.length - 1] ? { ...logged, log: [...logged.log.slice(0, -1), { ...last, call: callId }] } : logged
+      // An edit keeps its file (for Open diff); a command shows what it runs while it runs.
+      const extra = { call: callId, ...(typeof delta === 'object' && node ? { path: node } : {}), ...(shell ? { more: `$ ${trunc(oneLine(str('command')), 300)}` } : {}) }
+      return last && last !== d.log[d.log.length - 1] ? { ...logged, log: [...logged.log.slice(0, -1), { ...last, ...extra }] } : logged
     })
     if (fresh && CODE_EXT.test(node)) scan(node)
 
@@ -3697,6 +3762,28 @@ export const register: Register = on => {
       const stamp = Date.now()
       const ok = !!ran && !(ran as { isError?: boolean }).isError && !(ran as { deny?: string }).deny
       const out = resultText(ran)
+      // What came of it, for its line opened: a command's last lines and how it ended, an error, an
+      // edit's file (+added −removed) and the lines it changed.
+      const more = trunc(
+        (() => {
+          if (shell) {
+            const code = out.match(/exit(?: code)?:?\s*(-?\d+)/i)?.[1]
+            const n = testCounts(out)
+            const end =
+              background && ok
+                ? 'started in the background'
+                : [ok ? '✓ Exit 0' : code ? `✕ Exit ${code}` : '✕ Failed', n ? [n.failed ? `${n.failed} failed` : '', `${n.passed} passed`].filter(Boolean).join(', ') : '', took(stamp - started)].filter(Boolean).join(' · ')
+            return [`$ ${trunc(oneLine(str('command')), 300)}`, background && ok ? '' : tailOf(out), end].filter(Boolean).join('\n')
+          }
+          if (!ok) return tailOf(out) || (ran as { deny?: string } | undefined)?.deny || "It didn't run."
+          const head = typeof delta === 'object' && node ? `${relPath(node)} +${delta.added} −${delta.removed}\n` : ''
+          if (e.tool === 'Edit') return head + editDiff(str('old_string'), str('new_string'))
+          if (e.tool === 'Write') return head + editDiff('', str('content'), 12)
+          if (e.tool === 'NotebookEdit') return head + editDiff('', str('new_source'), 12)
+          return ''
+        })(),
+        MORE_MAX,
+      )
       let settled: TestRun[] = []
       let stuckNote = ''
       let problemNote = ''
@@ -3706,7 +3793,8 @@ export const register: Register = on => {
         problemNote = ''
         let d = ok && delta && node && !isSpecial(node) ? record(c, node, id, delta) : c
         // How long the call took, on its line in the log.
-        if (d.log.some(l => l.call === callId && l.took === undefined)) d = { ...d, log: d.log.map(l => (l.call === callId && l.took === undefined ? { ...l, took: Math.max(0, stamp - l.at) } : l)) }
+        if (d.log.some(l => l.call === callId && l.took === undefined))
+          d = { ...d, log: d.log.map(l => (l.call === callId && l.took === undefined ? { ...l, took: Math.max(0, stamp - l.at), ...(more ? { more } : {}), ...(ok ? {} : { bad: true as const }) } : l)) }
         if (ok && /^Task(Create|Update|List|Get)$/.test(e.tool)) d = applyTaskCall(d, e.tool, a, ran, out, id)
         // The call is over: a permission it waited on is settled.
         if (d.agents.some(x => x.id === id && x.needs?.tool === e.tool.slice(0, 80))) d = upsert(d, id, x => ({ ...x, needs: undefined }))
