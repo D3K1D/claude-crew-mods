@@ -99,8 +99,16 @@ const card = r => {
   let more = ''
   if (r.state === 'you') more = `<div class="ask">${esc(r.ask)}</div><div class="l2"><span class="cut dim">${esc(r.where)}</span>${details}</div>`
   else if (r.state !== 'done') {
-    const pips = r.total ? `<span class="pips">${Array.from({ length: Math.min(5, r.total) }, (_, k) => `<span class="pip" style="${k < r.done ? `background:${color(sc)};` : ''}${k <= r.done ? `border-color:${color(sc)}` : ''}"></span>`).join('')}</span>` : ''
-    more = `<div class="l2">${pips}<span class="cut ${r.stuck ? 'amber' : 'dim'}">${esc(r.progress)}</span>${r.model ? `<span class="fix faint w">${esc(r.model)}</span>` : ''}${details}</div>`
+    // A pip per step, up to 15 (none above): done filled, the one on now ringed. They never shrink: the
+    // step's name cuts first, "Step n of m" never; only if even that doesn't fit do the pips go (see fitPips).
+    const pips =
+      r.total && r.total <= 15
+        ? `<span class="pips">${Array.from({ length: r.total }, (_, k) => `<span class="pip" style="${k < r.done ? `background:${color(sc)};` : ''}${k <= r.done ? `border-color:${color(sc)}` : ''}"></span>`).join('')}</span>`
+        : ''
+    const tone = r.stuck ? 'amber' : 'dim'
+    const step = r.stuck ? null : String(r.progress).match(/^(Step \S+ of \S+)(.*)$/)
+    const words = step ? `<span class="fix ${tone}">${esc(step[1])}</span><span class="cut ${tone}">${esc(step[2])}</span>` : `<span class="cut ${tone}">${esc(r.progress)}</span>`
+    more = `<div class="l2">${pips}${words}${r.model ? `<span class="fix faint w">${esc(r.model)}</span>` : ''}${details}</div>`
   }
   const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * 20
   return `<div class="card ${r.state === 'you' ? 'you' : ''} ${r.state === 'done' ? 'done' : ''} ${r.focused ? 'open' : ''}" style="margin-left:${indent}px"${r.asOf ? ` title="Not read live. Shown as of ${esc(r.asOf)}; it updates the next time Claude checks."` : ''}>${l1}${more}</div>`
@@ -113,6 +121,12 @@ const drawCrew = () => {
       ? `<div class="recap"><div class="l1">${icon('done', 'green', 15, 2)}<span class="fix b">${esc(rc.title)}</span><span class="cut dim">${esc(rc.goal)}</span><span class="time">${esc(rc.ago)}</span></div>${rc.facts.map(([k, v, role]) => `<div class="fact"><span>${esc(k)}</span><span class="cut" style="color:${color(role)}">${esc(v)}</span></div>`).join('')}</div>`
       : `<div class="recap"><span class="dim">${esc(rc.title)}</span></div>${rc.demo ? `<div style="padding-left:12px">${btn(rc.demo, '▶ Try a pretend session', 'u')}</div>` : ''}`
   $('crew').innerHTML = V.rows.map(card).join('') + recap
+  fitPips()
+}
+// A card whose pips, "Step n of m" and Details don't fit even with the step's name cut away (a page
+// narrower than 450, or deep nesting) shows "Step n of m" alone.
+const fitPips = () => {
+  for (const l2 of $('crew').querySelectorAll('.l2')) if (l2.querySelector('.pips') && l2.scrollWidth > l2.clientWidth + 1) l2.querySelector('.pips').remove()
 }
 
 // 3 · Touched
@@ -292,7 +306,7 @@ const logLine = l => {
     ? `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="${color(l.dot)}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>`
     : `<span style="color:${color(l.dot)}">●</span>`
   // A click on the line opens it (and again folds it); › marks one with more than it shows.
-  return `<div class="lw" data-k="${esc(l.key)}"><div class="ln${l.more ? ' can' : ''}${open ? ' open' : ''}" data-line="${esc(l.key)}"><span class="when">${esc(l.time.slice(0, 5))}${W(esc(l.time.slice(5)))}</span><span class="lead">${lead}</span><span class="who"${l.chat ? ` title="Nested chat: ${esc(l.chatTitle || l.chat)}"` : ''}>${esc(l.who)}</span>${icon(l.kind, l.run ? 'green' : l.bad ? 'red' : 'dim', 13, 1.8)}<span class="cut ${l.thought ? 'thought' : l.dim ? 'dim' : ''}">${l.by ? `<span class="dim" style="font-style:normal">${esc(l.by)} · </span>` : ''}${esc(l.text)}</span>${l.more ? `<span class="more" aria-hidden="true">${open ? '▾' : '›'}</span>` : ''}${l.run ? `<span class="dur run">${timer('r', l.at)}</span>` : `<span class="dur${l.bad ? ' red' : ''}">${l.bad ? '✕ ' : ''}${esc(l.dur)}</span>`}</div>${open ? `<div class="box${l.bad ? ' bad' : ''}">${boxHtml(l).join('')}</div>` : ''}</div>`
+  return `<div class="lw" data-k="${esc(l.key)}"><div class="ln${l.more ? ' can' : ''}${open ? ' open' : ''}" data-line="${esc(l.key)}"><span class="when">${esc(l.time.slice(0, 5))}<span class="sec">${esc(l.time.slice(5))}</span></span><span class="wcol" title="${l.chat ? `Nested chat: ${esc(l.chatTitle || l.chat)}` : esc(l.who)}"><span class="lead">${lead}</span><span class="who">${esc(l.who)}</span></span>${icon(l.kind, l.run ? 'green' : l.bad ? 'red' : 'dim', 13, 1.8)}<span class="cut ${l.thought ? 'thought' : l.dim ? 'dim' : ''}">${l.by ? `<span class="dim" style="font-style:normal">${esc(l.by)} · </span>` : ''}${esc(l.text)}</span>${l.more ? `<span class="more" aria-hidden="true">${open ? '▾' : '›'}</span>` : ''}${l.run ? `<span class="dur run">${timer('r', l.at)}</span>` : `<span class="dur${l.bad ? ' red' : ''}">${l.bad ? '✕ ' : ''}${esc(l.dur)}</span>`}</div>${open ? `<div class="box${l.bad ? ' bad' : ''}">${boxHtml(l).join('')}</div>` : ''}</div>`
 }
 // A line the page's width cuts off can be opened too: marked like the others.
 const markCut = root => {
@@ -362,14 +376,111 @@ const mergeLog = lines => {
     older = 'idle'
   }
 }
-// The log whole: its Load older row, then the lines the filter shows (or why there are none).
+// ── The log's columns: Time | Who | What | Took, sized by dragging the bars between them (as Explorer's
+// details view), kept per browser for the wide page and the narrow one. What takes the rest, never under 120.
+const COLS = { time: [40, 100], who: [12, 200], took: [36, 100] }
+const COL_DEFAULT = { wide: { time: 62, who: 72, took: 60 }, narrow: { time: 40, who: 72, took: 60 } }
+const colBar = (col, label) => `<span class="bar" data-col="${col}" role="separator" aria-orientation="vertical" aria-label="Resize ${label}" tabindex="0"><i></i></span>`
+const COL_HEAD = `<div id="colHead" class="colhead"><span class="h-time">Time</span>${colBar('time', 'Time')}<span class="h-who">Who</span>${colBar('who', 'Who')}<span class="h-what">What</span>${colBar('took', 'Took')}<span class="h-took">Took</span></div>`
+const cols = { ...COL_DEFAULT.wide }
+let colSet = ''
+const colKey = () => `crew.cols.${colSet}`
+// What has left: the log's width less the three columns and the three 8px gaps between the four.
+const whatRoom = () => $('body').clientWidth - 8 - cols.time - cols.who - cols.took - 24
+const showCols = () => {
+  const b = $('body')
+  for (const k of Object.keys(COLS)) b.style.setProperty(`--c-${k}`, `${cols[k]}px`)
+  b.classList.toggle('short-time', cols.time < 62)
+  b.classList.toggle('no-name', cols.who < 40)
+}
+// Within the limits, and What never under 120: Who gives way first, then Time, then Took.
+const fitCols = () => {
+  for (const [k, [lo, hi]] of Object.entries(COLS)) cols[k] = Math.round(Math.min(hi, Math.max(lo, Number(cols[k]) || lo)))
+  if ($('body').clientWidth > 0) for (const k of ['who', 'time', 'took']) cols[k] = Math.max(COLS[k][0], cols[k] - Math.max(0, 120 - whatRoom()))
+  showCols()
+}
+// The wide page's widths, or the narrow one's (each kept apart).
+const loadCols = () => {
+  const set = $('app').classList.contains('narrow') ? 'narrow' : 'wide'
+  if (set === colSet) return fitCols()
+  colSet = set
+  let saved = {}
+  try {
+    saved = JSON.parse(store.get(colKey()) || '{}') ?? {}
+  } catch {}
+  for (const k of Object.keys(COLS)) cols[k] = Number.isFinite(saved[k]) ? saved[k] : COL_DEFAULT[set][k]
+  fitCols()
+}
+const sizeCol = (col, w) => {
+  const [lo, hi] = COLS[col]
+  // Wider only as far as What keeps 120.
+  cols[col] = Math.round(Math.max(lo, Math.min(hi, w, w > cols[col] ? cols[col] + Math.max(0, whatRoom() - 120) : w)))
+  showCols()
+}
+const saveCols = () => {
+  store.set(colKey(), JSON.stringify(cols))
+  if (bodyMode === 'activity') remark()
+}
+// Its column fitted to the widest value among the loaded lines (one character of this font is as wide as any).
+const fitCol = col => {
+  const probe = document.createElement('span')
+  probe.textContent = '0000000000'
+  $('body').append(probe)
+  const ch = probe.getBoundingClientRect().width / 10 || 7
+  probe.remove()
+  const chars = col === 'time' ? 8 : Math.max(1, ...LOG.map(l => (col === 'who' ? l.who.length : (l.run ? 9 : (l.bad ? 2 : 0) + String(l.dur).length))))
+  sizeCol(col, Math.ceil(chars * ch) + (col === 'who' ? 20 : 2))
+  saveCols()
+}
+document.addEventListener('pointerdown', ev => {
+  const b = ev.target.closest?.('.colhead .bar')
+  if (!b) return
+  ev.preventDefault()
+  b.setPointerCapture(ev.pointerId)
+  const col = b.dataset.col
+  const head = $('colHead')
+  b.classList.add('drag')
+  head?.classList.add(`drag-${col}`)
+  const x0 = ev.clientX
+  const w0 = cols[col]
+  // (Took's bar sizes the column to its right: dragging left makes it wider.)
+  const move = e => sizeCol(col, w0 + (col === 'took' ? x0 - e.clientX : e.clientX - x0))
+  const up = () => {
+    b.classList.remove('drag')
+    head?.classList.remove(`drag-${col}`)
+    b.removeEventListener('pointermove', move)
+    b.removeEventListener('pointerup', up)
+    b.removeEventListener('pointercancel', up)
+    saveCols()
+  }
+  b.addEventListener('pointermove', move)
+  b.addEventListener('pointerup', up)
+  b.addEventListener('pointercancel', up)
+})
+document.addEventListener('dblclick', ev => {
+  const b = ev.target.closest?.('.colhead .bar')
+  if (b) fitCol(b.dataset.col)
+})
+document.addEventListener('keydown', ev => {
+  const b = ev.target.closest?.('.colhead .bar')
+  if (!b) return
+  const col = b.dataset.col
+  if (ev.key === 'Enter') fitCol(col)
+  else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+    ev.preventDefault()
+    // The bar moves 8px: right widens the column on its left, narrows Took on its right.
+    sizeCol(col, cols[col] + (ev.key === 'ArrowRight' ? 8 : -8) * (col === 'took' ? -1 : 1))
+    saveCols()
+  }
+})
+// The log whole: its column header, its Load older row, then the lines the filter shows (or why there are none).
 const renderLog = () => {
   const body = $('body')
   const lines = LOG.filter(shown)
   const none = LOG.length
     ? `<div class="empty">No ${KINDS.find(k => k[0] === filt.kind)[2]} from ${esc(whoWord())} in the last ${LOG.length} lines.</div>`
     : EMPTY
-  body.innerHTML = `<div id="olderRow" class="older"></div>${lines.length ? lines.map(logLine).join('') : none}`
+  body.innerHTML = `${COL_HEAD}<div id="olderRow" class="older"></div>${lines.length ? lines.map(logLine).join('') : none}`
   last.older = ''
   drawOlder()
   markCut(body)
@@ -491,22 +602,36 @@ $('body').addEventListener('scroll', () => {
 })
 // The page or the drag line changes the log's height: it stays on the newest line if it was there.
 // A new width cuts other lines: their › is set again.
+// (So does a column sized.)
+const remark = () => {
+  const body = $('body')
+  for (const ln of body.querySelectorAll('.ln.can:not(.open)'))
+    if (!byKey.get(ln.dataset.line)?.more) {
+      ln.classList.remove('can')
+      ln.querySelector('.more')?.remove()
+    }
+  markCut(body)
+}
 let logW = 0
 new ResizeObserver(() => {
   const body = $('body')
-  if (bodyMode === 'activity' && body.clientWidth !== logW) {
+  if (body.clientWidth !== logW) {
     logW = body.clientWidth
-    for (const ln of body.querySelectorAll('.ln.can:not(.open)'))
-      if (!byKey.get(ln.dataset.line)?.more) {
-        ln.classList.remove('can')
-        ln.querySelector('.more')?.remove()
-      }
-    markCut(body)
+    loadCols()
+    if (bodyMode === 'activity') remark()
   }
   if (V?.tab === 'activity' && following()) body.scrollTop = body.scrollHeight
 }).observe($('body'))
-// Narrow, as the design's 450 px board: the shorter words.
-new ResizeObserver(([e]) => $('app').classList.toggle('narrow', e.contentRect.width < 520)).observe($('app'))
+// Narrow, as the design's 450 px board: the shorter words, and the narrow page's column widths.
+new ResizeObserver(([e]) => {
+  $('app').classList.toggle('narrow', e.contentRect.width < 520)
+  loadCols()
+  // The cards again, so pips that went for want of room come back when there is room.
+  if (V) {
+    last.crew = ''
+    band('crew', [V.rows, V.recap], drawCrew)
+  }
+}).observe($('app'))
 
 // A band is drawn again only when its part of the view changed.
 const last = {}

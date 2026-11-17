@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.4'
+const VERSION = '1.8.5'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -4374,7 +4374,8 @@ export const register: Register = on => {
       const one: VLine = { indent, segs: [{ dot: hueRole(r.hue), t: r.name, b: r.state !== 'done', role: r.state === 'done' ? 'dim' : 'text' }, { icon: [r.kind, sr], t: term ? `${r.status} (as of ${r.asOf})` : r.status, b: true, role: sr }, { t: term ? '' : r.object, flex: true, role: r.asOf ? 'faint' : r.state === 'done' ? 'dim' : 'text' }], right: [{ t: r.time, role: 'dim' }] }
       if (r.state === 'done') return [one]
       if (r.state === 'you') return [one, ...wrapRows(r.ask, Math.max(16, cols - 6), 6).map(t => ({ indent: indent + 2 * CELL_W, segs: [{ t }] })), { indent: indent + 2 * CELL_W, segs: [{ t: r.where, role: 'dim', flex: true }], right: [details] }]
-      const pips = r.total ? `${'●'.repeat(Math.min(5, r.done))}${'○'.repeat(Math.max(0, Math.min(5, r.total) - r.done))}` : ''
+      // A pip per step, up to 15 (none above): ● done, ○ to come.
+      const pips = r.total && r.total <= 15 ? `${'●'.repeat(Math.min(r.total, r.done))}${'○'.repeat(Math.max(0, r.total - r.done))}` : ''
       return [one, { indent: indent + 2 * CELL_W, segs: [{ t: pips, role: 'dim' }, { t: r.progress, role: r.stuck ? 'amber' : 'dim', flex: true }], right: [...(wide && r.model ? [{ t: r.model, role: 'faint' }] : []), details] }]
     }
     const recapLines: VLine[] = recap

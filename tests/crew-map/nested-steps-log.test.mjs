@@ -79,6 +79,13 @@ await call({ done: [2], start: 3 }, 'p3')
 check('done [2], start 3: two done, on the third', main().todosDone === 2 && main().doing === 'Run the tests', JSON.stringify(main().plan))
 let t = text(await render())
 check('the card shows it: Step 3 of 3 · Run the tests', /Step 3 of 3 · Run the tests/.test(t), t.slice(0, 300))
+await call({ items: Array.from({ length: 7 }, (_, i) => ({ content: `Step ${i + 1}`, status: i < 6 ? 'completed' : 'in_progress' })) }, 'p7')
+t = text(await render())
+check('a pip for every step: 7 of 7, six done', /●●●●●●○ Step 7 of 7/.test(t), t.slice(0, 200))
+await call({ items: Array.from({ length: 16 }, (_, i) => ({ content: `Step ${i + 1}`, status: i ? 'pending' : 'in_progress' })) }, 'p16')
+t = text(await render())
+check('more than 15 steps: no pips, only the words', /Step 1 of 16/.test(t) && !/[●○]{16}/.test(t) && !/○ Step 1 of 16/.test(t), t.slice(0, 200))
+await call({ items: [{ content: 'Read the code', status: 'completed' }, { content: 'Write the fix', status: 'completed' }, { content: 'Run the tests', status: 'in_progress' }] }, 'p3b')
 
 // 2 · This chat writes its own file: its app id, its journal, its steps.
 await timer(3000)

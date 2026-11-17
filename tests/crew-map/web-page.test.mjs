@@ -17,7 +17,7 @@ const el = (find = true) => ({
   textContent: '',
   hidden: false,
   value: '',
-  style: {},
+  style: { setProperty() {} },
   dataset: {},
   classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
   addEventListener() {},
@@ -75,7 +75,7 @@ const context = {
 }
 vm.createContext(context)
 // The script's own names (const at its top level) are read through what it is given at its end.
-vm.runInContext(`${readFileSync(APP, 'utf8')}\n;globalThis.__page = { LOG, byKey, filt, shown }`, context)
+vm.runInContext(`${readFileSync(APP, 'utf8')}\n;globalThis.__page = { LOG, byKey, filt, shown, cols, sizeCol, loadCols }`, context)
 const page = context.__page
 const view = log => ({
   v: 'test',
@@ -129,6 +129,18 @@ try {
   Object.assign(page.filt, { who: '' })
   source.on.reply({ data: JSON.stringify({ older: { before: 0, lines: [line('-1:y')], end: true } }) })
   check('older lines the page did not ask for are not taken', !page.byKey.has('-1:y'))
+  // Columns: their limits, and What keeps 120 (the log here is 800 wide).
+  page.loadCols()
+  check('the columns start at 62 / 72 / 60', page.cols.time === 62 && page.cols.who === 72 && page.cols.took === 60, JSON.stringify(page.cols))
+  page.sizeCol('who', 500)
+  check('a column stops at its largest (Who 200)', page.cols.who === 200)
+  page.sizeCol('time', 10)
+  check('and at its smallest (Time 40)', page.cols.time === 40)
+  page.sizeCol('took', 100)
+  page.sizeCol('who', 72)
+  context.document.getElementById('body').clientWidth = 300
+  page.loadCols()
+  check('a narrow log keeps What at 120: Who gives way first', 300 - 8 - page.cols.time - page.cols.who - page.cols.took - 24 >= 120 && page.cols.who < 72 && page.cols.time === 40, JSON.stringify(page.cols))
 } catch (err) {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 400)}`, false)
 }
