@@ -1668,6 +1668,8 @@ const applyTaskCall = (c: Crew, tool: string, a: Record<string, unknown>, ran: u
  * the step in progress and starts the next; `done` ([n]) and `start` (n) name steps from 1.
  */
 const PLAN_TOOL = 'mcp__ccd_turn__update_plan'
+/** The desktop app's wrap-up, which also checks off the whole task list. */
+const WRAP_TOOL = 'mcp__ccd_turn__wrap_up'
 const planAfter = (was: { content: string; status: string }[], a: Record<string, unknown>) => {
   const p = Array.isArray(a.items)
     ? (a.items.filter(i => i && typeof i === 'object') as Record<string, unknown>[]).slice(0, 40).map(i => ({ content: trunc(oneLine(String(i.content ?? '')), 120), status: String(i.status ?? 'pending') }))
@@ -2090,8 +2092,8 @@ type Wait = { kind: 'you' | 'helpers' | 'command'; urgent: boolean; label: strin
 const waitOf = (a: Agent, c: Crew, now: number): Wait | undefined => {
   if (a.needs) return { kind: 'you', urgent: true, label: 'waiting on you', what: a.needs.what.replace(/^allow (running )?/, ''), short: 'you' }
   const kids = c.agents.filter(h => h.id !== a.id && (h.parent ?? 'main') === a.id && (h.state === 'busy' || h.state === 'thinking'))
-  const names = (list: Agent[]) => (list.length > 2 ? `${list.slice(0, 2).map(h => h.name).join(', ')} +${list.length - 2}` : list.map(h => h.name).join(', '))
-  const helpers = (list: Agent[]): Wait => ({ kind: 'helpers', urgent: false, label: `waiting on ${list.length === 1 ? 'a helper' : `${list.length} helpers`}`, what: names(list), short: names(list) })
+  const names = (list: { name: string }[]) => (list.length > 2 ? `${list.slice(0, 2).map(h => h.name).join(', ')} +${list.length - 2}` : list.map(h => h.name).join(', '))
+  const helpers = (list: { name: string }[]): Wait => ({ kind: 'helpers', urgent: false, label: `waiting on ${list.length === 1 ? 'a helper' : `${list.length} helpers`}`, what: names(list), short: names(list) })
   const shells = runningShells(c, now).filter(x => x.agentId === a.id)
   const command = (label: string): Wait => ({ kind: 'command', urgent: false, label: 'waiting on a command', what: label, short: trunc(label, 28) })
   if (a.state === 'busy') {
@@ -2107,7 +2109,9 @@ const waitOf = (a: Agent, c: Crew, now: number): Wait | undefined => {
   }
   // The main Claude's turn is over: still waiting on what it left running, else on you.
   if (a.id === 'main' && (a.state === 'idle' || a.state === 'done')) {
-    if (kids.length) return helpers(kids)
+    // Its helpers still at work, and the chats it started that still work: "Waiting for crew-coder, Scout".
+    const chatsOn = (c.chats ?? []).filter(ch => ch.depth === 1 && chatWorking(ch)).map(ch => ({ name: trunc(ch.name || ch.title, 24) }))
+    if (kids.length || chatsOn.length) return helpers([...kids, ...chatsOn])
     if (shells.length) return command(shells.length > 1 ? `${shells[0].label} +${shells.length - 1}` : shells[0].label)
     return { kind: 'you', urgent: false, label: 'your turn', what: 'waiting for your next message', short: 'your turn' }
   }
@@ -3458,6 +3462,16 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
 /** What this chat knows of each nested chat: its file, and its journal's chunks (lines as this log shows them). */
 type Nested = { file?: ChatFile; fileM: number; title?: string; name?: string; touched?: TouchedFile[]; touchedM?: number; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
 const nested = new Map<string, Nested>()
+/**
+ * A nested chat still at work (its Claude working, waiting on its own helpers or chats, or needing you):
+ * as its card says while the card is fresh, else as the app's list says.
+ */
+const chatWorking = (ch: Chat) => {
+  const f = nested.get(ch.id)?.file
+  const head = f?.card?.rows?.[0]
+  if (head && Date.now() - (Number(f?.at) || 0) < 3 * 60_000) return head.state === 'work' || head.state === 'wait' || head.state === 'you'
+  return ch.running
+}
 /** All nested chats' lines in time order, made again only when one changed. */
 let nestedVer = 0
 let sortedVer = -1
@@ -4379,12 +4393,14 @@ export const register: Register = on => {
           actions: [line, ...x.actions].slice(0, 5),
           kinds: [kindOf(e.tool), ...(x.kinds ?? [])].slice(0, 8),
         }
-        const list = plans ? planAfter(x.plan ?? [], a) : todos
+        // The app checks off the whole task list itself when Claude wraps up (no update_plan follows): every step done.
+        const wrapped = e.tool === WRAP_TOOL && !!x.plan?.length
+        const list = plans ? planAfter(x.plan ?? [], a) : wrapped ? (x.plan ?? []).map(t => ({ ...t, status: 'completed' })) : todos
         if (list) {
           const doing = list.find(t => t.status === 'in_progress') as { content?: string; activeForm?: string } | undefined
           upd = {
             ...upd,
-            ...(plans ? { plan: list as Agent['plan'] } : {}),
+            ...(plans || wrapped ? { plan: list as Agent['plan'] } : {}),
             todosTotal: list.length,
             todosDone: list.filter(t => t.status === 'completed').length,
             todosDoing: list.filter(t => t.status === 'in_progress').length,
