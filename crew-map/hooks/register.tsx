@@ -2215,7 +2215,7 @@ type Seg = {
 }
 /** (Details) A Claude under the one shown, drawn on the website as one button: its colour (a bubble for a nested chat), name, state, what it is on, steps, time. */
 type DRow = { hue: string; chat?: boolean; name: string; state: GlanceRow['state']; status: string; object: string; done: number; total: number; time: string; depth: number; run: Act }
-type VLine = { segs: Seg[]; right?: Seg[]; indent?: number; row?: DRow }
+type VLine = { segs: Seg[]; right?: Seg[]; indent?: number; row?: DRow; /** A section's title (the website puts space above it). */ head?: boolean }
 /** One Claude's row as the pane draws it: the glance row, its whole request unwrapped, and whether its Details show. */
 type PaneRow = GlanceRow & { ask: string; focused: boolean }
 
@@ -2866,15 +2866,21 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           ],
         }
       }
+      // A section's title, dim bold, with a faint note after it.
+      const title = (t: string, note = ''): VLine => ({ head: true, segs: [{ t, b: true, role: 'dim' }, ...(note ? [{ t: `· ${note}`, role: 'faint', flex: true }] : [])] })
+      // Its steps (✓ done, ▸ on now, ○ to come), and its own lines, newest first: each under its title, none when empty.
+      const stepSection = (list: { mark: string; text: string; on: boolean }[]): VLine[] =>
+        list.length ? [title('Steps'), ...list.flatMap(st => wrapRows(st.text, textCols - 2, 3).map((w, i): VLine => ({ segs: [{ t: `${i ? ' ' : st.mark} ${w}`, role: st.on ? 'text' : 'dim' }] })))] : []
+      const lineSection = (list: LogLine[]): VLine[] => (list.length ? [title('Its lines', 'newest first'), ...list.flatMap(l => logLinesOf(l).slice(0, 1))] : [])
       // A group of the Claudes under this one: its title and their states, then a row each that opens its Details.
       type Under = { r: GlanceRow; depth: number }
       const STATE_ROLE: Record<GlanceRow['state'], string> = { work: 'green', wait: 'dim', idle: 'dim', you: 'amber', done: 'dim' }
-      const group = (title: string, note: string, list: Under[]): VLine[] => {
+      const group = (name: string, note: string, list: Under[]): VLine[] => {
         if (!list.length) return []
         const n = (st: GlanceRow['state']) => list.filter(x => x.r.state === st).length
         const states = ([['work', 'working'], ['you', 'needs you'], ['wait', 'waiting'], ['idle', 'idle'], ['done', 'done']] as const).filter(([st]) => n(st)).map(([st, w]) => `${fmtK(n(st))} ${w}`).join(', ')
         return [
-          { segs: [{ t: title, b: true, role: 'dim' }, { t: `· ${note || states}`, role: 'faint', flex: true }] },
+          title(name, note || states),
           ...list.map(({ r, depth }): VLine => {
             const role = r.asOf ? 'dim' : STATE_ROLE[r.state]
             const run = openDetails(r.id)
@@ -2913,16 +2919,17 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           for (const t of nrow.info.asked ? wrapRows(nrow.info.asked, textCols, 8) : []) out.push({ segs: [{ t }] })
         }
         if (!hid) out.push(...group('Helpers', '', glance.filter(r => r.id.startsWith(`chat-${cid}~`)).map(r => ({ r, depth: Math.min(3, Math.max(0, r.depth - (chat?.depth ?? 1) - 1)) }))))
-        if (nrow?.info) for (const st of nrow.info.steps) wrapRows(st.text, textCols - 2, 3).forEach((w, i) => out.push({ segs: [{ t: `${i ? ' ' : st.mark} ${w}`, role: st.on ? 'text' : 'dim' }] }))
+        if (nrow?.info) out.push(...stepSection(nrow.info.steps))
         else if (!nrow) out.push({ segs: [{ t: 'Open it from the sidebar, under this chat.', role: 'dim' }] })
-        const theirs = nestedLines().filter(l => l.chat === cid && (hid ? l.by === nrow?.name : !l.by)).slice(-30).reverse()
-        for (const l of theirs) out.push(...logLinesOf(l).slice(0, 1))
+        out.push(...lineSection(nestedLines().filter(l => l.chat === cid && (hid ? l.by === nrow?.name : !l.by)).slice(-30).reverse()))
         return out
       }
       const parent = a ? src.agents.find(x => x.id === (a.parent ?? 'main')) : undefined
       const caller = run ? src.agents.find(x => x.id === run.caller) : undefined
-      const head = [focusRow.model || (run ? trunc(run.model, 14) : ''), a && a.id !== 'main' && parent ? `helping ${parent.name}` : caller ? `run by ${caller.name}` : '', focusRow.time].filter(Boolean).join(' · ')
-      out.push({ segs: [{ t: focusRow.name, b: true }, { t: head, role: 'dim', flex: true }] })
+      const model = focusRow.model || (run ? trunc(run.model, 14) : '')
+      const role = a && a.id !== 'main' && parent ? `helping ${parent.name}` : caller ? `run by ${caller.name}` : ''
+      const said: Seg = a?.id === 'main' ? (model ? { t: model, tail: ' · leads this chat' } : { t: 'leads this chat' }) : { t: [model, role].filter(Boolean).join(' · ') }
+      out.push({ segs: [{ t: focusRow.name, b: true }, { ...said, role: 'dim' }, { t: focusRow.time ? `${said.t ? '· ' : ''}${focusRow.time}` : '', role: 'dim', flex: true }] })
       // How full its context is: a bar and the share of its window (red once it compacts soon), and how often it was compacted.
       if (a) out.push(costLine(a))
       else if (run) out.push({ segs: [{ t: `${fmtK(run.commands)} command${run.commands === 1 ? '' : 's'} · ${fmtK(run.files.length)} file${run.files.length === 1 ? '' : 's'}${run.thread ? ` · ${run.thread}` : ''}`, role: 'dim' }] })
@@ -2934,12 +2941,11 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           ...group(
             'Nested chats',
             'started from this chat',
-            chatList.flatMap(ch => glance.filter(r => r.id === `chat-${ch.id}`).map(r => ({ r, depth: Math.min(3, Math.max(0, ch.depth - 1)) }))),
+            chatList.flatMap(ch => glance.filter(r => r.id === `chat-${ch.id}` || r.id.startsWith(`chat-${ch.id}~`)).map(r => ({ r, depth: Math.min(3, Math.max(0, r.id.includes('~') ? r.depth - 1 : ch.depth - 1)) }))),
           ),
         )
-      for (const t of a ? stepsOf(a, src).slice(0, 12) : []) wrapRows(t.text, textCols - 2, 3).forEach((w, i) => out.push({ segs: [{ t: `${i ? ' ' : stepMark(t.status)} ${w}`, role: t.status === 'in_progress' ? 'text' : 'dim' }] }))
-      const mine = allLog.filter(l => (run ? l.who === 'Codex' : l.who === focusRow.name && l.hue === (a?.hue ?? -2))).slice(-30).reverse()
-      for (const l of mine) out.push(...logLinesOf(l).slice(0, 1))
+      if (a) out.push(...stepSection(stepsOf(a, src).slice(0, 12).map(t => ({ mark: stepMark(t.status), text: t.text, on: t.status === 'in_progress' }))))
+      out.push(...lineSection(allLog.filter(l => (run ? l.who === 'Codex' : l.who === focusRow.name && l.hue === (a?.hue ?? -2))).slice(-30).reverse()))
       return out
     }
     // Every file the work touched, under its folder (in the order the work first reached them); a folder's
@@ -3126,7 +3132,7 @@ const webView = async ($: EngineInterface) => {
     act: g.run && g.run.k !== 'none' ? actId(g.run) : undefined,
     label: g.label,
   })
-  const line = (l: VLine) => ({ segs: l.segs.map(seg), right: (l.right ?? []).map(seg), indent: l.indent ? Math.round(l.indent / CELL_W) : 0, ...(l.row ? { row: { ...l.row, run: undefined, act: actId(l.row.run) } } : {}) })
+  const line = (l: VLine) => ({ segs: l.segs.map(seg), right: (l.right ?? []).map(seg), indent: l.indent ? Math.round(l.indent / CELL_W) : 0, ...(l.head ? { head: true } : {}), ...(l.row ? { row: { ...l.row, run: undefined, act: actId(l.row.run) } } : {}) })
   return {
     v: VERSION,
     theme: m.c.theme ?? 'auto',

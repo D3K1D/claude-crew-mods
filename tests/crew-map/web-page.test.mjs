@@ -159,6 +159,7 @@ try {
   const dr = page.vLine({ segs: [], right: [], row: { hue: 'h3', chat: false, name: 'Atlas', state: 'work', status: 'Running tests', object: 'npm test', done: 1, total: 3, time: '6m', depth: 1, act: 'a7' } })
   check('a helper in Details: one button with its colour, name, state, what, pips and time', /^<button class="nb dr" style="--d:1" data-act="a7"/.test(dr) && dr.includes('background:var(--h3)') && />Atlas</.test(dr) && />Running tests</.test(dr) && dr.includes('class="pips"') && />6m</.test(dr), dr.slice(0, 200))
   const dc = page.vLine({ segs: [], right: [], row: { hue: 'h2', chat: true, name: 'docs-build', state: 'done', status: 'Done', object: '', done: 0, total: 0, time: '', depth: 0, act: 'a8' } })
+  check("a section's title gets the space above it", /^<div class="vl gh"/.test(page.vLine({ head: true, segs: [{ t: 'Steps', b: true, role: 'dim' }], right: [] })))
   check('a nested chat: its bubble; done is dim', dc.includes('stroke="var(--h2)"') && dc.includes('class="nb dr done"'), dc.slice(0, 200))
 } catch (err) {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 400)}`, false)

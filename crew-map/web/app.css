@@ -184,6 +184,8 @@ svg { flex-shrink: 0; }
 .older[hidden] { display: none; }
 .vl { display: flex; align-items: center; gap: 8px; white-space: nowrap; min-width: 0; min-height: 19px; }
 .vl .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+/* A section's title in Details (Helpers, Nested chats, Steps, Its lines): space above it */
+.vl.gh { margin-top: 6px; min-height: 20px; }
 /* Details: a Claude under the one shown, a full-width button (its helpers one step in each) */
 .dr { display: flex; align-items: center; gap: 8px; width: calc(100% + 6px); height: 22px; min-width: 0; padding-left: calc(var(--d) * 20px + 3px); color: var(--text); }
 #app.narrow .dr { padding-left: calc(var(--d) * 12px + 3px); }

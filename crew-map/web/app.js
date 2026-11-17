@@ -587,7 +587,7 @@ const dRow = r => {
   const pips = r.total && r.total <= 15 ? `<span class="pips">${Array.from({ length: r.total }, (_, k) => `<span class="pip" style="${k < r.done ? `background:${color(sc)};` : ''}${k <= r.done ? `border-color:${color(sc)}` : ''}"></span>`).join('')}</span>` : ''
   return `<button class="nb dr${done ? ' done' : ''}" style="--d:${Math.min(3, r.depth)}" data-act="${esc(r.act)}" aria-label="${esc(`Show ${r.name}'s details`)}"><span class="lead">${lead(r.hue, r.chat)}</span><span class="nm">${esc(r.name)}</span><span class="st" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut">${esc(r.object)}</span>${done ? '' : pips}<span class="time">${esc(r.time)}</span><span class="dim">›</span></button>`
 }
-const vLine = l => (l.row ? dRow(l.row) : `<div class="vl" style="padding-left:${l.indent || 0}ch">${l.segs.map(seg).join('')}${l.right.length ? `<span class="right">${l.right.map(seg).join('')}</span>` : ''}</div>`)
+const vLine = l => (l.row ? dRow(l.row) : `<div class="vl${l.head ? ' gh' : ''}" style="padding-left:${l.indent || 0}ch">${l.segs.map(seg).join('')}${l.right.length ? `<span class="right">${l.right.map(seg).join('')}</span>` : ''}</div>`)
 // Settings, as the design has them: the theme, a budget you type, the editor from a list.
 const settingsHtml = s => {
   const row = (label, inner) => `<div class="set"><span class="lab">${label}</span>${inner}</div>`

@@ -60,7 +60,9 @@ try {
   // Details list the steps the card counts (the app's plan here).
   await makePress(elements, render, tick)('Claude: Details')
   let det = words(await render(), 'view').join(' | ')
-  check("Details list the plan's steps", /✓ Write \| ▸ Check \| ○ Ship/.test(det), det.slice(0, 300))
+  check("Details list the plan's steps, under their title", /Steps \| ✓ Write \| ▸ Check \| ○ Ship/.test(det), det.slice(0, 300))
+  check('...and its own lines under theirs, newest first', /Its lines \| · newest first \| .*update plan/.test(det), det.slice(0, 400))
+  check('a section with nothing in it is left out (no helpers here)', !/Helpers|Nested chats/.test(det))
 
   // ── 2. Wrapping up checks off every step ──
   await call('mcp__ccd_turn__wrap_up', { recap: 'Shipped.' })
