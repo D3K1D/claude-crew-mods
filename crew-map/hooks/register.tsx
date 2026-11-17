@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.6'
+const VERSION = '1.8.7'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -2352,7 +2352,11 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const newerCount = allLog.length - upto.length
     const demoOn = c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done')
     // The chat's cost as Claude Code totals it, else what the crew counted of it.
-    const totalCost = c.chatCost ?? c.spent?.cost ?? c.agents.reduce((n, a) => n + (a.cost ?? 0), 0)
+    const ownCost = c.chatCost ?? c.spent?.cost ?? c.agents.reduce((n, a) => n + (a.cost ?? 0), 0)
+    // With its nested chats' (each counts its own, so none twice): one total, and the budget applies to it.
+    const chatCosts = (c.chats ?? []).map(ch => ({ name: trunc(ch.name || ch.title, 24), cost: Number(nested.get(ch.id)?.file?.card?.cost) || 0 })).filter(x => x.cost > 0)
+    const totalCost = ownCost + chatCosts.reduce((n, x) => n + x.cost, 0)
+    const costTitle = chatCosts.length ? [`this chat ${fmtUsd(ownCost)}`, ...chatCosts.map(x => `${x.name} ${fmtUsd(x.cost)}`)].join(' · ') : ''
     const sm = c.summary
     const workedGroups: { g: string; rows: (typeof worked)[number][] }[] = []
     for (const w of worked) {
@@ -2510,32 +2514,72 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const asOfChat = (ch: Chat) => (src.chatsLive === false && ch.seen ? clock(ch.seen).slice(0, 5) : '')
     // Its steps, from the file it writes about itself: as a Claude's card shows them (its branch and folder
     // are then in Details only); without steps, where it works.
-    const rowOfChat = (ch: Chat): GlanceRow => {
+    // A nested chat reads as a helper Claude does: its card as its own pane draws it (from the file it
+    // writes), under its short name and colour, its own helpers one step in under it. Before it has
+    // written a card: what the chat list says. A card not read live says "as of", and never needs you
+    // (that must be live). Needing you, it says to answer in that chat: the mod can't answer it here.
+    // (Its times come as marks: the website counts them up, the pane turns them into words.)
+    const fromMarks = (t: string) => (web ? t : t.replace(/\uE000([est])(\d+)\uE001/g, (_, k: 'e' | 's' | 't', n: string) => since(Number(n), k)))
+    const rowsOfChat = (ch: Chat): GlanceRow[] => {
       const f = nested.get(ch.id)?.file
-      const total = Math.max(0, Math.round(Number(f?.total) || 0))
-      const done = Math.min(total, Math.max(0, Math.round(Number(f?.done) || 0)))
-      return {
+      const asOf = asOfChat(ch)
+      const name = trunc(ch.name || ch.title, 24)
+      const [main, ...helpers] = (f?.card?.rows ?? []).filter(r => r && typeof r.name === 'string')
+      const total = Math.max(0, Math.round(Number(main?.total ?? f?.total) || 0))
+      const done = Math.min(total, Math.max(0, Math.round(Number(main?.done ?? f?.done) || 0)))
+      const answer = `${name} · answer in that chat`
+      const stateOf = (r: NestedRow): GlanceRow['state'] => (r.state === 'you' && asOf ? 'work' : r.state)
+      const head: GlanceRow = {
         id: `chat-${ch.id}`,
-        name: ch.title,
+        name: main ? name : ch.title,
         hue: PALETTE[chatHue(ch.id)],
-        state: ch.running ? 'work' : 'idle',
-        kind: ch.running ? 'msg' : 'idle',
-        status: ch.running ? 'Working' : 'Idle',
-        object: asOfChat(ch) ? `as of ${asOfChat(ch)}` : ch.running ? 'in its own chat' : ch.at ? `last active ${since(ch.at, 's')} ago` : '',
-        time: asOfChat(ch) && ch.at ? since(ch.at, 's') : '',
-        asOf: asOfChat(ch) || undefined,
+        state: main && !asOf ? stateOf(main) : ch.running ? 'work' : 'idle',
+        kind: main && !asOf ? main.kind : ch.running ? 'msg' : 'idle',
+        status: main && !asOf ? main.status : ch.running ? 'Working' : 'Idle',
+        object: asOf ? `as of ${asOf}` : main ? fromMarks(main.object) : ch.running ? 'in its own chat' : ch.at ? `last active ${since(ch.at, 's')} ago` : '',
+        time: asOf ? (ch.at ? since(ch.at, 's') : '') : main ? fromMarks(main.time) : '',
+        asOf: asOf || undefined,
         total,
         done,
-        progress: total
-          ? `Step ${fmtK(Math.min(total, done + 1))} of ${fmtK(total)}${f?.doing ? ` · ${trunc(oneLine(String(f.doing)), 120)}` : ''}`
-          : `Chat · ${[ch.branch, baseName(ch.cwd)].filter(Boolean).join(' · ')}`,
-        model: '',
+        progress: main
+          ? fromMarks(main.progress)
+          : total
+            ? `Step ${fmtK(Math.min(total, done + 1))} of ${fmtK(total)}${f?.doing ? ` · ${trunc(oneLine(String(f.doing)), 120)}` : ''}`
+            : `Chat · ${[ch.branch, baseName(ch.cwd)].filter(Boolean).join(' · ')}`,
+        stuck: !!main?.stuck && !asOf,
+        model: main?.model ?? '',
         depth: ch.depth,
         request: [],
         where: '',
       }
+      const you = (r: NestedRow) => r.state === 'you' && !asOf
+      const askOf = (r: NestedRow) => (you(r) ? { ask: r.ask ?? '', request: wrapRows(r.ask ?? '', Math.max(20, cols - 18), 2), where: answer } : {})
+      return [
+        { ...head, ...(main ? askOf(main) : {}) },
+        ...helpers.map(h => ({
+          id: `chat-${ch.id}~${h.id}`,
+          name: h.name,
+          hue: h.hue,
+          state: stateOf(h),
+          kind: h.kind,
+          status: h.status,
+          object: fromMarks(h.object),
+          time: fromMarks(h.time),
+          total: h.total,
+          done: h.done,
+          progress: fromMarks(h.progress),
+          stuck: !!h.stuck && !asOf,
+          model: h.model,
+          depth: ch.depth + Math.max(1, h.depth),
+          // (Not read live: as stale as its chat, so dim and left out of the counts.)
+          asOf: asOf || undefined,
+          request: [],
+          where: '',
+          ...askOf(h),
+        })),
+      ]
     }
-    const glance = [...ordered.map(rowOfAgent), ...chatList.map(rowOfChat), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
+    const glance = [...ordered.map(rowOfAgent), ...chatList.flatMap(rowsOfChat), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
     const glanceList = [...glance.filter(r => r.state === 'you'), ...glance.filter(r => r.state !== 'you')]
     // Room: the rows shown, at least; while anyone works, two lines for each of the most Claudes lately.
     const desksH = Math.max(glanceList.reduce((n, r) => n + glanceBase(r), 0), anyAtWork ? Math.max(1, deskMax) * 2 : 0)
@@ -2633,7 +2677,8 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const budgetText = c.budget > 0 ? (wide ? `of ${fmtUsd(c.budget)}` : `/ ${fmtUsd(c.budget)}`) : ''
 
     // The last task while nobody works; before any work, what shows here and the demo.
-    const spendersNow = c.agents.filter(a => (a.cost ?? 0) > 0).sort((x, y) => y.cost - x.cost)
+    // Who spent it: this chat's Claudes and the nested chats, the most first.
+    const spendersNow = [...c.agents.filter(a => (a.cost ?? 0) > 0).map(a => ({ name: a.name, cost: a.cost })), ...chatCosts].sort((x, y) => y.cost - x.cost)
     const recap: Recap | undefined =
       standby && sm
         ? {
@@ -2756,34 +2801,47 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       const run = focusRow.id.startsWith('cx-') ? codexRuns.find(x => `cx-${x.id}` === focusRow.id) : undefined
       const textCols = Math.max(16, vwCols - 2)
       const out: VLine[] = []
-      const chat = focusRow.id.startsWith('chat-') ? chatList.find(x => `chat-${x.id}` === focusRow.id) : undefined
-      if (chat) {
-        // A nested chat: its whole title, who started it, where it works, and when it last did anything.
-        const by = chatList.find(x => x.id === chat.parent)
-        out.push({ segs: [{ t: 'Chat', b: true }, { t: [chat.running ? 'working' : 'idle', chat.at ? `last active ${since(chat.at, 's')} ago` : ''].filter(Boolean).join(' · '), role: 'dim', flex: true }] })
-        for (const t of wrapRows(chat.title, textCols, 3)) out.push({ segs: [{ t }] })
-        out.push({ segs: [{ t: `Started by ${by ? by.title : 'this chat'}`, role: 'dim', flex: true }] })
-        for (const t of wrapRows([chat.cwd, chat.branch ? `branch ${chat.branch}` : ''].filter(Boolean).join(' · '), textCols, 2)) out.push({ segs: [{ t, role: 'dim' }] })
-        out.push({ segs: [{ t: 'Open it from the sidebar, under this chat.', role: 'dim' }] })
+      // A cost, tokens and context line: as a Claude's here, or as a nested chat's Claude published it.
+      const costLine = (x: { cost?: number; tokens?: number; ctx?: { tokens: number; window: number }; compactions?: number }): VLine => {
+        const ctx = x.ctx && x.ctx.window ? Math.round((x.ctx.tokens / x.ctx.window) * 100) : -1
+        const packed = x.compactions ? ` · compacted ${fmtK(x.compactions)}×` : ''
+        return {
+          segs: [
+            { t: `${fmtUsd(x.cost ?? 0)} · ${fmtK(x.tokens ?? 0)} tokens · context`, role: 'dim' },
+            ...(ctx >= 0 && x.ctx
+              ? [{ bar: ctx / 100, role: ctx >= 85 ? 'red' : ctx >= 60 ? 'amber' : 'dim' }, { t: `${ctx}% of ${fmtK(x.ctx.window)}${ctx >= 85 ? ' · compacts soon' : ''}${packed}`, role: ctx >= 85 ? 'red' : 'dim', flex: true }]
+              : [{ t: `—${packed}`, role: 'dim', flex: true }]),
+          ],
+        }
+      }
+      if (focusRow.id.startsWith('chat-')) {
+        // A nested chat, or one of its helpers: the same Details as a Claude's here, from what that chat
+        // wrote about itself; its title, branch and folder under the first line; its own lines in the log.
+        const [cid = '', hid] = focusRow.id.slice(5).split('~')
+        const chat = chatList.find(x => x.id === cid)
+        const card = nested.get(cid)?.file?.card?.rows ?? []
+        const nrow = card.find(r => r.id === (hid ?? 'main'))
+        const by = chat ? chatList.find(x => x.id === chat.parent) : undefined
+        const helping = hid ? card.find(r => r.id === 'main')?.name : ''
+        const head = [focusRow.model, hid ? `helping ${helping || 'Claude'} in ${trunc(chat?.name || chat?.title || 'its chat', 24)}` : `started from ${by ? trunc(by.title, 40) : 'this chat'}`, focusRow.asOf ? '' : focusRow.time].filter(Boolean).join(' · ')
+        out.push({ segs: [{ t: focusRow.name, b: true }, { t: head, role: 'dim', flex: !focusRow.asOf }, ...(focusRow.asOf ? [{ t: `· as of ${focusRow.asOf}`, role: 'faint', flex: true }] : [])] })
+        if (chat && !hid) for (const t of wrapRows([chat.title, chat.branch, chat.cwd].filter(Boolean).join(' · '), textCols, 2)) out.push({ segs: [{ t, role: 'dim' }] })
+        if (nrow?.info) {
+          out.push(costLine(nrow.info))
+          for (const t of nrow.info.asked ? wrapRows(nrow.info.asked, textCols, 8) : []) out.push({ segs: [{ t }] })
+          for (const st of nrow.info.steps) wrapRows(st.text, textCols - 2, 3).forEach((w, i) => out.push({ segs: [{ t: `${i ? ' ' : st.mark} ${w}`, role: st.on ? 'text' : 'dim' }] }))
+        } else if (!nrow) out.push({ segs: [{ t: 'Open it from the sidebar, under this chat.', role: 'dim' }] })
+        const theirs = nestedLines().filter(l => l.chat === cid && (hid ? l.by === nrow?.name : !l.by)).slice(-30).reverse()
+        for (const l of theirs) out.push(...logLinesOf(l).slice(0, 1))
         return out
       }
       const parent = a ? src.agents.find(x => x.id === (a.parent ?? 'main')) : undefined
       const caller = run ? src.agents.find(x => x.id === run.caller) : undefined
       const head = [focusRow.model || (run ? trunc(run.model, 14) : ''), a && a.id !== 'main' && parent ? `helping ${parent.name}` : caller ? `run by ${caller.name}` : '', focusRow.time].filter(Boolean).join(' · ')
       out.push({ segs: [{ t: focusRow.name, b: true }, { t: head, role: 'dim', flex: true }] })
-      if (a) {
-        // How full its context is: a bar and the share of its window (red once it compacts soon), and how often it was compacted.
-        const ctx = a.ctx && a.ctx.window ? Math.round((a.ctx.tokens / a.ctx.window) * 100) : -1
-        const packed = a.compactions ? ` · compacted ${fmtK(a.compactions)}×` : ''
-        out.push({
-          segs: [
-            { t: `${fmtUsd(a.cost ?? 0)} · ${fmtK(a.tokens ?? 0)} tokens · context`, role: 'dim' },
-            ...(ctx >= 0
-              ? [{ bar: ctx / 100, role: ctx >= 85 ? 'red' : ctx >= 60 ? 'amber' : 'dim' }, { t: `${ctx}% of ${fmtK(a.ctx!.window)}${ctx >= 85 ? ' · compacts soon' : ''}${packed}`, role: ctx >= 85 ? 'red' : 'dim', flex: true }]
-              : [{ t: `—${packed}`, role: 'dim', flex: true }]),
-          ],
-        })
-      } else if (run) out.push({ segs: [{ t: `${fmtK(run.commands)} command${run.commands === 1 ? '' : 's'} · ${fmtK(run.files.length)} file${run.files.length === 1 ? '' : 's'}${run.thread ? ` · ${run.thread}` : ''}`, role: 'dim' }] })
+      // How full its context is: a bar and the share of its window (red once it compacts soon), and how often it was compacted.
+      if (a) out.push(costLine(a))
+      else if (run) out.push({ segs: [{ t: `${fmtK(run.commands)} command${run.commands === 1 ? '' : 's'} · ${fmtK(run.files.length)} file${run.files.length === 1 ? '' : 's'}${run.thread ? ` · ${run.thread}` : ''}`, role: 'dim' }] })
       const asked = run ? oneLine(run.task) : a ? [a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : '', a.job ?? ''].sort((x, y) => y.length - x.length)[0] : ''
       for (const t of asked ? wrapRows(asked, textCols, 8) : []) out.push({ segs: [{ t }] })
       for (const t of a ? tasksOf(a, src).slice(0, 12) : []) {
@@ -2898,7 +2956,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     // The website's log: its newest lines (the page keeps what it was sent, and loads older ones from the
     // journals), each whole (the page cuts it to fit and opens it), oldest first.
     const webLog = allLog.slice(-WEB_WINDOW).map(webLine)
-    return { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, byNested, BODY_ROWS, listed, top0, scroll, tabs, webLog }
+    return { c, sq, vwCols, totalCost, costTitle, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, byNested, BODY_ROWS, listed, top0, scroll, tabs, webLog }
 }
 
 /** A log line for the website: what it shows closed; `more` when opening it shows more than its words (the page asks for that). */
@@ -2984,7 +3042,7 @@ const webView = async ($: EngineInterface) => {
     v: VERSION,
     theme: m.c.theme ?? 'auto',
     icons: KIND_ICON,
-    head: { counts: m.counts, cost: m.totalCost > 0 || m.c.budget > 0 ? fmtUsd(m.totalCost) : '', costRole: m.costRole, budget: m.budgetText },
+    head: { counts: m.counts, cost: m.totalCost > 0 || m.c.budget > 0 ? fmtUsd(m.totalCost) : '', costRole: m.costRole, budget: m.budgetText, costTitle: m.costTitle },
     rows: m.rowsP.map(r => ({
       id: r.id,
       name: r.name,
@@ -3130,6 +3188,8 @@ const storeEntry = async ($: EngineInterface, key: string, id: string, value: un
   await $.store.set(key, Object.fromEntries([...Object.entries(rest), [id, value]].slice(-keep))).catch(() => undefined)
 }
 const journalLines = () => [...journal.values()].sort((x, y) => x.at - y.at)
+/** This chat's whole log and its nested chats', in time order: what Copy, Download, Save and Load older have. */
+const everyLine = () => [...journalLines(), ...nestedLines()].sort((x, y) => x.at - y.at)
 const listDir = (path: string) => later$(() => fsList?.(path) ?? []).catch(() => []) as Promise<{ name: string; mtimeMs?: number }[]>
 const readJson = (path: string) => later$(async () => JSON.parse(String(await fsRead?.(path))) as unknown).catch(() => undefined)
 /** A journal folder's chunk numbers, oldest first. */
@@ -3240,7 +3300,13 @@ const writeTouched = async ($: EngineInterface, c: Crew) => {
 // journal's name and its steps. The chat that started it (any chat above it) reads that file and the
 // journal chunks that changed, every few seconds, so their steps fill its card and their lines join its
 // log. (Files, not $.store: one file per chat, so two chats never write the same one.)
-type ChatFile = { id: string; journal: string; total: number; done: number; doing: string; at: number }
+/** A Claude of a nested chat, as that chat's own pane shows it: its card, and what its Details show. */
+type NestedRow = Pick<GlanceRow, 'id' | 'name' | 'hue' | 'state' | 'kind' | 'status' | 'object' | 'time' | 'total' | 'done' | 'progress' | 'model' | 'depth'> & {
+  stuck?: boolean
+  ask?: string
+  info?: { cost: number; tokens: number; ctx?: { tokens: number; window: number }; compactions?: number; asked: string; steps: { mark: string; text: string; on: boolean }[] }
+}
+type ChatFile = { id: string; journal: string; total: number; done: number; doing: string; at: number; card?: { rows: NestedRow[]; cost: number; tokens: number } }
 /** This chat's id in the desktop app (local_…), and the home folder the files live under. */
 let hostId = ''
 let homeDir = ''
@@ -3253,7 +3319,37 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
   const total = tasks.length || a.todosTotal
   const done = tasks.length ? tasks.filter(t => t.status === 'completed').length : a.todosDone
   const doing = doingOf(a, c) || tasks.find(t => t.status !== 'completed')?.subject || ''
-  const s = JSON.stringify({ id: hostId, journal: journalSid, total, done, doing: trunc(oneLine(doing), 120) })
+  // Its cards as its own pane draws them (its main Claude and up to 12 helpers; times as marks the
+  // reader counts up), what each one's Details show, and what the chat cost.
+  const m = await later$(() => paneModel($, 160, 700, true)).catch(() => undefined)
+  const rows: NestedRow[] = (m?.rowsP ?? [])
+    .filter(r => !/^(chat-|cx-|demo-)/.test(r.id))
+    .slice(0, 13)
+    .map(r => {
+      const x = c.agents.find(y => y.id === r.id)
+      const asked = x ? [x.goal && !systemNote(x.goal) ? oneLine(promptOf(x.goal)) : '', x.job ?? ''].sort((p, q) => q.length - p.length)[0] ?? '' : ''
+      return {
+        ...{ id: r.id, name: r.name, hue: r.hue, state: r.state, kind: r.kind, status: r.status, object: trunc(r.object, 200), time: r.time, total: r.total, done: r.done, progress: trunc(r.progress, 200), model: r.model, depth: r.depth },
+        ...(r.stuck ? { stuck: true } : {}),
+        ...(r.state === 'you' ? { ask: trunc(r.ask, 600) } : {}),
+        ...(x
+          ? {
+              info: {
+                cost: x.cost ?? 0,
+                tokens: x.tokens ?? 0,
+                ...(x.ctx ? { ctx: { tokens: x.ctx.tokens, window: x.ctx.window } } : {}),
+                ...(x.compactions ? { compactions: x.compactions } : {}),
+                asked: trunc(asked, 600),
+                steps: tasksOf(x, c)
+                  .slice(0, 12)
+                  .map(t => ({ mark: t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○', text: trunc(t.active && t.status === 'in_progress' ? t.active : t.subject, 160), on: t.status === 'in_progress' })),
+              },
+            }
+          : {}),
+      }
+    })
+  const card = { rows, cost: c.chatCost ?? c.spent?.cost ?? 0, tokens: c.spent?.tokens ?? 0 }
+  const s = JSON.stringify({ id: hostId, journal: journalSid, total, done, doing: trunc(oneLine(doing), 120), card })
   // Written when it changed, and once a minute so a reader can tell it is still there.
   if (s === selfSent && Date.now() - selfAt < 60_000) return
   selfSent = s
@@ -3400,7 +3496,7 @@ const localDay = (ms: number) => {
 }
 /** The log as Markdown: who did what and when, and what each Claude was thinking. */
 const logMarkdown = (lines: LogLine[], c: Crew) => {
-  const goal = lines.find(l => l.kind === 'you')?.text ?? ''
+  const goal = lines.find(l => l.kind === 'you' && !l.chat)?.text ?? ''
   const what = (l: LogLine) => (l.kind === 'think' ? 'thought' : l.kind === 'you' ? 'asked' : l.kind === 'msg' ? 'said' : l.kind === 'info' ? 'note' : 'did')
   const first = lines[0]
   const last = lines[lines.length - 1]
@@ -3411,11 +3507,12 @@ const logMarkdown = (lines: LogLine[], c: Crew) => {
     `- Chat: ${journalSid || 'this chat'}`,
     first ? `- From ${localDay(first.at)} ${clock(first.at)} to ${localDay(last.at)} ${clock(last.at)}` : '- Nothing happened yet',
     ...(journalCut ? [`- Earlier lines are left out: the log keeps the newest ${JOURNAL_KEEP.toLocaleString("en-US")} lines`] : []),
-    `- Cost so far: ${fmtUsd(c.chatCost ?? c.spent?.cost ?? 0)}`,
+    // (With its nested chats', as the header counts it.)
+    `- Cost so far: ${fmtUsd((c.chatCost ?? c.spent?.cost ?? 0) + (c.chats ?? []).reduce((n, ch) => n + (Number(nested.get(ch.id)?.file?.card?.cost) || 0), 0))}`,
     '',
     '## Activity',
     '',
-    ...lines.map(l => `- ${clock(l.at)} **${l.who}** ${what(l)}: ${oneLine(l.text)}${failMark(l)}${l.took !== undefined ? ` _(${took(l.took)})_` : ''}${l.full && oneLine(l.full) !== oneLine(l.text) ? `\n  > ${oneLine(l.full)}` : ''}`),
+    ...lines.map(l => `- ${clock(l.at)} **${l.chat ? `${l.who}${l.by ? ` · ${l.by}` : ''}` : l.who}** ${what(l)}: ${oneLine(l.text)}${failMark(l)}${l.took !== undefined ? ` _(${took(l.took)})_` : ''}${l.full && oneLine(l.full) !== oneLine(l.text) ? `\n  > ${oneLine(l.full)}` : ''}`),
     '',
   ].join('\n')
 }
@@ -3440,7 +3537,7 @@ const saveLog = async ($: EngineInterface, why: 'button' | 'task') => {
   try {
     await syncJournal($)
     const c = await readCrew?.()
-    const lines = journalLines()
+    const lines = everyLine()
     if (!c || !lines.length) {
       if (why === 'button') void $.ui.toast('Nothing to save yet: the log is empty.')
       return
@@ -3448,7 +3545,7 @@ const saveLog = async ($: EngineInterface, why: 'button' | 'task') => {
     // One file per chat: the same name each time it is saved.
     const names = ((await $.store.get('logFiles').catch(() => undefined)) ?? {}) as Record<string, string>
     const key = journalSid || 'chat'
-    const base = names[key] ?? `${localDay(lines[0].at)}-${slugOf(promptOf(lines.find(l => l.kind === 'you')?.text ?? 'chat'))}-${key.slice(0, 8)}`
+    const base = names[key] ?? `${localDay(lines[0].at)}-${slugOf(promptOf(lines.find(l => l.kind === 'you' && !l.chat)?.text ?? 'chat'))}-${key.slice(0, 8)}`
     if (!names[key]) await storeEntry($, 'logFiles', key, base, 200)
     const md = logMarkdown(lines, c)
     const dir = `${sessionDir}/${LOG_DIR}`
@@ -3483,7 +3580,7 @@ const exportLog = async ($: EngineInterface, how: 'copy' | 'download') => {
   await syncJournal($)
   const c = await readCrew?.()
   if (!c) return
-  const text = logMarkdown(journalLines(), c)
+  const text = logMarkdown(everyLine(), c)
   // Copy: Claude's own clipboard first (the browser pane may not let a page write to it); the page shows the text if that fails.
   if (how === 'copy') {
     const r = (await later$(() => $.ui.copy({ text, surface: 'desktop' as never })).catch(() => undefined)) as { isCopied?: boolean } | undefined
@@ -3504,7 +3601,7 @@ const OLDER_PAGE = 200
 const olderLines = async ($: EngineInterface, before: number) => {
   await syncJournal($)
   // This chat's journal and its nested chats', in time order.
-  const all = [...journalLines(), ...nestedLines()].filter(l => l.at < before).sort((x, y) => x.at - y.at)
+  const all = everyLine().filter(l => l.at < before)
   await webPost?.('reply', JSON.stringify({ older: { before, lines: all.slice(-OLDER_PAGE).map(webLine), end: all.length <= OLDER_PAGE } }))
 }
 /** Tells new chats in the project that earlier chats left logs and summaries, so Claude reads them when useful. */

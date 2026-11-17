@@ -83,7 +83,8 @@ const drawHead = () => {
       return `<span style="color:${color(role)};font-weight:${b ? 700 : 400}">${words}</span>`
     }),
     `<span class="grow"></span>`,
-    h.cost ? `<span style="color:${color(h.costRole)}">${esc(h.cost)}</span>` : '',
+    // (Wide only: what each chat cost, on hover, when nested chats are in the total.)
+    h.cost ? `<span style="color:${color(h.costRole)}"${h.costTitle && !$('app').classList.contains('narrow') ? ` title="${esc(h.costTitle)}"` : ''}>${esc(h.cost)}</span>` : '',
     h.budget ? `<span class="dim">${W(esc(h.budget), esc(h.budget.replace(/^of /, '/ ')))}</span>` : '',
     V.v ? `<span class="faint" title="Claude Crew version">v${esc(V.v)}</span>` : '',
   ].join('')
@@ -632,7 +633,9 @@ new ResizeObserver(([e]) => {
   // The cards again, so pips that went for want of room come back when there is room.
   if (V) {
     last.crew = ''
+    last.head = ''
     band('crew', [V.rows, V.recap], drawCrew)
+    band('head', [V.head, V.v], drawHead)
   }
 }).observe($('app'))
 

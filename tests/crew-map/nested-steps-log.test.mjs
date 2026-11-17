@@ -2,7 +2,7 @@
 // well as TodoWrite. Each chat's mod writes a small file about itself (its journal's name, its steps)
 // under ~/.claude/crew-map/chats/<its app id>.json; the chat that started it reads that file and the
 // journal it names, so its nested chats' lines join its own log.
-import { text, words } from './kit.mjs'
+import { text, words, makePress } from './kit.mjs'
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
@@ -55,6 +55,7 @@ const fire = (ev, e, bottom) => {
 }
 const render = (surface = 'terminal') => fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface, props: { bodyColumns: 120, scroll: { bodyRows: 60 } }, viewport: { columns: 120 } }, async () => ({}))
 const tick = () => new Promise(r => setTimeout(r, 60))
+const press = makePress(elements, render, tick)
 const timer = ms => every.find(x => x.ms === ms)?.fn()
 let fails = 0
 const check = (label, cond, extra = '') => {
@@ -153,6 +154,31 @@ check("a nested chat's file is in Touched, counted as theirs", /index\.md/.test(
 await timer(3000)
 await tick()
 check('this chat writes what it touched beside its journal', Array.isArray(JSON.parse(disk.get(`${DIR}/journals/cli-me/touched.json`)?.text ?? 'null')))
+
+// 3c · A nested chat's cards: its main Claude as a helper's card, its own helpers under it, one waiting
+// on the person (answered in that chat), its cost in this chat's total, and Details from what it wrote.
+const ownFile = JSON.parse(disk.get(`${DIR}/chats/local_me.json`)?.text ?? '{}')
+check('a chat writes its own cards in its file', ownFile.card?.rows?.[0]?.id === 'main' && typeof ownFile.card.cost === 'number', JSON.stringify(ownFile.card ?? {}).slice(0, 200))
+const kidCard = {
+  rows: [
+    { id: 'main', name: 'Claude', hue: '#D97757', state: 'work', kind: 'shell', status: 'Running tests', object: 'docs build', time: '', total: 4, done: 1, progress: 'Step 2 of 4 · Write the pages', model: 'Opus 5.5', depth: 0, info: { cost: 0.4, tokens: 9000, ctx: { tokens: 50000, window: 200000 }, asked: 'Build the docs site', steps: [{ mark: '✓', text: 'Plan', on: false }, { mark: '▸', text: 'Write the pages', on: true }] } },
+    { id: 'h1', name: 'Quill', hue: '#7EE787', state: 'you', kind: 'edit', status: 'Needs you', object: '', time: '', total: 0, done: 0, progress: '', model: 'Sonnet 5.5', depth: 1, ask: 'Allow editing docs/build.mjs?' },
+  ],
+  cost: 0.4,
+  tokens: 9000,
+}
+put(`${DIR}/chats/local_kid.json`, JSON.stringify({ id: 'local_kid', journal: 'cli-kid', total: 4, done: 1, doing: 'Write the pages', at: now, card: kidCard }))
+now += 1000
+await timer(4000)
+await tick()
+t = text(await render())
+check("the nested chat's card: its short name, what it is doing, its model", /site-docs.*Running tests.*docs build/.test(t) && /Step 2 of 4 · Write the pages/.test(t), t.slice(0, 600))
+check('its helper waiting on the person: pinned, with the whole request, answered in that chat', /Quill.*Needs you/.test(t) && /Allow editing docs\/build\.mjs\?/.test(t) && /site-docs · answer in that chat/.test(t) && t.indexOf('Quill') < t.indexOf('site-docs'), t.slice(0, 600))
+check("the header's cost includes the nested chat", /\$0\.40/.test(t), t.slice(0, 120))
+await press('site-docs: Details')
+t = text(await render())
+check("its Details: model, where it was started, its title and folder, cost and context, what it was asked, its steps", /Opus 5\.5 · started from/.test(t) && /Build the docs site · C:\/work/.test(t) && /\$0\.40 · 9\.0k tokens · context/.test(t) && /25% of 200k/.test(t) && /▸ Write the pages/.test(t), t.slice(t.indexOf('Opus'), t.indexOf('Opus') + 400))
+await press('site-docs: Hide')
 
 // 4 · This chat's journal: chunks of 250 lines, and only the ones that changed are written.
 const writes = []

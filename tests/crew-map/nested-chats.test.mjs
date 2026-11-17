@@ -73,7 +73,7 @@ check('a running chat counts as working in the header', said(t).some(w => /1 wor
 await press('Optimus lead programmer: Details')
 t = await render()
 const v = words(t, 'view').join(' ')
-check("Details shows the chat: who started it, its folder", /Started by Optimus M9: AI permissions/.test(v) && /worktrees\/m9/.test(v) && /Open it from the sidebar/.test(v), v.slice(0, 300))
+check("Details shows the chat: who started it, its folder", /started from Optimus M9: AI permissions/.test(v) && /worktrees\/m9/.test(v) && /Open it from the sidebar/.test(v), v.slice(0, 300))
 
 // A chat finishes and the list says so: the next read updates the row.
 family[2].isRunning = false
