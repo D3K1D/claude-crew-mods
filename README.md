@@ -2,25 +2,32 @@
 
 By [D3K1D](https://github.com/D3K1D), made with [Claude](https://claude.com/claude-code).
 
-Two mods for [Claude Code](https://claude.com/claude-code) (the desktop app's Code tab and the terminal):
+Two mods for [Claude Code](https://claude.com/claude-code), made for the Claude desktop app's Code tab:
 
-- **Claude Crew** (`crew-map`): a live view of Claude and its helper Claudes at work. See what each one is on right now, which folders and files they've touched and changed, what it costs, how full each one's context is, when one is waiting on you, when tests are running, and which files a build broke.
-- **Codex Bridge** (`codex-bridge`): lets Claude hand tasks to OpenAI Codex as a subagent, using your own ChatGPT/Codex subscription. Codex keeps memory per project, and named threads carry on where they left off.
+- **Claude Crew** (`crew-map`): a live website beside the chat that shows what Claude, its helper Claudes and the chats it started are doing, what needs you, what they touched and what it cost, with a log where every action opens to its diff, output or error.
+- **Codex Bridge** (`codex-bridge`): lets Claude hand tasks to OpenAI Codex as a subagent, using your own ChatGPT/Codex subscription, with memory per project and named threads.
 
-They work on their own and better together: with both installed, a running Codex gets its own row in the crew view.
+They work on their own and better together: with both installed, a running Codex gets its own row in Claude Crew.
 
-![Claude Crew in a busy session: one Claude needing you pinned on top in amber, helpers indented under who started them, a test running, Codex in a row, the files touched by folder, and the log](docs/crew-pane.png)
+![Claude Crew in a busy session: one Claude needing you pinned in amber, helpers and a nested chat under who started them, tests running, files touched by folder, and the log with an edit opened to its diff](docs/crew-hero.png)
 
 ## Claude Crew (`/crew`)
 
-- **Who is doing what.** One row per Claude: what it is doing in plain words ("Writing code · fixture.js", "Running tests · 42s"), how far along ("Step 2 of 3"), its model, and colour for its state only (working, waiting, needs you, done). Helpers sit indented under who started them, and Codex under who ran it. The header counts them by state.
+Type `/crew` in a chat and Claude opens that chat's crew in the browser pane beside it. The page is served by the mod on your own computer and updates live.
+
+- **Who is doing what.** A card per Claude: what it is doing in plain words ("Running tests · 42s"), a pip per step ("Step 2 of 4 · Write the pages"), its model and its time. Helpers sit under the Claude that started them. Colour means state only: green working, grey waiting, amber needs you.
 - **What needs you.** A Claude waiting for a permission, an answer or a plan approval is pinned on top in amber, with its whole request.
-- **What the work touched.** One line per folder, its files as buttons: lines added and removed, red with an error count when a build or test failed on them, and a little Claude on the file one is editing. Click a file to open it (a broken one at its first error).
-- **One viewer.** A box with tabs: the log (every action timed, **›** opens a line whole), every file, search, settings, and any Claude's Details (what it was asked, its steps, its cost and context).
-- **What it cost.** The chat's cost in the header, against a budget if you set one, with a heads-up at 50%, 80% and 100%.
-- **When it's done.** The last task's card: time, files changed, tests, cost and who worked on it. **Copy as Markdown** turns it into something you can paste into a PR.
-- **Static and readable.** Every band is drawn to the pixel, so nothing is clipped; only the Claudes band grows, to fit them all. Light and dark both work.
-- Files open in their own app (Photos for a .png on Windows), code in VS Code or Cursor (as a diff against your last commit). Programs are shown in their folder, never run.
+- **Nested chats.** Chats that Claude started from this one (and theirs) show like helpers: their card, their own helpers, their steps, cost, files and log lines, marked with a chat bubble in their colour.
+- **What the work touched.** The folders worked in lately, their files as buttons: lines added and removed, errors in red. Click a file to open it (an edited one as a diff).
+- **The log.** Every action, thought and message in time order, with how long each took. Open an action to see what happened: an edit's changed lines, a command's last output and exit, a failed call's error. Filter it by Claude or chat, or to edits, commands or failures; size its columns; load older lines back to the start of the chat.
+- **Cost.** The chat's cost (nested chats included) against a budget if you set one.
+- **Saving.** Copy the log as Markdown, download it, or save it into the project with a short summary written by Claude Haiku, so later chats can read what was done and why.
+
+![Claude Crew's log: a failed test run opened to its output and exit, an edit opened to its diff, with filters and resizable columns](docs/crew-log.png)
+
+![Claude Crew in the light theme at the narrow width, with a nested chat's card, files and log lines](docs/crew-light-narrow.png)
+
+More about each part, the settings and the files it keeps: [crew-map/README.md](crew-map/README.md).
 
 ## Codex Bridge (`/codex`)
 
@@ -28,14 +35,18 @@ They work on their own and better together: with both installed, a running Codex
 - **Read-only** by default; **write** mode edits files inside the project only.
 - **Memory**: each project gets a `.codex-bridge/` folder (kept out of git) with Codex's notes and a log per thread.
 - **Threads**: rename, start fresh, archive or delete them from the pane (or ask Claude to).
-- **Usage**: your plan's 5-hour and weekly limits as bars, with reset times. Claude sees them too, so it can go easy when you're close.
-- A live pane of each run, with a stop button and clickable changed files.
+- **Usage**: your plan's 5-hour and weekly limits as bars, with reset times.
+
+More: [codex-bridge/README.md](codex-bridge/README.md).
 
 ## Install
 
-You need **Claude Code 2.1.275 or later**. Codex Bridge also needs the **Codex CLI** signed in to your account: the [Codex desktop app](https://openai.com/codex) includes it, or install it with `npm i -g @openai/codex` and run `codex login`.
+### What you need
 
-Claude Crew's website needs **Node.js 18 or later** on your PATH (`node --version` to check; get it from [nodejs.org](https://nodejs.org)). Neither the Claude app nor Claude Code includes Node. Without it, `/crew` has no website to open: Claude Crew opens its own pane beside the chat instead, with the same view as text. Its log is still kept and old logs are still read. Only the website, and the clean-up of its month-old files, need Node.
+- The **Claude desktop app** with its **Code** tab (Claude Crew's website opens in the app's browser pane), or Claude Code in a terminal (there you get the same view as text).
+- **Claude Code 2.1.275 or later** (`claude --version`).
+- **Node.js 18 or later** on your PATH for Claude Crew's website (`node --version`; get it from [nodejs.org](https://nodejs.org)). Neither the Claude app nor Claude Code includes it. Without Node, `/crew` opens the mod's own pane with the same view as text instead.
+- For Codex Bridge only: the **Codex CLI**, signed in. The [Codex desktop app](https://openai.com/codex) includes it, or run `npm i -g @openai/codex` and then `codex login`.
 
 ### Option 1: the plugin command (recommended)
 
@@ -46,63 +57,78 @@ In a terminal, start `claude` and type:
 /plugin install codex-bridge --marketplace D3K1D/claude-crew-mods
 ```
 
-Answer `y` to add the marketplace, then choose the **user** scope so the mods load in every project. Mods installed this way also load in the desktop app's Code tab. Quit the desktop app completely and reopen it, then start a new chat.
+Answer `y` to add the marketplace, then choose the **user** scope so the mods load in every project (the desktop app's Code tab uses them too). Then quit the desktop app completely, reopen it, and start a **new** chat.
+
+If `/crew` doesn't appear in a new chat, add this to the `env` block of `~/.claude/settings.json` and restart the app:
+
+```json
+"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"
+```
 
 ### Option 2: the install script
 
-Clone this repository, then run:
+Clone this repository, then run, on Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-on Windows, or
+or on macOS and Linux:
 
 ```bash
 sh scripts/install.sh
 ```
 
-on macOS and Linux.
+The script copies both mods to `~/.claude/mods` and points Claude Code at them in `~/.claude/settings.json` (backing that file up first, and setting `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` for you). Pass `crew-map` or `codex-bridge` to install just one. Restart the app and start a new chat.
 
-The script copies both mods to `~/.claude/mods` and adds them to `~/.claude/settings.json`, backing that file up first. Pass a mod name (`crew-map` or `codex-bridge`) to install just that one. Restart Claude Code and open a new chat afterwards.
+### Updating
 
-### Option 3: by hand
+- **Plugin command:** in a terminal, `claude plugin marketplace update crew-mods`, then `claude plugin update crew-map` (and `codex-bridge`). Restart the app.
+- **Install script:** `git pull` in your clone and run the script again.
 
-Copy the `crew-map` and `codex-bridge` folders somewhere permanent, and add this to `~/.claude/settings.json`:
+### Uninstalling
 
-```json
-{
-  "env": {
-    "CLAUDE_CODE_PLUGIN_DIRS": "C:\\path\\to\\crew-map;C:\\path\\to\\codex-bridge",
-    "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"
-  }
-}
-```
-
-Use `;` between folders on Windows and `:` on macOS/Linux.
+- **Plugin command:** `claude plugin uninstall crew-map` (and `codex-bridge`), then `claude plugin marketplace remove crew-mods` if you added it only for these.
+- **Install script:** remove the mod folders from `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` (and `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` if nothing else needs it), then delete `~/.claude/mods/crew-map` and `~/.claude/mods/codex-bridge`.
+- Claude Crew's own files are in `~/.claude/crew-map` (you can delete the folder); saved logs stay in each project's `.claude/crew-logs`.
 
 ## Using them
 
-- `/crew` opens the crew view. Press **▶ demo** to watch three pretend Claudes and a pretend Codex work on a pretend project for half a minute.
+- `/crew` opens the chat's crew. With nothing going on yet, **▶ Try a pretend session** shows a pretend crew at work for half a minute.
 - `/codex` opens the Codex pane.
-- Then just work as usual. To bring Codex in, ask for it: *"get Codex's opinion on this"*, *"have Codex write the tests on a thread called tests"*.
+- Then work as usual. To bring Codex in, ask for it: *"get Codex's opinion on this"*, *"have Codex write the tests on a thread called tests"*.
+
+## Privacy and data
+
+- **Everything stays on your computer.** Neither mod sends anything anywhere itself. Codex Bridge runs the Codex CLI you installed.
+- **The website** listens on `127.0.0.1` only, with a random token in its address; it refuses other hosts and other sites, and the mod's own requests carry a second key the page never sees.
+- **What Claude Crew keeps** in `~/.claude/crew-map`: each chat's log (its newest 5,000 lines, including the last lines of command output, so output that printed a secret is kept there too), the files it touched, and a small file per chat for the chat above it. Files nothing has written for 30 days are deleted (checked once a day).
+- **Saved logs** go into the project's `.claude/crew-logs` only when you press Save (or set Save log to "after each task").
+
+## Costs
+
+- Costs shown are estimates at Anthropic's API list prices (Pro and Max plans aren't billed per token), meant as a yardstick.
+- Saving a log asks **Claude Haiku** for a summary: about $0.01 for a typical chat, at most about $0.05. Later saves send only what's new, and a save with nothing new asks nothing.
+- `/crew` itself runs one ordinary turn of the chat's model to open the pane.
+
+## Performance
+
+Light: a chat that never opens `/crew` runs no extra process; one with its website open runs a small Node server (about 50 MB) and uses well under 1% of one CPU core while Claude works.
 
 ## Troubleshooting
 
-- **`/crew` or `/codex` doesn't appear.** Quit the desktop app completely (not just the window), reopen it, and start a **new** chat; open chats keep the mods they started with. If that doesn't help, make sure `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is `"1"` in the `env` block of `~/.claude/settings.json`.
-- **See why a mod didn't load:** in a terminal, run `claude plugin validate <mod folder>`, or start `claude --debug` and look for lines starting with `crew-map:` or `codex-bridge:`.
-- **"Codex CLI was not found".** Install the Codex app or `npm i -g @openai/codex`, then run `codex login`. On macOS and Linux, Codex Bridge looks in Codex.app, Homebrew, `/usr/local/bin`, `~/.local/bin` and your PATH.
-- **Codex can't write files in write mode.** On Windows, Codex's sandbox refuses folders under `AppData`, including a chat's own scratch folder. Use a normal project folder.
-- **No usage bars.** Codex writes its limits into its session logs after each run, so the bars appear after your first Codex run.
-- **No "waiting on you" or compaction in Claude Crew.** Where an organization manages Claude Code, the permission and compaction events reach only plugins the organization lists in its managed settings, so a mod you install yourself doesn't see them. Everything else works.
+- **`/crew` or `/codex` doesn't appear.** Quit the desktop app completely (not just the window), reopen it, and start a **new** chat: open chats keep the mods they started with. Check `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` (above).
+- **`/crew` opens a text pane instead of the website.** Node.js isn't found: install Node 18+ and restart the app.
+- **The website says the crew has stopped.** The chat ended or the mod reloaded: type `/crew` again.
+- **Nested chats say "as of 13:09".** Reading the app's chat list needs an approval in this chat's permission mode (auto mode, for example), so their cards update when Claude itself looks at the chats.
+- **See why a mod didn't load:** run `claude plugin validate <mod folder>`, or start `claude --debug` and look for lines starting with `crew-map:` or `codex-bridge:`.
+- **"Codex CLI was not found".** Install the Codex app or `npm i -g @openai/codex`, then run `codex login`.
+- **Codex can't write files in write mode.** On Windows, Codex's sandbox refuses folders under `AppData`. Use a normal project folder.
+- **No "waiting on you" or compaction in Claude Crew.** Where an organization manages Claude Code, those events reach only plugins the organization lists in its managed settings.
 
 ## Platforms
 
-Built and used daily on **Windows**. The macOS and Linux code paths (opening files, finding Codex, temp folders, the install script) are covered by the test suite but haven't been tried on real machines yet. Issues and fixes are welcome.
-
-## Privacy
-
-Everything stays on your machine. The mods read Claude Code's own events and your project files. Codex Bridge runs the Codex CLI you installed and reads Codex's local session logs for the usage numbers. Neither mod sends anything anywhere itself. Costs are estimates at Anthropic's API list prices (subscriptions aren't billed per token), meant as a yardstick.
+Built and used daily on **Windows**. The macOS and Linux code paths (opening files, finding Codex, the install script) are covered by the tests but haven't been tried on real machines yet. Issues and fixes are welcome.
 
 ## Development
 
@@ -112,11 +138,11 @@ npm test
 claude plugin validate .
 ```
 
-`npm test` builds both mods for Node and runs the suites in `tests/` (about 750 checks, with no Claude Code needed), then, when Claude Code is installed, draws both panes through its own engine with `claude plugin test`. `claude plugin validate .` checks the marketplace and both manifests.
+`npm test` builds both mods for Node and runs the suites in `tests/`, then, when Claude Code is installed, draws both panes through its own engine with `claude plugin test`. `claude plugin validate .` checks the marketplace and both manifests.
 
 To try a change live, start `claude --plugin-dir ./crew-map`, or put the folder in `CLAUDE_CODE_PLUGIN_DIRS`. Edits reload when Claude's turn ends.
 
-Each mod is one hooks module (`<mod>/hooks/register.tsx`) plus a type contract (`<mod>/types/index.d.ts`) for the state it keeps. Claude Code writes its API types into `<mod>/.claude-plugin/types/` when it loads a mod; that folder is git-ignored.
+Each mod is one hooks module (`<mod>/hooks/register.tsx`) plus a type contract (`<mod>/types/index.d.ts`); Claude Crew's website is in `crew-map/web/`.
 
 ## Credits
 

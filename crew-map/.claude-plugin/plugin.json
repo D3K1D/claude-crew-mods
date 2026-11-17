@@ -1,7 +1,7 @@
 {
   "name": "crew-map",
   "version": "1.8.7",
-  "description": "A live view of what Claude and its helper Claudes are doing: a desk per Claude with what it is on now, folder cards of the files touched and changed, a window per Claude with goal, progress, cost and context, waiting-on-you alerts, running commands and tests, build errors, replay and a task summary. An optional tree map too.",
+  "description": "Claude Crew: a live website beside the chat (type /crew) showing what Claude, its helpers and the chats it started are doing: each one's status, steps, cost and context, what needs you, the files touched, and a filterable log where every action opens to its diff, output or error. Logs are kept and can be saved with a summary.",
   "author": {
     "name": "D3K1D",
     "url": "https://github.com/D3K1D"
@@ -10,11 +10,11 @@
   "repository": "https://github.com/D3K1D/claude-crew-mods",
   "license": "MIT",
   "keywords": [
-    "visualization",
+    "dashboard",
     "agents",
     "subagents",
-    "dashboard",
-    "tests",
+    "activity-log",
+    "nested-chats",
     "cost"
   ],
   "types": "./types/index.d.ts"

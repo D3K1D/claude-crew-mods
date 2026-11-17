@@ -138,9 +138,23 @@ const drawTouched = () => {
   const t = V.touched
   const head = `<div class="row"><span class="b">Touched</span><span class="dim">${esc(t.sum)}${t.nested ? W(esc(t.nested)) : ''}</span><span class="grow"></span>${t.open ? btn(t.open, 'Open folder', 'u') : ''}</div>`
   const rows = t.folders.length
-    ? t.folders.map(d => `<div class="row"><span class="folder" title="${esc(d.name)}">${esc(d.name)}</span>${d.files.map(f => btn(f.act, `<span class="tf" title="${esc(f.title ?? f.name)}">${f.on ? `<span style="color:${color(f.on)}">●</span>` : ''}${f.chat ? chatMark(f.chat) : ''}<span style="color:${f.errs ? 'var(--red)' : f.read ? 'var(--dim)' : 'var(--text)'}">${esc(f.name)}</span></span>${f.errs ? `<span class="red b"> ✕${f.errs}</span>` : ''}${f.add ? `<span class="green"> ${esc(f.add)}</span>` : ''}${f.del ? `<span class="dim"> ${esc(f.del)}</span>` : ''}`, 'fix')).join('')}${d.more ? btn(t.more, `+${d.more} more`, 'u fix') : ''}</div>`).join('')
+    ? t.folders.map(d => `<div class="row" data-more="${d.more}"><span class="folder" title="${esc(d.name)}">${esc(d.name)}</span>${d.files.map(f => btn(f.act, `<span class="tf" title="${esc(f.title ?? f.name)}">${f.on ? `<span style="color:${color(f.on)}">●</span>` : ''}${f.chat ? chatMark(f.chat) : ''}<span style="color:${f.errs ? 'var(--red)' : f.read ? 'var(--dim)' : 'var(--text)'}">${esc(f.name)}</span></span>${f.errs ? `<span class="red b"> ✕${f.errs}</span>` : ''}${f.add ? `<span class="green"> ${esc(f.add)}</span>` : ''}${f.del ? `<span class="dim"> ${esc(f.del)}</span>` : ''}`, 'fix tfile')).join('')}${d.more ? btn(t.more, `+${d.more} more`, 'u fix tmore') : ''}</div>`).join('')
     : `<div class="row dim">No files yet. Folders show here as the Claudes open files.</div>`
   $('touched').innerHTML = head + rows
+  fitTouched()
+}
+// A folder's files that don't fit its row go into its "+N more" (the Files tab), never cut in half.
+const fitTouched = () => {
+  for (const row of $('touched').querySelectorAll('.row[data-more]')) {
+    let more = Number(row.dataset.more) || 0
+    const files = [...row.querySelectorAll('.tfile')]
+    while (row.scrollWidth > row.clientWidth + 1 && files.length > 1) {
+      files.pop().remove()
+      more++
+      row.querySelector('.tmore')?.remove()
+      row.insertAdjacentHTML('beforeend', btn(V.touched.more, `+${more} more`, 'u fix tmore'))
+    }
+  }
 }
 
 // 4 · The viewer
@@ -296,7 +310,8 @@ const boxHtml = l => {
         html: `${W(esc(path), esc(name))} <span class="green">+${add}</span><span class="dim"> −${del}</span>`,
         btn: got.act ? btn(got.act, 'Open diff', 'u fix') : '',
       }),
-      ...shownDiff.map((x, i) => (x.startsWith('+ ') ? row(x.slice(2), 'text', { g: '+', gc: 'green', gap: i === 0 }) : row(x.slice(2), 'dim', { g: '−', gap: i === 0 }))),
+      // (A blank line comes as a bare "+" or "-": its trailing space is trimmed.)
+      ...shownDiff.map((x, i) => (x.startsWith('+') ? row(x.slice(2), 'text', { g: '+', gc: 'green', gap: i === 0 }) : row(x.slice(2), 'dim', { g: '−', gap: i === 0 }))),
       ...(left ? [faintRow(`… ${left} more changed lines`)] : []),
     ]
   }
@@ -383,9 +398,12 @@ const mergeLog = lines => {
 // ── The log's columns: Time | Who | What | Took, sized by dragging the bars between them (as Explorer's
 // details view), kept per browser for the wide page and the narrow one. What takes the rest, never under 120.
 const COLS = { time: [40, 100], who: [12, 200], took: [36, 100] }
-const COL_DEFAULT = { wide: { time: 62, who: 72, took: 60 }, narrow: { time: 40, who: 72, took: 60 } }
+// (Who at 96 on a wide page: a name of about ten characters, as "docs-build", fits.)
+const COL_DEFAULT = { wide: { time: 62, who: 96, took: 60 }, narrow: { time: 40, who: 72, took: 60 } }
 const colBar = (col, label) => `<span class="bar" data-col="${col}" role="separator" aria-orientation="vertical" aria-label="Resize ${label}" tabindex="0"><i></i></span>`
 const COL_HEAD = `<div id="colHead" class="colhead"><span class="h-time">Time</span>${colBar('time', 'Time')}<span class="h-who">Who</span>${colBar('who', 'Who')}<span class="h-what">What</span>${colBar('took', 'Took')}<span class="h-took">Took</span></div>`
+// The widths wanted (saved, or the defaults), and the widths drawn: those fitted to the room there is now.
+const want = { ...COL_DEFAULT.wide }
 const cols = { ...COL_DEFAULT.wide }
 let colSet = ''
 const colKey = () => `crew.cols.${colSet}`
@@ -399,7 +417,7 @@ const showCols = () => {
 }
 // Within the limits, and What never under 120: Who gives way first, then Time, then Took.
 const fitCols = () => {
-  for (const [k, [lo, hi]] of Object.entries(COLS)) cols[k] = Math.round(Math.min(hi, Math.max(lo, Number(cols[k]) || lo)))
+  for (const [k, [lo, hi]] of Object.entries(COLS)) cols[k] = Math.round(Math.min(hi, Math.max(lo, Number(want[k]) || lo)))
   if ($('body').clientWidth > 0) for (const k of ['who', 'time', 'took']) cols[k] = Math.max(COLS[k][0], cols[k] - Math.max(0, 120 - whatRoom()))
   showCols()
 }
@@ -412,17 +430,18 @@ const loadCols = () => {
   try {
     saved = JSON.parse(store.get(colKey()) || '{}') ?? {}
   } catch {}
-  for (const k of Object.keys(COLS)) cols[k] = Number.isFinite(saved[k]) ? saved[k] : COL_DEFAULT[set][k]
+  for (const k of Object.keys(COLS)) want[k] = Number.isFinite(saved[k]) ? saved[k] : COL_DEFAULT[set][k]
   fitCols()
 }
 const sizeCol = (col, w) => {
   const [lo, hi] = COLS[col]
   // Wider only as far as What keeps 120.
   cols[col] = Math.round(Math.max(lo, Math.min(hi, w, w > cols[col] ? cols[col] + Math.max(0, whatRoom() - 120) : w)))
+  want[col] = cols[col]
   showCols()
 }
 const saveCols = () => {
-  store.set(colKey(), JSON.stringify(cols))
+  store.set(colKey(), JSON.stringify(want))
   if (bodyMode === 'activity') remark()
 }
 // Its column fitted to the widest value among the loaded lines (one character of this font is as wide as any).
@@ -630,12 +649,14 @@ new ResizeObserver(() => {
 new ResizeObserver(([e]) => {
   $('app').classList.toggle('narrow', e.contentRect.width < 520)
   loadCols()
-  // The cards again, so pips that went for want of room come back when there is room.
+  // The cards and Touched again, so pips and files that went for want of room come back when there is room.
   if (V) {
     last.crew = ''
     last.head = ''
+    last.touched = ''
     band('crew', [V.rows, V.recap], drawCrew)
     band('head', [V.head, V.v], drawHead)
+    band('touched', V.touched, drawTouched)
   }
 }).observe($('app'))
 

@@ -131,7 +131,7 @@ try {
   check('older lines the page did not ask for are not taken', !page.byKey.has('-1:y'))
   // Columns: their limits, and What keeps 120 (the log here is 800 wide).
   page.loadCols()
-  check('the columns start at 62 / 72 / 60', page.cols.time === 62 && page.cols.who === 72 && page.cols.took === 60, JSON.stringify(page.cols))
+  check('the columns start at 62 / 96 / 60', page.cols.time === 62 && page.cols.who === 96 && page.cols.took === 60, JSON.stringify(page.cols))
   page.sizeCol('who', 500)
   check('a column stops at its largest (Who 200)', page.cols.who === 200)
   page.sizeCol('time', 10)
@@ -141,6 +141,9 @@ try {
   context.document.getElementById('body').clientWidth = 300
   page.loadCols()
   check('a narrow log keeps What at 120: Who gives way first', 300 - 8 - page.cols.time - page.cols.who - page.cols.took - 24 >= 120 && page.cols.who < 72 && page.cols.time === 40, JSON.stringify(page.cols))
+  context.document.getElementById('body').clientWidth = 800
+  page.loadCols()
+  check('with room again, a column that gave way is back at its width', page.cols.who === 72 && page.cols.took === 100, JSON.stringify(page.cols))
 } catch (err) {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 400)}`, false)
 }
