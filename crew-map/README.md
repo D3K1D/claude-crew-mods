@@ -20,7 +20,7 @@ Without Node, `/crew` opens the mod's own pane instead, with the same view as te
 
 **The header.** Counts by state (**⏸ 1 needs you**, **● 3 working**, **◌ 1 waiting**, **✓ 2 done**) and what the chat has cost, nested chats included (hover for each chat's share), against a budget if you set one.
 
-**The Claudes.** A card per Claude. Line one: its name, what it is doing in plain words ("Writing code · fixture.js", "Running tests · 42s", "Waiting · for Scout") and its time. Line two: a pip per step and "Step 2 of 4 · Wire the fixture" (or "4 actions so far"), its model, and **Details**. Colour means state only: green working, grey waiting or idle, amber needs you, dim done. Helpers sit indented under the Claude that started them. One that needs you is pinned on top in amber with its whole request. One that looks stuck says why, in amber (the same command failing three times, and the like).
+**The Claudes.** A card per Claude. Line one: its name, what it is doing in plain words ("Writing code · fixture.js", "Running tests · 42s", "Waiting · for Scout"), a small bar for how full its context is (amber from 60%, red from 85%), and its time. Line two: a pip per step and "Step 2 of 4 · Wire the fixture" (or "4 actions so far"), its model, and **Details**. Each Claude has a colour of its own for the whole chat (the main one always clay), on its card, its log lines and the files it touched; the state words have theirs: green working, grey waiting or idle, amber needs you, dim done. Helpers sit indented under the Claude that started them. One that needs you is pinned on top in amber with its whole request. One that looks stuck says why, in amber (the same command failing three times, and the like).
 
 **Nested chats.** A chat Claude started from this one (and the chats that one started) shows like a helper: its card under its short name and colour, its own helpers under it, its steps, model and cost. One that needs you is pinned on top too, with "answer in that chat" (Claude Crew can't answer another chat's prompt). Its files join Touched and Files, and its lines join the log, marked with a chat bubble in its colour.
 
@@ -39,7 +39,7 @@ Without Node, `/crew` opens the mod's own pane instead, with the same view as te
 
 ![Claude Crew's log: a failed test run opened to its output and exit, an edit opened to its diff, with filters and resizable columns](../docs/crew-log.png)
 
-**Other tabs.** **Files** lists every file touched, under its folder, with lines added and removed and who touched it. **⌕** searches files and the log. A Claude's **Details**: its model, cost, tokens and context (red when it compacts soon), what it was asked, its steps and its own lines. **⚙ Settings**: theme (auto, light, dark), a budget (with a heads-up at 50%, 80% and 100%), where files open, files outside the project shown or hidden, when to save the log, and a pretend session to try it.
+**Other tabs.** **Files** lists every file touched, under its folder, with lines added and removed and who touched it. **⌕** searches files and the log. A Claude's **Details**: its model, cost, tokens and context (red when it compacts soon), what it was asked, the helpers it started (and the main Claude's nested chats), each a row that opens its own Details, its steps and its own lines. **⚙ Settings**: theme (auto, light, dark), a budget (with a heads-up at 50%, 80% and 100%), where files open, files outside the project shown or hidden, when to save the log, and a pretend session to try it.
 
 **Light and dark, wide and narrow.** It follows the app's theme (Settings can override it) and fits the browser pane down to about 450 px wide.
 
@@ -51,7 +51,7 @@ Without Node, `/crew` opens the mod's own pane instead, with the same view as te
 
 In `~/.claude/crew-map`, on your computer only:
 
-- `journals/<session>/`: each chat's log, its newest 5,000 lines, including the last lines of command output and edits' changed lines (a command that printed a secret leaves it here), and `touched.json`, what Touched showed, so it comes back after a restart.
+- `journals/<session>/`: each chat's log, its newest 5,000 lines, including the last lines of command output and edits' changed lines (a command that printed a secret leaves it here); `touched.json`, what Touched showed, so it comes back after a restart; and `colors.json`, who has which colour.
 - `chats/<app id>.json`: a small file each chat writes about itself (its cards, steps and cost) for the chat above it to read.
 
 Files nothing has written for 30 days are deleted, as are journals past the newest 300 (checked once a day, never one a chat still uses).

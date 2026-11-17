@@ -41,7 +41,7 @@ const send = msg => fetch('act', { method: 'POST', body: JSON.stringify(msg) }).
 let V = null
 const opened = new Set()
 const ROLE = { text: 'var(--text)', dim: 'var(--dim)', faint: 'var(--faint)', amber: 'var(--amber)', green: 'var(--green)', red: 'var(--red)', brand: 'var(--brand)', line: 'var(--line)', cx: 'var(--cx)' }
-const color = role => ROLE[role] ?? (/^h\d$/.test(role ?? '') ? `var(--${role})` : 'var(--text)')
+const color = role => ROLE[role] ?? (/^h\d+$/.test(role ?? '') ? `var(--${role})` : 'var(--text)')
 const SC = { work: 'green', wait: 'dim', you: 'amber', done: 'dim', idle: 'dim' }
 
 // Pictures: a kind's icon, the little Claude, Codex's terminal.
@@ -91,12 +91,19 @@ const drawHead = () => {
 }
 
 // 2 · The Claudes
+// How full its context is, in a slot of its own so the bars line up (empty when not known).
+const ctxBar = pct => {
+  if (typeof pct !== 'number') return ''
+  if (pct < 0) return '<span class="ctx"></span>'
+  const fill = pct >= 85 ? 'var(--red)' : pct >= 60 ? 'var(--amber)' : 'var(--dim)'
+  return `<span class="ctx" title="Context ${pct}% full${pct >= 85 ? ', compacts soon' : ''}"><svg width="24" height="6" viewBox="0 0 24 6" aria-hidden="true"><rect width="24" height="6" rx="3" fill="var(--line)"/><rect width="${Math.max(3, Math.round((24 * pct) / 100))}" height="6" rx="3" fill="${fill}"/></svg></span>`
+}
 const card = r => {
   // A nested chat not read live: its state dim, "as of 13:09" faint, and a tooltip saying why.
   const sc = r.asOf ? 'dim' : SC[r.state]
   const lead = r.state === 'done' ? `<span class="dot" style="background:${color(r.hue)}"></span>` : r.name === 'Codex' && r.hue === 'cx' ? codexIcon : sprite(r.hue)
   const details = btn(r.details, r.focused ? 'Hide' : 'Details', `u fix${r.focused ? ' text' : ''}`, `${r.focused ? 'Hide' : 'Show'} ${r.name}'s details`)
-  const l1 = `<div class="l1">${lead}<span class="fix ${r.state === 'done' ? 'dim' : 'text'}">${esc(r.name)}</span>${icon(r.kind, sc)}<span class="status" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut ${r.asOf ? 'faint' : r.state === 'done' ? 'dim' : 'text'}">${esc(r.object)}</span><span class="time${r.state === 'you' ? ' amber' : ''}">${esc(r.time)}</span></div>`
+  const l1 = `<div class="l1">${lead}<span class="fix ${r.state === 'done' ? 'dim' : 'text'}">${esc(r.name)}</span>${icon(r.kind, sc)}<span class="status" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut ${r.asOf ? 'faint' : r.state === 'done' ? 'dim' : 'text'}">${esc(r.object)}</span>${r.state === 'done' ? '' : ctxBar(r.ctx)}<span class="time${r.state === 'you' ? ' amber' : ''}">${esc(r.time)}</span></div>`
   let more = ''
   if (r.state === 'you') more = `<div class="ask">${esc(r.ask)}</div><div class="l2"><span class="cut dim">${esc(r.where)}</span>${details}</div>`
   else if (r.state !== 'done') {
@@ -569,7 +576,18 @@ const seg = g => {
   if (!lead && !words) return ''
   return g.act ? `<button class="nb ${cls}" style="${style}" data-act="${esc(g.act)}"${g.label ? ` aria-label="${esc(g.label)}"` : ''}>${lead}${words}</button>` : `<span class="${cls}" style="${style}display:flex;align-items:center;gap:6px">${lead}<span class="${g.flex ? 'cut' : ''}">${words}</span></span>`
 }
-const vLine = l => `<div class="vl" style="padding-left:${l.indent || 0}ch">${l.segs.map(seg).join('')}${l.right.length ? `<span class="right">${l.right.map(seg).join('')}</span>` : ''}</div>`
+// (Details) A Claude under the one shown: one button that opens its Details. Done ones dim, not bold.
+const lead = (hue, chat) =>
+  chat
+    ? `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="${color(hue)}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>`
+    : `<span class="dot" style="background:${color(hue)}"></span>`
+const dRow = r => {
+  const sc = SC[r.state]
+  const done = r.state === 'done'
+  const pips = r.total && r.total <= 15 ? `<span class="pips">${Array.from({ length: r.total }, (_, k) => `<span class="pip" style="${k < r.done ? `background:${color(sc)};` : ''}${k <= r.done ? `border-color:${color(sc)}` : ''}"></span>`).join('')}</span>` : ''
+  return `<button class="nb dr${done ? ' done' : ''}" style="--d:${Math.min(3, r.depth)}" data-act="${esc(r.act)}" aria-label="${esc(`Show ${r.name}'s details`)}"><span class="lead">${lead(r.hue, r.chat)}</span><span class="nm">${esc(r.name)}</span><span class="st" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut">${esc(r.object)}</span>${done ? '' : pips}<span class="time">${esc(r.time)}</span><span class="dim">›</span></button>`
+}
+const vLine = l => (l.row ? dRow(l.row) : `<div class="vl" style="padding-left:${l.indent || 0}ch">${l.segs.map(seg).join('')}${l.right.length ? `<span class="right">${l.right.map(seg).join('')}</span>` : ''}</div>`)
 // Settings, as the design has them: the theme, a budget you type, the editor from a list.
 const settingsHtml = s => {
   const row = (label, inner) => `<div class="set"><span class="lab">${label}</span>${inner}</div>`

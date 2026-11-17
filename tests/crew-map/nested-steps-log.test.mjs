@@ -222,7 +222,7 @@ fail({ isError: true, text: 'error TS2304\nExit code 2' })
 await failing
 await timer(3000)
 await tick()
-const mineNow = [...disk.entries()].filter(([p]) => p.includes('/journals/cli-me/')).flatMap(([, f]) => JSON.parse(f.text))
+const mineNow = [...disk.entries()].filter(([p]) => /\/journals\/cli-me\/\d{6}\.json$/.test(p)).flatMap(([, f]) => JSON.parse(f.text))
 const builds = mineNow.filter(l => l.text.startsWith('▸ Build the app'))
 check('a failed call is one line in the journal, marked bad', builds.length === 1 && builds[0].bad === true && typeof builds[0].took === 'number', JSON.stringify(builds.map(l => [l.text, l.bad, l.took])))
 check('...and the log shows it failed', /Build the app ✗ failed/.test(text(await render())))

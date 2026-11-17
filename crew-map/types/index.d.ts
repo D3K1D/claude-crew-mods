@@ -204,6 +204,11 @@ export type Crew = {
   chats?: Chat[]
   /** Whether the pane can read that list by itself; when not, each chat is only as new as Claude's last look at it (`seen`). */
   chatsLive?: boolean
+  /**
+   * Who holds which identity colour for the whole chat, and since when: a helper by its id, a nested chat
+   * as chat:<id>, its helpers as chat:<id>~<their id>. (The main Claude always has colour 0.)
+   */
+  colors?: Record<string, { i: number; at: number }>
 }
 
 /** A chat started from this one with the app's start_session, or from one of those. */

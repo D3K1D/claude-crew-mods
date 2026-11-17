@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.7'
+const VERSION = '1.8.8'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -600,9 +600,10 @@ let demo: { cancel: () => void } | undefined
 
 // ─── Vocabulary ─────────────────────────────────────────────────────────────
 
-// One hue per theme colour of its own, so each stays apart in light and dark (no red or amber: those mean
-// an error and waiting on you).
-const PALETTE = ['#D97757', '#6CB6FF', '#7EE787', '#D2A8FF', '#56D4DD', '#F778BA']
+// Twelve identity colours, given out in this order (the main Claude always the first, clay); 7-12 are
+// 1-6 paler. No green, yellow, red or grey: those mean working, waiting on you, an error, and Codex.
+// (The dark theme's; the website has each theme's own.)
+const PALETTE = ['#D97757', '#6CB6FF', '#F778BA', '#56D4DD', '#C297FF', '#C9A47E', '#F2B49B', '#B6DCFF', '#FFB8DA', '#A8EEF2', '#E2CCFF', '#E8D2B4']
 const NAMES: Record<string, string> = { Explore: 'Scout', Plan: 'Architect', 'general-purpose': 'Helper', fork: 'Twin' }
 const VERB: Record<string, string> = {
   Read: 'reading',
@@ -755,6 +756,30 @@ const activityOf = (a: Agent): [string, string] => {
 }
 
 const colorOf = (a: { hue: number }) => PALETTE[a.hue % PALETTE.length]
+/** Later than any time: a holder at work now. */
+const NOW_ON = 9e15
+/**
+ * The next colour nobody holds (the main Claude keeps the first). Past 12: the one whose holders have
+ * been done or idle the longest. Colours are never given back while the chat lasts: their lines stay.
+ */
+const pickColor = (c: Crew) => {
+  const lastAt = new Map<number, number>()
+  for (const [k, v] of Object.entries(c.colors ?? {})) {
+    const a = c.agents.find(x => x.id === k)
+    const ch = k.includes('~') ? undefined : c.chats?.find(x => `chat:${x.id}` === k)
+    const at = a ? (a.state === 'busy' || a.state === 'thinking' || a.needs ? NOW_ON : a.doneAt || v.at) : ch ? (ch.running ? NOW_ON : ch.at || v.at) : v.at
+    lastAt.set(v.i, Math.max(lastAt.get(v.i) ?? 0, at))
+  }
+  for (let i = 1; i < PALETTE.length; i++) if (!lastAt.has(i)) return i
+  return [...lastAt].filter(([i]) => i > 0).sort((x, y) => x[1] - y[1])[0]?.[0] ?? 1
+}
+/** Gives `key` (chat:<id>, or chat:<id>~<helper id>) a colour when it has none. */
+const giveColor = (c: Crew, key: string): Crew => (c.colors?.[key] ? c : { ...c, colors: { ...c.colors, [key]: { i: pickColor(c), at: Date.now() } } })
+/** The colours as last read (for lines drawn outside a read of the crew). */
+let knownColors: NonNullable<Crew['colors']> = {}
+/** A nested chat's colour (its main Claude's too), or one of its helpers': an index into PALETTE. */
+const chatHue = (id: string, helper = '') =>
+  knownColors[helper ? `chat:${id}~${helper}` : `chat:${id}`]?.i ?? 1 + ([...`${id}${helper}`].reduce((n, x) => n + x.charCodeAt(0), 0) % (PALETTE.length - 1))
 const verbOf = (a: Agent) =>
   a.state === 'busy' ? (VERB[a.tool] ?? activityOf(a)[0].toLowerCase()) : a.state === 'thinking' ? 'thinking' : a.state === 'done' ? 'done' : 'idle'
 const baseName = (p: string) => p.split('/').filter(Boolean).pop() ?? p
@@ -1291,12 +1316,14 @@ const freshName = (list: Agent[], kind: string) => {
   const n = list.filter(w => w.name === base || w.name.startsWith(`${base} `)).length
   return n ? `${base} ${n + 1}` : base
 }
-const newSub = (list: Agent[], id: string, kind: string) =>
-  blank(id, freshName(list, kind), kind, list.reduce((m, w) => Math.max(m, w.hue), 0) + 1)
+/** A new helper: the colour it had (it dropped off the list and came back), else the next one. */
+const newSub = (c: Crew, id: string, kind: string) => blank(id, freshName(c.agents, kind), kind, c.colors?.[id]?.i ?? pickColor(c))
 
 const upsert = (c: Crew, id: string, fn: (a: Agent) => Agent): Crew => {
   const found = c.agents.find(a => a.id === id)
-  const made = fn(found ?? (id === 'main' ? MAIN() : newSub(c.agents, id, 'agent')))
+  const made = fn(found ?? (id === 'main' ? MAIN() : newSub(c, id, 'agent')))
+  // A new helper keeps its colour for the whole chat (a pretend session's stay out).
+  if (!found && id !== 'main' && !id.startsWith('demo-') && c.colors?.[id]?.i !== made.hue) c = { ...c, colors: { ...c.colors, [id]: { i: made.hue, at: Date.now() } } }
   const agents = found ? c.agents.map(a => (a.id === id ? made : a)) : [...c.agents, made]
   while (agents.length > MAX_AGENTS) {
     const i = agents.findIndex(a => a.id !== 'main' && (a.state === 'done' || a.state === 'idle'))
@@ -2017,6 +2044,8 @@ const shortTime = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000))
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, '0')}`
 }
+/** How full a context window is, 0-100; -1 when unknown. */
+const ctxPct = (x?: { tokens: number; window: number }) => (x && x.window > 0 && Number.isFinite(x.tokens) ? Math.min(100, Math.max(0, Math.round((x.tokens / x.window) * 100))) : -1)
 const xmlEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /** One Claude's row as the pane draws it. */
@@ -2038,6 +2067,8 @@ type GlanceRow = {
   asOf?: string
   model: string
   depth: number
+  /** How full its context is (0-100), -1 when unknown (Codex, a chat not read live); none for a done one. */
+  ctx?: number
   request: string[]
   /** Needing you: the whole request, in one line (the pane wraps it). */
   ask?: string
@@ -2168,7 +2199,9 @@ type Seg = {
   parts?: [string, string][]
   label?: string
 }
-type VLine = { segs: Seg[]; right?: Seg[]; indent?: number }
+/** (Details) A Claude under the one shown, drawn on the website as one button: its colour (a bubble for a nested chat), name, state, what it is on, steps, time. */
+type DRow = { hue: string; chat?: boolean; name: string; state: GlanceRow['state']; status: string; object: string; done: number; total: number; time: string; depth: number; run: Act }
+type VLine = { segs: Seg[]; right?: Seg[]; indent?: number; row?: DRow }
 /** One Claude's row as the pane draws it: the glance row, its whole request unwrapped, and whether its Details show. */
 type PaneRow = GlanceRow & { ask: string; focused: boolean }
 
@@ -2295,6 +2328,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const published = (codexPublished as unknown as { value?: CodexRun[] }).value ?? []
     const codexRuns = [...published, ...(c.demoCodex ?? [])]
     editor = c.editor || 'code'
+    knownColors = c.colors ?? {}
     const nameFor = (id: string) => c.agents.find(a => a.id === id)?.name ?? (id === 'main' ? 'Claude' : 'a subagent')
     const live = c.agents.filter(a => a.state === 'busy' || a.state === 'thinking')
     // A finished helper keeps its window a moment, then folds into the log's title row (a click opens it again).
@@ -2471,6 +2505,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         stuck: !!a.stuck && state !== 'done',
         model: shortModel(agentModel.get(a.id) ?? (a.id === 'main' ? mainModel : '')),
         depth: depthOf(a),
+        ctx: state === 'done' ? undefined : ctxPct(a.ctx),
         request: ask ? wrapRows(ask, Math.max(20, cols - 18), 2) : [],
         ask,
         where: a.needs && a.id !== 'main' && parent ? `helping ${parent.name}` : '',
@@ -2495,6 +2530,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         progress: `${fmtK(r.commands)} command${r.commands === 1 ? '' : 's'} · ${fmtK(r.files.length)} file${r.files.length === 1 ? '' : 's'}${r.thread ? ` · ${r.thread}` : ''}`,
         model: r.model ? trunc(r.model, 14) : '',
         depth: caller ? depthOf(caller) + 1 : 1,
+        ctx: running ? -1 : undefined,
         request: [],
         where: '',
       }
@@ -2549,6 +2585,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         stuck: !!main?.stuck && !asOf,
         model: main?.model ?? '',
         depth: ch.depth,
+        ctx: main && !asOf && stateOf(main) === 'done' ? undefined : asOf ? -1 : ctxPct(main?.info?.ctx),
         request: [],
         where: '',
       }
@@ -2559,7 +2596,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         ...helpers.map(h => ({
           id: `chat-${ch.id}~${h.id}`,
           name: h.name,
-          hue: h.hue,
+          hue: PALETTE[chatHue(ch.id, h.id)],
           state: stateOf(h),
           kind: h.kind,
           status: h.status,
@@ -2571,6 +2608,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           stuck: !!h.stuck && !asOf,
           model: h.model,
           depth: ch.depth + Math.max(1, h.depth),
+          ctx: stateOf(h) === 'done' ? undefined : asOf ? -1 : ctxPct(h.info?.ctx),
           // (Not read live: as stale as its chat, so dim and left out of the counts.)
           asOf: asOf || undefined,
           request: [],
@@ -2720,7 +2758,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
               on: who.length ? hueRole(colorOf(who[0])) : '',
               read: !e.edited,
               run: openFile(f.id, f.label),
-              ...(mark ? { chat: { hue: `h${mark.hue}`, fill: !!mark.editing } } : {}),
+              ...(mark ? { chat: { hue: `h${chatHue(mark.chat)}`, fill: !!mark.editing } } : {}),
               title: [f.label, e.edited ? `+${fmtK(e.added)} −${fmtK(e.removed)}` : 'read', whom.join(' and ')].filter(Boolean).join(' · '),
             }
           }),
@@ -2803,7 +2841,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       const out: VLine[] = []
       // A cost, tokens and context line: as a Claude's here, or as a nested chat's Claude published it.
       const costLine = (x: { cost?: number; tokens?: number; ctx?: { tokens: number; window: number }; compactions?: number }): VLine => {
-        const ctx = x.ctx && x.ctx.window ? Math.round((x.ctx.tokens / x.ctx.window) * 100) : -1
+        const ctx = ctxPct(x.ctx)
         const packed = x.compactions ? ` · compacted ${fmtK(x.compactions)}×` : ''
         return {
           segs: [
@@ -2814,6 +2852,36 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           ],
         }
       }
+      // A group of the Claudes under this one: its title and their states, then a row each that opens its Details.
+      type Under = { r: GlanceRow; depth: number }
+      const STATE_ROLE: Record<GlanceRow['state'], string> = { work: 'green', wait: 'dim', idle: 'dim', you: 'amber', done: 'dim' }
+      const group = (title: string, note: string, list: Under[]): VLine[] => {
+        if (!list.length) return []
+        const n = (st: GlanceRow['state']) => list.filter(x => x.r.state === st).length
+        const states = ([['work', 'working'], ['you', 'needs you'], ['wait', 'waiting'], ['idle', 'idle'], ['done', 'done']] as const).filter(([st]) => n(st)).map(([st, w]) => `${fmtK(n(st))} ${w}`).join(', ')
+        return [
+          { segs: [{ t: title, b: true, role: 'dim' }, { t: `· ${note || states}`, role: 'faint', flex: true }] },
+          ...list.map(({ r, depth }): VLine => {
+            const role = r.asOf ? 'dim' : STATE_ROLE[r.state]
+            const run = openDetails(r.id)
+            const done = r.state === 'done'
+            return {
+              indent: depth * 2 * CELL_W,
+              // (In the pane's text: its dot and 11 letters of its name; the website draws `row`.)
+              segs: [{ dot: hueRole(r.hue), t: r.name, w: 13 * CELL_W, b: !done, role: done ? 'dim' : 'text', run }, { t: r.status, b: !done, role }, { t: r.object, flex: true, role: done ? 'dim' : 'text' }],
+              right: [{ t: r.time, role: 'dim' }, { t: '›', role: 'dim' }],
+              row: { hue: hueRole(r.hue), chat: r.id.startsWith('chat-') && !r.id.includes('~'), name: r.name, state: r.state, status: r.status, object: r.object, done: r.done, total: r.total, time: r.time, depth, run },
+            }
+          }),
+        ]
+      }
+      // A Claude's helpers, theirs one step in under each (Codex runs it started too).
+      const helpersOf = (id: string, depth = 0): Under[] =>
+        depth > 3
+          ? []
+          : glance
+              .filter(r => (r.id.startsWith('cx-') ? codexRuns.find(x => `cx-${x.id}` === r.id)?.caller === id : !r.id.startsWith('chat-') && r.id !== 'main' && r.id !== id && (src.agents.find(x => x.id === r.id)?.parent ?? 'main') === id))
+              .flatMap(r => [{ r, depth }, ...(r.id.startsWith('cx-') ? [] : helpersOf(r.id, depth + 1))])
       if (focusRow.id.startsWith('chat-')) {
         // A nested chat, or one of its helpers: the same Details as a Claude's here, from what that chat
         // wrote about itself; its title, branch and folder under the first line; its own lines in the log.
@@ -2829,8 +2897,10 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         if (nrow?.info) {
           out.push(costLine(nrow.info))
           for (const t of nrow.info.asked ? wrapRows(nrow.info.asked, textCols, 8) : []) out.push({ segs: [{ t }] })
-          for (const st of nrow.info.steps) wrapRows(st.text, textCols - 2, 3).forEach((w, i) => out.push({ segs: [{ t: `${i ? ' ' : st.mark} ${w}`, role: st.on ? 'text' : 'dim' }] }))
-        } else if (!nrow) out.push({ segs: [{ t: 'Open it from the sidebar, under this chat.', role: 'dim' }] })
+        }
+        if (!hid) out.push(...group('Helpers', '', glance.filter(r => r.id.startsWith(`chat-${cid}~`)).map(r => ({ r, depth: Math.min(3, Math.max(0, r.depth - (chat?.depth ?? 1) - 1)) }))))
+        if (nrow?.info) for (const st of nrow.info.steps) wrapRows(st.text, textCols - 2, 3).forEach((w, i) => out.push({ segs: [{ t: `${i ? ' ' : st.mark} ${w}`, role: st.on ? 'text' : 'dim' }] }))
+        else if (!nrow) out.push({ segs: [{ t: 'Open it from the sidebar, under this chat.', role: 'dim' }] })
         const theirs = nestedLines().filter(l => l.chat === cid && (hid ? l.by === nrow?.name : !l.by)).slice(-30).reverse()
         for (const l of theirs) out.push(...logLinesOf(l).slice(0, 1))
         return out
@@ -2844,6 +2914,15 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       else if (run) out.push({ segs: [{ t: `${fmtK(run.commands)} command${run.commands === 1 ? '' : 's'} · ${fmtK(run.files.length)} file${run.files.length === 1 ? '' : 's'}${run.thread ? ` · ${run.thread}` : ''}`, role: 'dim' }] })
       const asked = run ? oneLine(run.task) : a ? [a.goal && !systemNote(a.goal) ? oneLine(promptOf(a.goal)) : '', a.job ?? ''].sort((x, y) => y.length - x.length)[0] : ''
       for (const t of asked ? wrapRows(asked, textCols, 8) : []) out.push({ segs: [{ t }] })
+      if (a) out.push(...group('Helpers', '', helpersOf(a.id)))
+      if (a?.id === 'main')
+        out.push(
+          ...group(
+            'Nested chats',
+            'started from this chat',
+            chatList.flatMap(ch => glance.filter(r => r.id === `chat-${ch.id}`).map(r => ({ r, depth: Math.min(3, Math.max(0, ch.depth - 1)) }))),
+          ),
+        )
       for (const t of a ? tasksOf(a, src).slice(0, 12) : []) {
         const mark = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○'
         const words = wrapRows(t.active && t.status === 'in_progress' ? t.active : t.subject, textCols - 2, 3)
@@ -2875,8 +2954,8 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
             : other
               ? // (The website shows the helper only on a wide page: its words go apart.)
                 web && other.by !== 'Claude'
-                ? { icon: ['msg', `h${other.hue}`], t: trunc(other.name, 12), tail: ` · ${trunc(other.by, 8)}`, w: 168, role: `h${other.hue}` }
-                : { icon: ['msg', `h${other.hue}`], t: trunc(wide && other.by !== 'Claude' ? `${other.name} · ${other.by}` : other.name, wide ? 18 : 5), w: wide ? 168 : 60, role: `h${other.hue}` }
+                ? { icon: ['msg', `h${chatHue(other.chat)}`], t: trunc(other.name, 12), tail: ` · ${trunc(other.by, 8)}`, w: 168, role: `h${chatHue(other.chat)}` }
+                : { icon: ['msg', `h${chatHue(other.chat)}`], t: trunc(wide && other.by !== 'Claude' ? `${other.name} · ${other.by}` : other.name, wide ? 18 : 5), w: wide ? 168 : 60, role: `h${chatHue(other.chat)}` }
               : { t: '', w: wide ? 168 : 60, role: 'dim' }
           out.push({
             segs: [{ t: f.label, flex: true, role: errsOf(f.id) ? 'red' : e.edited ? 'text' : 'dim', run: openFile(f.id, f.label) }],
@@ -3037,7 +3116,7 @@ const webView = async ($: EngineInterface) => {
     act: g.run && g.run.k !== 'none' ? actId(g.run) : undefined,
     label: g.label,
   })
-  const line = (l: VLine) => ({ segs: l.segs.map(seg), right: (l.right ?? []).map(seg), indent: l.indent ? Math.round(l.indent / CELL_W) : 0 })
+  const line = (l: VLine) => ({ segs: l.segs.map(seg), right: (l.right ?? []).map(seg), indent: l.indent ? Math.round(l.indent / CELL_W) : 0, ...(l.row ? { row: { ...l.row, run: undefined, act: actId(l.row.run) } } : {}) })
   return {
     v: VERSION,
     theme: m.c.theme ?? 'auto',
@@ -3059,6 +3138,7 @@ const webView = async ($: EngineInterface) => {
       asOf: r.asOf,
       model: r.model,
       depth: r.depth,
+      ctx: r.ctx,
       ask: r.ask,
       where: r.where,
       focused: r.focused,
@@ -3214,6 +3294,7 @@ const openJournal = async ($: EngineInterface) => {
   lastChunk = 1
   selfSent = ''
   touchedSent = ''
+  colorsSent = ''
   nested.clear()
   nestedVer++
   fsList = p => $.fs.list(p)
@@ -3243,6 +3324,17 @@ const openJournal = async ($: EngineInterface) => {
     await write?.(d => ({ ...d, changes: { ...back, ...d.changes } }))
     touchedSent = JSON.stringify(saved)
   }
+  // Who had which colour: kept, so a restart gives nobody's colour away (their lines are still in the log).
+  const held = await readJson(`${dir}/colors.json`)
+  if (held && typeof held === 'object' && !Array.isArray(held)) {
+    const back = Object.fromEntries(
+      Object.entries(held as Record<string, { i?: unknown; at?: unknown }>)
+        .filter(([, v]) => v && Number.isInteger(v.i) && (v.i as number) > 0 && (v.i as number) < PALETTE.length)
+        .map(([k, v]) => [k, { i: v.i as number, at: Number(v.at) || 0 }]),
+    )
+    await write?.(d => ({ ...d, colors: { ...back, ...d.colors } }))
+    colorsSent = JSON.stringify(held)
+  }
   journalDir = dir
   journalOpen = true
 }
@@ -3271,6 +3363,11 @@ const syncJournal = async ($: EngineInterface) => {
       await later$(() => $.fs.write(`${journalDir}/${chunkName(n)}`, JSON.stringify(lines))).catch(() => dirtyChunks.add(n))
     }
   await writeTouched($, c)
+  if (journalDir && c.colors && JSON.stringify(c.colors) !== colorsSent) {
+    const s = JSON.stringify(c.colors)
+    colorsSent = s
+    await later$(() => $.fs.write(`${journalDir}/colors.json`, s)).catch(() => (colorsSent = ''))
+  }
   await writeSelf($, c)
 }
 /**
@@ -3279,6 +3376,8 @@ const syncJournal = async ($: EngineInterface) => {
  */
 type TouchedFile = Change & { path: string; errs?: number; editing?: boolean }
 let touchedSent = ''
+/** colors.json as last written. */
+let colorsSent = ''
 const writeTouched = async ($: EngineInterface, c: Crew) => {
   if (!journalDir) return
   const busy = new Set(c.agents.filter(a => a.state === 'busy' && a.node).map(a => a.node))
@@ -3359,8 +3458,6 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
 /** What this chat knows of each nested chat: its file, and its journal's chunks (lines as this log shows them). */
 type Nested = { file?: ChatFile; fileM: number; title?: string; name?: string; touched?: TouchedFile[]; touchedM?: number; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
 const nested = new Map<string, Nested>()
-/** A nested chat's colour (its card's): an index into PALETTE. */
-const chatHue = (id: string) => [...id].reduce((n, x) => n + x.charCodeAt(0), 0) % PALETTE.length
 /** All nested chats' lines in time order, made again only when one changed. */
 let nestedVer = 0
 let sortedVer = -1
@@ -3374,14 +3471,14 @@ const nestedLines = () => {
   return sortedNested
 }
 /** Nested chats' touched files by path: each chat that touched it, the latest first. Made again only on a change. */
-type NestedTouch = TouchedFile & { chat: string; name: string; hue: number }
+type NestedTouch = TouchedFile & { chat: string; name: string }
 let touchVer = -1
 let touchByPath = new Map<string, NestedTouch[]>()
 const nestedTouched = () => {
   if (touchVer !== nestedVer) {
     touchByPath = new Map()
     for (const [id, x] of nested)
-      for (const f of x.touched ?? []) touchByPath.set(f.path, [...(touchByPath.get(f.path) ?? []), { ...f, chat: id, name: x.name ?? 'a chat', hue: chatHue(id) }])
+      for (const f of x.touched ?? []) touchByPath.set(f.path, [...(touchByPath.get(f.path) ?? []), { ...f, chat: id, name: x.name ?? 'a chat' }])
     for (const list of touchByPath.values()) list.sort((a, b) => b.at - a.at)
     touchVer = nestedVer
   }
@@ -3481,6 +3578,9 @@ const readNested = async ($: EngineInterface) => {
         }
       }
     }
+    // Each nested chat and each of its helpers: a colour of its own, the first time it is seen.
+    const keys = chats.flatMap(ch => [`chat:${ch.id}`, ...(nested.get(ch.id)?.file?.card?.rows ?? []).filter(r => r && typeof r.id === 'string' && r.id !== 'main').map(r => `chat:${ch.id}~${r.id}`)])
+    if (keys.some(k => !c.colors?.[k])) await write?.(d => keys.reduce(giveColor, d))
     if (changed) {
       nestedVer++
       $.ui.invalidate('ui.render')
@@ -4508,7 +4608,7 @@ export const register: Register = on => {
     const { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, BODY_ROWS, listed, top0, scroll, tabs } = m
     const mode = c.theme ?? 'auto'
     const TONE: Record<string, string> = { text: '#E6EDF3', dim: '#8B949E', faint: '#8B949E', amber: '#E3B341', green: '#3FB950', red: '#F85149', brand: '#D97757', line: '#30363D', cx: '#8B949E' }
-    const toneOf = (role: string) => TONE[role] ?? (/^h\d$/.test(role) ? PALETTE[Number(role.slice(1))] : '#E6EDF3')
+    const toneOf = (role: string) => TONE[role] ?? (/^h\d+$/.test(role) ? PALETTE[Number(role.slice(1))] : '#E6EDF3')
     const press = (act: Act) => (p: { surface: unknown }) => void doAction($, act, p?.surface)
     const segEl = (g: Seg, k: string) => {
       const lead = `${g.dot ? '● ' : ''}${g.icon ? `${KIND_GLYPH[g.icon[0]] ?? '•'} ` : ''}${g.sprite ? '● ' : ''}${g.bar !== undefined ? `${'▮'.repeat(Math.round(g.bar * 8))}${'▯'.repeat(8 - Math.round(g.bar * 8))} ` : ''}`

@@ -75,7 +75,7 @@ const context = {
 }
 vm.createContext(context)
 // The script's own names (const at its top level) are read through what it is given at its end.
-vm.runInContext(`${readFileSync(APP, 'utf8')}\n;globalThis.__page = { LOG, byKey, filt, shown, cols, sizeCol, loadCols }`, context)
+vm.runInContext(`${readFileSync(APP, 'utf8')}\n;globalThis.__page = { LOG, byKey, filt, shown, cols, sizeCol, loadCols, card, vLine, setV: v => (V = v) }`, context)
 const page = context.__page
 const view = log => ({
   v: 'test',
@@ -144,6 +144,22 @@ try {
   context.document.getElementById('body').clientWidth = 800
   page.loadCols()
   check('with room again, a column that gave way is back at its width', page.cols.who === 72 && page.cols.took === 100, JSON.stringify(page.cols))
+  // A card's context bar: 24 wide, filled to its share (3 at least), dim, amber from 60%, red from 85%;
+  // an empty slot when not known; none on a done line. The time sits in its fixed slot after it.
+  page.setV(view([]))
+  const row = o => ({ id: 'x', name: 'Scout', hue: 'h1', state: 'work', kind: 'edit', status: 'Writing code', object: 'a.js', time: '7m', total: 0, done: 0, progress: '', model: '', depth: 1, details: 'd', ...o })
+  const bar = html => (html.match(/<span class="ctx"[^>]*>(.*?)<\/span>/) ?? [])[0] ?? ''
+  check('a context bar at 40%: dim, 10 of 24 filled, says how full', /width="10"[^>]*fill="var\(--dim\)"/.test(bar(page.card(row({ ctx: 40 })))) && /title="Context 40% full"/.test(bar(page.card(row({ ctx: 40 })))), bar(page.card(row({ ctx: 40 }))))
+  check('...amber from 60%, red from 85% with "compacts soon"', /var\(--amber\)/.test(bar(page.card(row({ ctx: 71 })))) && /var\(--red\)/.test(bar(page.card(row({ ctx: 90 })))) && /compacts soon/.test(bar(page.card(row({ ctx: 90 })))))
+  check('...at 0% still 3 wide', /width="3"/.test(bar(page.card(row({ ctx: 0 })))))
+  check('not known: the empty slot, so the bars line up', bar(page.card(row({ ctx: -1 }))) === '<span class="ctx"></span>')
+  check('a done line: no bar, no slot', !page.card(row({ state: 'done', ctx: 40 })).includes('class="ctx"'))
+  check('the bar comes right before the time', /class="ctx"[\s\S]*?<\/span><span class="time">7m<\/span>/.test(page.card(row({ ctx: 40 }))))
+  // Details: a Claude under the one shown, one button that opens its Details.
+  const dr = page.vLine({ segs: [], right: [], row: { hue: 'h3', chat: false, name: 'Atlas', state: 'work', status: 'Running tests', object: 'npm test', done: 1, total: 3, time: '6m', depth: 1, act: 'a7' } })
+  check('a helper in Details: one button with its colour, name, state, what, pips and time', /^<button class="nb dr" style="--d:1" data-act="a7"/.test(dr) && dr.includes('background:var(--h3)') && />Atlas</.test(dr) && />Running tests</.test(dr) && dr.includes('class="pips"') && />6m</.test(dr), dr.slice(0, 200))
+  const dc = page.vLine({ segs: [], right: [], row: { hue: 'h2', chat: true, name: 'docs-build', state: 'done', status: 'Done', object: '', done: 0, total: 0, time: '', depth: 0, act: 'a8' } })
+  check('a nested chat: its bubble; done is dim', dc.includes('stroke="var(--h2)"') && dc.includes('class="nb dr done"'), dc.slice(0, 200))
 } catch (err) {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 400)}`, false)
 }

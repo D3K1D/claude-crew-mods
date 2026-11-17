@@ -147,6 +147,7 @@ try {
   check('a page that connects gets the view', !!v && Array.isArray(v.rows), v ? Object.keys(v).join(',') : 'nothing')
   check('the view has the main Claude, idle', v?.rows?.[0]?.name === 'Claude' && v.rows[0].state === 'idle', JSON.stringify(v?.rows?.[0] ?? {}).slice(0, 120))
   check('and the tabs, Activity shown', v?.tab === 'activity' && v.tabs.some(t => t.t === 'Activity' && t.on))
+  check('its card has a context slot, empty until a model request measures it (-1), in clay', v?.rows?.[0]?.ctx === -1 && v.rows[0].hue === 'h0', JSON.stringify(v?.rows?.[0] ?? {}).slice(0, 160))
 
   // Work happens: the next send has it.
   await hooks['turn.start']($, { text: 'Fix the loader', turnId: 'T1' }, async () => ({ turnId: 'T1' }))

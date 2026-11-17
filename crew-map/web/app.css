@@ -4,14 +4,18 @@
   --bg: #0D1117; --panel: #121821; --line: #30363D; --text: #E6EDF3; --dim: #8B949E; --faint: #6E7681;
   --amber: #E3B341; --amber-bg: rgba(227, 179, 65, 0.10); --green: #3FB950; --red: #F85149; --brand: #D97757;
   --hover: rgba(139, 148, 158, 0.28); --hover-soft: rgba(139, 148, 158, 0.14); --eye: #0D1117;
-  --h0: #D97757; --h1: #6CB6FF; --h2: #7EE787; --h3: #D2A8FF; --h4: #56D4DD; --h5: #F778BA; --cx: #8B949E;
+  /* Identity colours: each Claude its own, for the whole chat */
+  --h0: #D97757; --h1: #6CB6FF; --h2: #F778BA; --h3: #56D4DD; --h4: #C297FF; --h5: #C9A47E;
+  --h6: #F2B49B; --h7: #B6DCFF; --h8: #FFB8DA; --h9: #A8EEF2; --h10: #E2CCFF; --h11: #E8D2B4; --cx: #8B949E;
   color-scheme: dark;
 }
 :root[data-theme="light"] {
   --bg: #FFFFFF; --panel: #F6F8FA; --line: #D0D7DE; --text: #1F2328; --dim: #59636E; --faint: #6E7781;
   --amber: #9A6700; --amber-bg: rgba(154, 103, 0, 0.07); --green: #1A7F37; --red: #CF222E; --brand: #BC5A34;
   --hover: rgba(89, 99, 110, 0.16); --hover-soft: rgba(89, 99, 110, 0.08);
-  --h0: #BC5A34; --h1: #0969DA; --h2: #1A7F37; --h3: #8250DF; --h4: #0A7B83; --h5: #BF3989; --cx: #59636E;
+  /* Identity colours: each Claude its own, for the whole chat */
+  --h0: #BC5A34; --h1: #0969DA; --h2: #BF3989; --h3: #0A7B83; --h4: #8250DF; --h5: #8A6234;
+  --h6: #7C3115; --h7: #0A3F8A; --h8: #7D1D56; --h9: #05555B; --h10: #55279E; --h11: #5A3E1C; --cx: #59636E;
   color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
@@ -19,7 +23,9 @@
     --bg: #FFFFFF; --panel: #F6F8FA; --line: #D0D7DE; --text: #1F2328; --dim: #59636E; --faint: #6E7781;
     --amber: #9A6700; --amber-bg: rgba(154, 103, 0, 0.07); --green: #1A7F37; --red: #CF222E; --brand: #BC5A34;
     --hover: rgba(89, 99, 110, 0.16); --hover-soft: rgba(89, 99, 110, 0.08);
-    --h0: #BC5A34; --h1: #0969DA; --h2: #1A7F37; --h3: #8250DF; --h4: #0A7B83; --h5: #BF3989; --cx: #59636E;
+    /* Identity colours: each Claude its own, for the whole chat */
+    --h0: #BC5A34; --h1: #0969DA; --h2: #BF3989; --h3: #0A7B83; --h4: #8250DF; --h5: #8A6234;
+    --h6: #7C3115; --h7: #0A3F8A; --h8: #7D1D56; --h9: #05555B; --h10: #55279E; --h11: #5A3E1C; --cx: #59636E;
     color-scheme: light;
   }
 }
@@ -91,6 +97,9 @@ svg { flex-shrink: 0; }
 .card.done .status { font-weight: 400; font-size: 12.5px; }
 .ask { padding-left: 24px; white-space: normal; }
 .time { flex-shrink: 0; font-size: 11.5px; color: var(--dim); }
+/* A card's time in a fixed slot (the longest, "12h05", fits), so the context bar left of it never moves */
+.card .time, .dr .time { width: 36px; text-align: right; overflow: hidden; }
+.ctx { flex-shrink: 0; width: 24px; height: 6px; display: flex; }
 .dot { width: 8px; height: 8px; margin: 0 4px; flex-shrink: 0; border-radius: 4px; }
 .pips { display: flex; gap: 3px; flex-shrink: 0; }
 .pip { width: 8px; height: 8px; border-radius: 4px; border: 1.5px solid var(--line); }
@@ -175,6 +184,16 @@ svg { flex-shrink: 0; }
 .older[hidden] { display: none; }
 .vl { display: flex; align-items: center; gap: 8px; white-space: nowrap; min-width: 0; min-height: 19px; }
 .vl .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+/* Details: a Claude under the one shown, a full-width button (its helpers one step in each) */
+.dr { display: flex; align-items: center; gap: 8px; width: calc(100% + 6px); height: 22px; min-width: 0; padding-left: calc(var(--d) * 20px + 3px); color: var(--text); }
+#app.narrow .dr { padding-left: calc(var(--d) * 12px + 3px); }
+.dr .lead { width: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.dr .lead .dot { margin: 0; }
+.dr .nm { width: 84px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
+#app.narrow .dr .nm { width: 72px; }
+.dr .st { flex-shrink: 0; font-weight: 700; }
+.dr.done, .dr.done .nm, .dr.done .st { color: var(--dim); font-weight: 400; }
+#app.narrow .dr .pips { display: none; }
 .b { font-weight: 700; } .i { font-style: italic; }
 .set { display: flex; align-items: center; gap: 12px; min-height: 26px; white-space: nowrap; min-width: 0; }
 .set .lab { width: 120px; flex-shrink: 0; color: var(--dim); }

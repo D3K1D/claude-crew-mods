@@ -15,7 +15,7 @@ They work on their own and better together: with both installed, a running Codex
 
 Type `/crew` in a chat and Claude opens that chat's crew in the browser pane beside it. The page is served by the mod on your own computer and updates live.
 
-- **Who is doing what.** A card per Claude: what it is doing in plain words ("Running tests · 42s"), a pip per step ("Step 2 of 4 · Write the pages"), its model and its time. Helpers sit under the Claude that started them. Colour means state only: green working, grey waiting, amber needs you.
+- **Who is doing what.** A card per Claude: what it is doing in plain words ("Running tests · 42s"), a pip per step ("Step 2 of 4 · Write the pages"), how full its context is, its model and its time. Helpers sit under the Claude that started them, and a Claude's Details list them. Each Claude keeps a colour of its own for the whole chat; the state words say green working, grey waiting, amber needs you.
 - **What needs you.** A Claude waiting for a permission, an answer or a plan approval is pinned on top in amber, with its whole request.
 - **Nested chats.** Chats that Claude started from this one (and theirs) show like helpers: their card, their own helpers, their steps, cost, files and log lines, marked with a chat bubble in their colour.
 - **What the work touched.** The folders worked in lately, their files as buttons: lines added and removed, errors in red. Click a file to open it (an edited one as a diff).
