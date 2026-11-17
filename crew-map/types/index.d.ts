@@ -180,6 +180,8 @@ export type Crew = {
   folds?: Record<string, 'open' | 'closed'>
   /** Whether files outside the project are hidden from the map. */
   hideOutside?: boolean
+  /** Save the log to the project after each task, not only on the Save button. */
+  autoSave?: boolean
   /** Finished helpers whose windows the person opened again (true) or folded at once (false). */
   unfolded?: Record<string, boolean>
   /** Where the person scrolled the log to (absent: it follows the newest line), and the lines they opened. */

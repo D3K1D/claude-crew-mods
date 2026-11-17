@@ -4,6 +4,12 @@ import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname } from 'node:path'
+
+// A home folder of its own, for the chat's journal (its whole log, kept on disk).
+const home = mkdtempSync(join(tmpdir(), 'crew-home-')).replace(/\\/g, '/')
 
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
@@ -17,15 +23,21 @@ const here = fileURLToPath(new URL('.', import.meta.url))
 const hooks = {}
 const children = []
 const kept = new Map([['intro', 'off']])
+const ticks = []
 const $ = {
   command: { register: async () => {} },
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {}, invalidate: () => {} },
-  clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
-  fs: { read: async () => 'line\n', exists: async () => false },
+  clock: { every: (ms, fn) => (ticks.push({ ms, fn }), { cancel() {} }), after: () => ({ cancel() {} }) },
+  fs: {
+    read: async p => (p.startsWith(home) ? readFileSync(p, 'utf8') : 'line\n'),
+    exists: async () => false,
+    write: async (p, t) => (mkdirSync(dirname(p), { recursive: true }), writeFileSync(p, t)),
+    list: async () => [],
+  },
   model: { complete: async () => ({ isAnswered: true, text: '' }) },
   store: { get: async k => kept.get(k), set: async (k, v) => void kept.set(k, v) },
   session: { cwd: async () => 'C:/proj', id: async () => 'chat-1' },
-  env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
+  env: { get: async n => (n === 'OS' ? 'Windows_NT' : n === 'USERPROFILE' ? home : undefined) },
   state: { get: async () => ({ value: [], version: 0 }) },
   plugin: { root: join(here, '..', '..', 'crew-map') },
   process: {
@@ -93,6 +105,45 @@ try {
   check('the old website winding down: the new one still gets the same address', back === first, `${first} then ${back}`)
   check('and the old one stopped', await Promise.race([oldGone, wait(3000).then(() => false)]))
 
+  // The log survives Claude closing: the journal on disk has it, and the next chat start reads it back.
+  await hooks['tool.call']($, { tool_use_id: 'j1', tool: 'Read', file_path: 'C:/proj/src/keep.ts' }, async () => ({ text: 'ok' }))
+  const journalTick = () => Promise.all(ticks.filter(t => t.ms === 3000).map(t => t.fn()))
+  await journalTick()
+  await until(async () => {
+    try {
+      return readFileSync(`${home}/.claude/crew-map/journals/chat-1.json`, 'utf8').includes('keep.ts')
+    } catch {
+      return false
+    }
+  })
+  check('the whole log is kept on disk as it grows', readFileSync(`${home}/.claude/crew-map/journals/chat-1.json`, 'utf8').includes('keep.ts'))
+  globalThis.__store.set('crew', { ...globalThis.__store.get('crew'), log: [] })
+  await close()
+  await hooks['session.start']($, {}, async () => ({}))
+  await until(urlNow)
+  await wait(200)
+  const exported = []
+  const ac = new AbortController()
+  const page = await fetch(`${await urlNow()}events`, { signal: ac.signal })
+  const reader = page.body.getReader()
+  const acts = await (async () => {
+    let got = ''
+    for (const end = Date.now() + 3000; Date.now() < end; ) {
+      const r = await Promise.race([reader.read(), wait(200).then(() => null)])
+      if (r?.value) got += new TextDecoder().decode(r.value)
+      const m = got.match(/data: (\{.*"logActs".*\})\n/)
+      if (m) return JSON.parse(m[1]).logActs
+    }
+  })()
+  await fetch(`${await urlNow()}act`, { method: 'POST', body: JSON.stringify({ id: acts?.copy }) })
+  let text = ''
+  for (const end = Date.now() + 3000; Date.now() < end && !text.includes('event: export'); ) {
+    const r = await Promise.race([reader.read(), wait(200).then(() => null)])
+    if (r?.value) text += new TextDecoder().decode(r.value)
+  }
+  ac.abort()
+  check('after Claude reopens, the log still has what happened before', /event: export[\s\S]*keep\.ts/.test(text), text.slice(-200))
+
   // The port was taken by something else while Claude was closed: a new address, and the chat keeps that one.
   await close()
   const port = Number(new URL(first).port)
@@ -109,5 +160,6 @@ try {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 300)}`, false)
 }
 for (const ch of children) ch.kill()
+rmSync(home, { recursive: true, force: true })
 console.log(`${fails} failing check(s)`)
 process.exit(fails ? 1 : 0)

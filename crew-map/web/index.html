@@ -16,9 +16,11 @@
   <div id="grip" role="separator" aria-orientation="horizontal" aria-label="Drag to give the Claudes or the log more room" title="Drag to give the Claudes or the log more room. Double-click to reset."><div class="bar"></div></div>
   <section id="viewer">
     <nav id="tabs"></nav>
-    <div id="searchRow" hidden><span class="dim">⌕</span><input id="search" placeholder="Search files and the log…" autocomplete="off" spellcheck="false"></div>
+    <div id="searchRow" hidden><svg class="ico dim" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM10.3 10.3l3.2 3.2"/></svg><input id="search" placeholder="Search files and the log…" autocomplete="off" spellcheck="false"></div>
     <div id="body"></div>
   </section>
+  <div id="copybox" hidden><div class="row"><span>The clipboard isn't reachable here: copy the log below (Ctrl+C).</span><span class="grow"></span><button class="nb u">close</button></div><textarea readonly spellcheck="false"></textarea></div>
+  <div id="flash" hidden></div>
   <div id="gone" hidden>This chat's crew has stopped: the chat ended, or the mod reloaded. Type /crew in the chat to open it again.</div>
 </div>
 <script src="app.js"></script>

@@ -43,6 +43,13 @@ button, input { font: inherit; color: inherit; }
 }
 .nb:hover { background: var(--hover); color: var(--text); }
 .nb:focus-visible { outline: 2px solid var(--dim); outline-offset: 1px; }
+/* Icon buttons: the icon and its word side by side, the same size everywhere */
+.ib { display: inline-flex; align-items: center; gap: 4px; }
+.ico { flex-shrink: 0; display: block; }
+.sep { width: 1px; height: 14px; background: var(--line); flex-shrink: 0; }
+/* A button's hover fill reaches 3px past its words: rows that cut off overflow keep that room */
+#head, #tabs, .row, .l1, .l2, .vl { padding-left: 3px; padding-right: 3px; margin-left: -3px; margin-right: -3px; }
+#body { padding-right: 3px; }
 .u { text-decoration: underline; text-underline-offset: 2px; }
 .dim { color: var(--dim); } .faint { color: var(--faint); } .text { color: var(--text); }
 .green { color: var(--green); } .amber { color: var(--amber); } .red { color: var(--red); } .brand { color: var(--brand); }
@@ -122,5 +129,10 @@ svg { flex-shrink: 0; }
 #budget:focus, #editor:focus { border-color: var(--dim); }
 .empty { color: var(--dim); padding: 4px 0; }
 
+#copybox { position: fixed; left: 12px; right: 12px; bottom: 12px; top: 40%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); display: flex; flex-direction: column; gap: 6px; }
+#copybox[hidden] { display: none; }
+#copybox textarea { flex: 1; resize: none; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: 12px/17px inherit; font-family: inherit; padding: 6px; }
+#flash { position: fixed; right: 12px; bottom: 12px; padding: 4px 10px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--text); }
+#flash[hidden] { display: none; }
 #gone { position: fixed; left: 12px; right: 12px; bottom: 12px; padding: 8px 10px; border: 1px solid var(--amber); border-radius: 8px; background: var(--bg); color: var(--amber); }
 #gone[hidden] { display: none; }

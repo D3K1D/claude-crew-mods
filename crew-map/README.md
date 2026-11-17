@@ -10,6 +10,12 @@ Each chat gets its own Claude Crew website, run by the mod on your computer (onl
 
 **The website.** The same view as the pane, drawn as a web page: real buttons in Claude Crew's own colours, hover, and a **drag line** between the Claudes and the log (drag it up for more log, down for more Claudes; double-click to reset). The log scrolls as far back as the last 400 lines. Every press on the page goes back to the mod and does what the pane's buttons do. The page reaches the mod at `127.0.0.1` with a random token in its address, and refuses requests that name any other host. The website stops when the chat ends, and on its own when Claude is closed (it checks every few seconds that the Claude that started it is still running) or when the mod has not been heard from for a minute. When you reopen Claude and go back to the chat, its website comes back at the same address (it asks the old one, if it is still winding down, to hand it over; only if something else holds the port does it move), so the browser pane picks it up again; a page that was left open reloads itself.
 
+**Saving the log.** The log keeps every line of the chat (on disk, in `~/.claude/crew-map/journals`, so a restart of Claude loses nothing). Its buttons on the Activity tab copy it as Markdown, download it as a `.md` file, or **save** it into the project: `.claude/crew-logs/<date>-<what you asked>-<chat>.md`, with a summary beside it (`.summary.md`) written by a cheaper model (Haiku): the goal, what was done, how and why, problems and fixes, and what is left open. Saving is on the button only, unless Settings → Save log is set to "after each task". New chats in a project with saved summaries get one line telling Claude where they are, so it reads them when it needs to know what was done before and why.
+
+**MCP tools** (connectors and apps, such as GitHub or the Claude app itself) show in the log with their own plug icon; the browser and computer use keep theirs.
+
+**The cost** in the header is the chat's cost as Claude Code reports it (`/cost`): every model call in the chat, helpers included, at API list prices. On a Pro or Max plan you are not charged this; it is what the same work would cost on the API.
+
 ## What you see
 
 The pane is four bands, top to bottom. Every Claude always shows: the Claudes band is as tall as its rows. Touched keeps a fixed height, and the viewer takes all the room left, down to the bottom of the pane: a taller pane shows more of the log.

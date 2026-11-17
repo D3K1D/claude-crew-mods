@@ -20,12 +20,20 @@ const children = []
 const timers = []
 const prompts = []
 const later = []
+const written = new Map()
+const asked = []
+const exports = []
 const $ = {
   command: { register: async () => {} },
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {}, invalidate: () => {} },
   clock: { every: (ms, fn) => (timers.push({ ms, fn }), { cancel() {} }), after: (ms, fn) => (later.push(fn), { cancel() {} }) },
-  fs: { read: async () => 'line\n', exists: async () => false },
-  model: { complete: async () => ({ isAnswered: true, text: '' }) },
+  fs: {
+    read: async () => 'line\n',
+    exists: async () => false,
+    write: async (p, text) => void written.set(p, text),
+    list: async p => (p.endsWith('.claude/crew-logs') ? [{ name: '2031-01-01-old-work-abcd1234.summary.md', mtimeMs: 1 }] : []),
+  },
+  model: { complete: async r => (asked.push(r), { isAnswered: true, text: '## Goal\nFix the loader.' }) },
   store: { get: async () => undefined, set: async () => {} },
   session: { cwd: async () => 'C:/proj' },
   env: { get: async n => (n === 'OS' ? 'Windows_NT' : undefined) },
@@ -113,7 +121,9 @@ try {
         const chunk = got.slice(0, at)
         got = got.slice(at + 2)
         const data = chunk.split('\n').find(l => l.startsWith('data: '))
-        if (data) return JSON.parse(data.slice(6))
+        // An export (the whole log for the page to copy or save) is kept apart from the views.
+        if (data && chunk.startsWith('event: export')) exports.push(JSON.parse(data.slice(6)))
+        else if (data) return JSON.parse(data.slice(6))
         continue
       }
       const r = await Promise.race([reader.read(), wait(300).then(() => null)])
@@ -165,6 +175,32 @@ try {
   await fetch(`${url}act`, { method: 'POST', body: JSON.stringify({ set: { budget: -5, editor: 'calc.exe' } }) })
   await wait(200)
   check('a budget or editor the list does not offer is ignored', globalThis.__store.get('crew')?.budget === 12 && globalThis.__store.get('crew')?.editor === 'cursor')
+
+  // An MCP tool: in the log with its own icon.
+  await hooks['tool.call']($, { tool_use_id: 'm1', tool: 'mcp__github__create_issue', title: 'Loader fails offline' }, async () => ({ text: 'ok' }))
+  await fetch(`${url}act`, { method: 'POST', body: JSON.stringify({ id: v?.tabs?.find(t => t.t === 'Activity')?.act }) })
+  await pub?.fn()
+  let va
+  for (let i = 0; i < 6 && !(va?.tab === 'activity' && va.log?.some(l => l.kind === 'mcp')); i++) {
+    await pub?.fn()
+    va = (await nextView()) ?? va
+  }
+  const mcp = va?.log?.find(l => l.kind === 'mcp')
+  check('an MCP tool call is in the log, with the MCP icon', !!mcp, JSON.stringify(va?.log?.map(l => [l.kind, l.text]) ?? []).slice(0, 300))
+  check('the page has the MCP icon to draw', !!va?.icons?.mcp)
+
+  // The whole log: copied on the page, and saved in the project with a summary beside it.
+  await fetch(`${url}act`, { method: 'POST', body: JSON.stringify({ id: va?.logActs?.copy }) })
+  for (let i = 0; i < 20 && !exports.length; i++) await nextView()
+  check('Copy sends the page the whole log as Markdown', exports[0]?.how === 'copy' && exports[0].text.startsWith('# Claude Crew log') && exports[0].text.includes('loader.ts'), String(exports[0]?.text).slice(0, 160))
+  await fetch(`${url}act`, { method: 'POST', body: JSON.stringify({ id: va?.logActs?.save }) })
+  await until(() => [...written.keys()].some(p => p.endsWith('.summary.md')))
+  const saved = [...written.keys()].filter(p => p.includes('/.claude/crew-logs/'))
+  check('Save writes the log into the project', saved.some(p => /\/\.claude\/crew-logs\/\d{4}-\d\d-\d\d-fix-the-loader-[\w-]+\.md$/.test(p) && !p.endsWith('.summary.md')), saved.join(' | '))
+  check('and a summary beside it, from a cheaper model', saved.some(p => p.endsWith('.summary.md')) && asked[0]?.model === 'haiku', asked[0]?.model)
+  check('the summary is what the model wrote', [...written.entries()].find(([p]) => p.endsWith('.summary.md'))?.[1]?.includes('Fix the loader.'))
+  const composed = await hooks['prompt.compose']($, {}, async () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }))
+  check('new chats in the project are told where the saved logs are', composed.sections.some(s => s.id === 'crew-map:logs' && s.text.includes('.claude/crew-logs')), JSON.stringify(composed.sections.map(s => s.id)))
 
   // /crew asks Claude to open it in the browser pane once the command is done, and shows the address.
   const r = await hooks['command.run']($, { command: 'crew', args: '' }, async () => ({}))

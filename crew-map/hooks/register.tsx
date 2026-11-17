@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.7.6'
+const VERSION = '1.7.7'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -692,7 +692,7 @@ const stationOf = (tool: string): string => {
   return `@app:${server}`
 }
 const stationLabel = (id: string) => SPECIAL_LABEL[id] ?? (id.startsWith('@app:') ? appName(id.slice(5)) : '')
-const STATION_ICON: Record<string, string> = { '@browser': '◍', '@computer': '▣', '@remote': '▣', '@docs': '▤', '@claude': '✻' }
+const STATION_ICON: Record<string, string> = { '@browser': '◍', '@computer': '▣', '@remote': '▣', '@docs': '▤', '@claude': '⧉' }
 /** The pseudo-tool a Claude is "using" while the engine compacts its conversation. */
 const COMPACT = '__compact'
 /** A doc rather than code: what Claude writes for people to read. */
@@ -1047,7 +1047,8 @@ const actionLine = (tool: string, node: string, detail: string, said = '') => {
   if (tool === 'Bash' || tool === 'PowerShell') return `${SHELL_MARK}${trunc(oneLine(said), 120) || cmdGist(detail)}`
   if (tool === COMPACT) return '🗜 compacting the conversation'
   const st = stationOf(tool)
-  if (st) return `${STATION_ICON[st] ?? '▤'} ${stationLabel(st)}: ${detail}`.trim()
+  // An MCP tool (a connector or app): ⧉, its own icon in the log.
+  if (st) return `${STATION_ICON[st] ?? '⧉'} ${stationLabel(st)}: ${detail}`.trim()
   const icon = ICON[tool] ?? '•'
   const what = node && !isSpecial(node) ? baseName(node) : detail
   return `${icon} ${VERB[tool] ?? tool.split('__').pop()} ${what}`.trim()
@@ -1919,16 +1920,17 @@ const KIND_ICON: Record<string, string> = {
   idle: 'M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM8 5v3.2l2 1.3',
   folder: 'M1.5 4h5l1.5 1.5h6.5v7.5h-13z',
   msg: 'M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z',
+  mcp: 'M6 1.5v3M10 1.5v3M4.5 4.5h7v3a3.5 3.5 0 0 1-7 0zM8 11v3.5',
   thought: 'M3 7.2C3 4.6 5.2 2.8 8 2.8s5 1.8 5 4.4-2.2 4.4-5 4.4c-.6 0-1.2-.1-1.7-.2L3.5 13l.6-2.6C3.4 9.6 3 8.5 3 7.2z',
 }
 /** Each kind as plain words: what a Claude doing it is doing. */
 const KIND_WORDS: Record<string, string> = {
   read: 'Reading', edit: 'Writing code', shell: 'Running a command', search: 'Searching the code', web: 'Reading online',
   agent: 'Starting a helper', skill: 'Using a skill', plan: 'Planning', tool: 'Working', think: 'Thinking',
-  hook: 'Your hook ran', hookBlock: 'Your hook blocked it',
+  hook: 'Your hook ran', hookBlock: 'Your hook blocked it', mcp: 'Using a connector',
 }
 /** The text glyph for a kind, in the text pane. */
-const KIND_GLYPH: Record<string, string> = { read: '◇', edit: '✎', shell: '▸', search: '⌕', web: '◎', agent: '⇢', skill: '✦', plan: '☐', tool: '•', hook: '⚓', hookBlock: '⚓', think: '›', wait: '⏳', you: '!', done: '✓', idle: '○' }
+const KIND_GLYPH: Record<string, string> = { read: '◇', edit: '✎', shell: '▸', search: '⌕', web: '◎', agent: '⇢', skill: '✦', plan: '☐', mcp: '⧉', tool: '•', hook: '⚓', hookBlock: '⚓', think: '›', wait: '⏳', you: '!', done: '✓', idle: '○' }
 /** What kind of thing a tool call is. */
 const KINDS: [RegExp, string][] = [
   [/^(Read|NotebookRead|LS)$/, 'read'],
@@ -2081,7 +2083,8 @@ type Act =
   | { k: 'dir'; path: string; name: string }
   | { k: 'pane'; tab?: NonNullable<Crew['pane']>['tab']; focus?: string; top?: number }
   | { k: 'log'; anchor?: number | null; toggle?: string; hold?: number | null }
-  | { k: 'set'; theme?: ThemeMode; budget?: number; editor?: string; hideOutside?: boolean }
+  | { k: 'set'; theme?: ThemeMode; budget?: number; editor?: string; hideOutside?: boolean; autoSave?: boolean }
+  | { k: 'logout'; how: 'copy' | 'download' | 'save' }
   | { k: 'demo' }
   | { k: 'copy' }
 const NONE: Act = { k: 'none' }
@@ -2145,6 +2148,7 @@ const doAction = async ($: EngineInterface, a: Act, surface: unknown) => {
   if (a.k === 'set') {
     if (a.theme) void $.store.set('theme', a.theme).catch(() => undefined)
     if (a.editor) void $.store.set('editor', a.editor).catch(() => undefined)
+    if (a.autoSave !== undefined) void $.store.set('autoSave', a.autoSave).catch(() => undefined)
     if (a.budget !== undefined) {
       void $.store.set('budget', a.budget).catch(() => undefined)
       void $.ui.toast(a.budget ? `Budget set to ${fmtUsd(a.budget)}: you'll get a heads-up at 50%, 80% and 100%` : 'Budget cleared')
@@ -2155,8 +2159,10 @@ const doAction = async ($: EngineInterface, a: Act, surface: unknown) => {
       ...(a.editor ? { editor: a.editor } : {}),
       ...(a.budget !== undefined ? { budget: a.budget, budgetWarned: 0 } : {}),
       ...(a.hideOutside !== undefined ? { hideOutside: a.hideOutside } : {}),
+      ...(a.autoSave !== undefined ? { autoSave: a.autoSave } : {}),
     }))
   }
+  if (a.k === 'logout') return a.how === 'save' ? saveLog($, 'button') : exportLog($, a.how)
   if (a.k === 'demo') return startDemo()
   if (a.k === 'copy') {
     const sm = (await readCrew?.())?.summary
@@ -2167,7 +2173,7 @@ const doAction = async ($: EngineInterface, a: Act, surface: unknown) => {
 }
 
 /** A log line's kind of action, by the mark its words start with. */
-const LOG_GLYPH: Record<string, string> = { '✎': 'edit', '◇': 'read', '▸': 'shell', '⌕': 'search', '◎': 'web', '⇢': 'agent', '🗜': 'think', '◍': 'web', '▣': 'tool', '▤': 'read', '✻': 'agent', '•': 'tool', '⚗': 'shell', '⏸': 'you', '✓': 'done', '✗': 'hookBlock', '←': 'agent', '→': 'agent', '⚓': 'hook' }
+const LOG_GLYPH: Record<string, string> = { '✎': 'edit', '◇': 'read', '▸': 'shell', '⌕': 'search', '◎': 'web', '⇢': 'agent', '🗜': 'think', '◍': 'web', '▣': 'tool', '▤': 'read', '✻': 'agent', '•': 'tool', '⚗': 'shell', '⏸': 'you', '✓': 'done', '✗': 'hookBlock', '←': 'agent', '→': 'agent', '⚓': 'hook', '⧉': 'mcp' }
 
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 
@@ -2734,6 +2740,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
       },
       { segs: [{ t: 'Open files in', w: setW, role: 'dim', gap: 12 }, ...([['code', 'VS Code'], ['cursor', 'Cursor'], ['system', 'default app']] as const).map(([v, t]) => choice(t, (c.editor || 'code') === v, { k: 'set', editor: v }))] },
       { segs: [{ t: 'Outside files', w: setW, role: 'dim', gap: 12 }, choice('shown', !src.hideOutside, { k: 'set', hideOutside: false }), choice('hidden', !!src.hideOutside, { k: 'set', hideOutside: true })] },
+      { segs: [{ t: 'Save log', w: setW, role: 'dim', gap: 12 }, choice('when I press Save', !c.autoSave, { k: 'set', autoSave: false }), choice('after each task', !!c.autoSave, { k: 'set', autoSave: true })] },
       { segs: [{ t: 'Demo', w: setW, role: 'dim', gap: 12 }, { t: demoOn ? 'a pretend session is playing' : '▶ try a pretend session', role: 'dim', u: !demoOn, run: { k: 'demo' } }] },
       { segs: [] },
       { segs: [{ t: `Claude Crew ${VERSION}`, role: 'faint' }] },
@@ -2799,12 +2806,13 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number) => 
 /** The chat's Claude Crew website: the server this mod runs for it, its address, and who has it open. */
 let webUrl = ''
 /** Posts to the website: the view ('push'), or 'ping' so it knows the mod is still here (it stops after a quiet minute). */
-let webPost: ((path: 'push' | 'ping', body?: string) => Promise<unknown>) | undefined
+let webPost: ((path: 'push' | 'ping' | 'export', body?: string) => Promise<unknown>) | undefined
 let webPinged = 0
 let webWatchers = 0
 let webSent = ''
 let webBusy = false
 let webTimer: { cancel(): void } | undefined
+let journalTimer: { cancel(): void } | undefined
 /** What each press on the page does, by the id the page sends back (only ids the mod handed out). */
 const webActs = new Map<string, Act>()
 const actId = (a: Act) => {
@@ -2884,10 +2892,14 @@ const webView = async ($: EngineInterface) => {
             outside: [actId({ k: 'set', hideOutside: false }), actId({ k: 'set', hideOutside: true })],
             demoOn: m.c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done'),
             demo: actId({ k: 'demo' }),
+            autoSave: !!m.c.autoSave,
+            autoActs: [actId({ k: 'set', autoSave: false }), actId({ k: 'set', autoSave: true })],
             version: VERSION,
           }
         : null,
     log: m.tab === 'activity' ? m.webLog : [],
+    logActs: { copy: actId({ k: 'logout', how: 'copy' }), download: actId({ k: 'logout', how: 'download' }), save: actId({ k: 'logout', how: 'save' }) },
+    logSave: { busy: saving, at: lastSave ? clock(lastSave.at) : '', file: lastSave?.file ?? '', summary: !!lastSave?.summary },
     lines: m.tab === 'activity' ? [] : m.listed.slice(0, 600).map(line),
   }
 }
@@ -2911,6 +2923,152 @@ const publishWeb = async ($: EngineInterface) => {
     webBusy = false
   }
 }
+/**
+ * The whole log of this chat, kept on disk as it grows (the pane keeps only its newest lines and
+ * starts over when Claude restarts), so Save, Copy and Download have all of it. One file per chat
+ * under ~/.claude/crew-map/journals.
+ */
+const journal = new Map<string, LogLine>()
+let journalPath = ''
+let journalSid = ''
+let journalDirty = false
+const JOURNAL_KEEP = 5000
+const later$ = <T,>(fn: () => Promise<T> | T) => Promise.resolve().then(fn)
+const journalLines = () => [...journal.values()].sort((x, y) => x.at - y.at)
+const openJournal = async ($: EngineInterface) => {
+  // The file is written only once the old one is read in (the timer may tick before then).
+  journalPath = ''
+  journalSid = String((await later$(() => $.session.id()).catch(() => '')) ?? '')
+  const home = String((await later$(() => $.env.get('USERPROFILE')).catch(() => undefined)) ?? (await later$(() => $.env.get('HOME')).catch(() => undefined)) ?? '').replace(/\\/g, '/')
+  const path = journalSid && home ? `${home}/.claude/crew-map/journals/${journalSid}.json` : ''
+  if (!path) return
+  try {
+    const old = JSON.parse(String(await $.fs.read(path)))
+    if (Array.isArray(old)) for (const l of old as LogLine[]) if (l && typeof l.at === 'number' && typeof l.text === 'string' && !journal.has(logKey(l))) journal.set(logKey(l), l)
+  } catch {}
+  journalPath = path
+  journalDirty = true
+}
+/** Takes the log's new lines into the journal (a pretend session's stay out), and writes it when it grew. */
+const syncJournal = async ($: EngineInterface) => {
+  const c = await readCrew?.()
+  if (!c) return
+  const demoNames = new Set(c.agents.filter(a => a.id.startsWith('demo-')).map(a => a.name))
+  const demoOn = demoNames.size > 0
+  for (const l of c.log) {
+    if (demoNames.has(l.who) || (demoOn && l.who === 'Claude')) continue
+    const k = logKey(l)
+    const was = journal.get(k)
+    if (!was || was.took !== l.took) {
+      journal.set(k, l)
+      journalDirty = true
+    }
+  }
+  if (journal.size > JOURNAL_KEEP) for (const k of [...journal.keys()].slice(0, journal.size - JOURNAL_KEEP)) journal.delete(k)
+  if (journalDirty && journalPath) {
+    journalDirty = false
+    await later$(() => $.fs.write(journalPath, JSON.stringify(journalLines()))).catch(() => undefined)
+  }
+}
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const localDay = (ms: number) => {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+/** The log as Markdown: who did what and when, and what each Claude was thinking. */
+const logMarkdown = (lines: LogLine[], c: Crew) => {
+  const goal = lines.find(l => l.kind === 'you')?.text ?? ''
+  const what = (l: LogLine) => (l.kind === 'think' ? 'thought' : l.kind === 'you' ? 'asked' : l.kind === 'msg' ? 'said' : l.kind === 'info' ? 'note' : 'did')
+  const first = lines[0]
+  const last = lines[lines.length - 1]
+  return [
+    `# Claude Crew log${goal ? `: ${trunc(oneLine(promptOf(goal)), 80)}` : ''}`,
+    '',
+    `- Project: \`${sessionDir || 'unknown'}\``,
+    `- Chat: ${journalSid || 'this chat'}`,
+    first ? `- From ${localDay(first.at)} ${clock(first.at)} to ${localDay(last.at)} ${clock(last.at)}` : '- Nothing happened yet',
+    `- Cost so far: ${fmtUsd(c.chatCost ?? c.spent?.cost ?? 0)}`,
+    '',
+    '## Activity',
+    '',
+    ...lines.map(l => `- ${clock(l.at)} **${l.who}** ${what(l)}: ${oneLine(l.text)}${l.took !== undefined ? ` _(${took(l.took)})_` : ''}${l.full && oneLine(l.full) !== oneLine(l.text) ? `\n  > ${oneLine(l.full)}` : ''}`),
+    '',
+  ].join('\n')
+}
+/** Where the logs and their summaries go, in the project. */
+const LOG_DIR = '.claude/crew-logs'
+const SUMMARY_SYSTEM = 'You write notes that a future Claude, working in the same project, reads to understand an earlier chat. Be concrete: file names, commands, decisions and their reasons. No preamble.'
+const SUMMARY_ASK = 'Below is the activity log of one chat in this project: who did what and when, and what they were thinking. Summarise it in Markdown under these headings: Goal; What was done (files and commands); How and why (the key decisions and the reasoning behind them); Problems hit and how they were solved; Left open. Keep it under 400 words.'
+let saving = false
+let lastSave: { at: number; file: string; summary: boolean } | undefined
+const slugOf = (s: string) => oneLine(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'chat'
+/** Saves this chat's log into the project, and a summary of it by a cheaper model (Haiku) beside it. */
+const saveLog = async ($: EngineInterface, why: 'button' | 'task') => {
+  if (saving) return
+  if (!sessionDir) {
+    if (why === 'button') void $.ui.toast("Couldn't save the log: this chat has no project folder.")
+    return
+  }
+  saving = true
+  void publishWeb($)
+  try {
+    await syncJournal($)
+    const c = await readCrew?.()
+    const lines = journalLines()
+    if (!c || !lines.length) {
+      if (why === 'button') void $.ui.toast('Nothing to save yet: the log is empty.')
+      return
+    }
+    // One file per chat: the same name each time it is saved.
+    const names = ((await $.store.get('logFiles').catch(() => undefined)) ?? {}) as Record<string, string>
+    const key = journalSid || 'chat'
+    const base = names[key] ?? `${localDay(lines[0].at)}-${slugOf(promptOf(lines.find(l => l.kind === 'you')?.text ?? 'chat'))}-${key.slice(0, 8)}`
+    if (!names[key]) await $.store.set('logFiles', { ...names, [key]: base }).catch(() => undefined)
+    const md = logMarkdown(lines, c)
+    const dir = `${sessionDir}/${LOG_DIR}`
+    await $.fs.write(`${dir}/${base}.md`, md)
+    const r = (await later$(() =>
+      $.model.complete({ model: 'haiku', system: SUMMARY_SYSTEM, prompt: `${SUMMARY_ASK}\n\n${md.length > 150_000 ? `(earlier lines left out)\n${md.slice(-150_000)}` : md}`, maxTokens: 1500, timeoutMs: 120_000 }),
+    ).catch(() => undefined)) as { isAnswered?: boolean; text?: string } | undefined
+    const summary = r?.isAnswered && r.text ? r.text.trim() : ''
+    if (summary) await $.fs.write(`${dir}/${base}.summary.md`, `${summary}\n`)
+    lastSave = { at: Date.now(), file: `${LOG_DIR}/${base}.md`, summary: !!summary }
+    if (why === 'button') void $.ui.toast(`Log saved to ${LOG_DIR}/${base}.md${summary ? ', with a summary beside it' : " (the summary couldn't be written)"}`)
+  } catch (err) {
+    note(`save log: ${String(err).slice(0, 160)}`)
+    if (why === 'button') void $.ui.toast(`Couldn't save the log: ${String(err).slice(0, 120)}`)
+  } finally {
+    saving = false
+    void publishWeb($)
+  }
+}
+/** The whole log as Markdown, to the page, which copies it or saves it as a file. */
+const exportLog = async ($: EngineInterface, how: 'copy' | 'download') => {
+  await syncJournal($)
+  const c = await readCrew?.()
+  if (!c) return
+  const text = logMarkdown(journalLines(), c)
+  // Copy: Claude's own clipboard first (the browser pane may not let a page write to it); the page shows the text if that fails.
+  if (how === 'copy') {
+    const r = (await later$(() => $.ui.copy({ text, surface: 'desktop' as never })).catch(() => undefined)) as { isCopied?: boolean } | undefined
+    if (r?.isCopied) return $.ui.toast('Claude Crew: the whole log is copied as Markdown')
+  }
+  await webPost?.('export', JSON.stringify({ how, name: `claude-crew-log-${localDay(Date.now())}.md`, text }))
+}
+/** Tells new chats in the project that earlier chats left logs and summaries, so Claude reads them when useful. */
+let logsNote = ''
+const findLogs = async ($: EngineInterface) => {
+  logsNote = ''
+  if (!sessionDir) return
+  const found = ((await later$(() => $.fs.list(`${sessionDir}/${LOG_DIR}`)).catch(() => [])) ?? []) as { name: string; mtimeMs?: number }[]
+  const sums = found.filter(f => f.name.endsWith('.summary.md')).sort((x, y) => (y.mtimeMs ?? 0) - (x.mtimeMs ?? 0))
+  if (sums.length)
+    logsNote = `Earlier chats in this project saved Claude Crew logs in ${LOG_DIR}/ (${sums.length} summar${sums.length === 1 ? 'y' : 'ies'}; newest: ${sums
+      .slice(0, 3)
+      .map(f => f.name)
+      .join(', ')}). When you need to know what was done before in this project, how, or why, read the relevant *.summary.md, and its .md log for the detail.`
+}
+
 /** Starts this chat's website (a small Node server beside the mod) and answers what is pressed on it. */
 const startWeb = ($: EngineInterface) => {
   void (async () => {
@@ -3093,6 +3251,11 @@ export const register: Register = on => {
     // This chat's website: started once, and sent the view while anyone has it open. The pane opens
     // by itself only when the website can't start.
     if (!webUrl) startWeb($)
+    void openJournal($)
+    journalTimer?.cancel()
+    journalTimer = $.clock.every(3000, () => void syncJournal($))
+    if ((await $.store.get('autoSave').catch(() => undefined)) === true) await write?.(d => ({ ...d, autoSave: true }))
+    void findLogs($)
     webTimer?.cancel()
     webTimer = $.clock.every(800, () => void publishWeb($))
 
@@ -3102,6 +3265,12 @@ export const register: Register = on => {
   // /crew: Claude opens this chat's website in the browser pane (a mod can't open the pane itself), asked
   // once the command has finished, when the chat can take a prompt; the link stays in case it doesn't.
   // Without the website, the pane opens as before.
+  // New chats in a project with saved logs: one line telling Claude where they are.
+  on('prompt.compose', async ($, e, next) => {
+    const r = await next(e)
+    return logsNote ? { ...r, sections: [...r.sections, { id: 'crew-map:logs', text: logsNote, scope: 'session' as const }] } : r
+  })
+
   on('command.run', { command: 'crew' }, async $ => {
     if (webUrl) {
       const url = webUrl
@@ -3172,6 +3341,8 @@ export const register: Register = on => {
     const r = await next(e)
     const id = agentOf(e)
     void readChatCost($)
+    if (id === 'main' && e.reason === 'answer')
+      $.clock.after(2000, () => void (async () => ((await readCrew?.())?.autoSave ? saveLog($, 'task') : undefined))())
     if (id === 'main') codexCount = await codexRunCount($)
     let budgetNote = ''
     let summary: Summary | undefined

@@ -96,6 +96,18 @@ const srv = http.createServer((req, res) => {
     res.writeHead(204, plain)
     return res.end()
   }
+  // The whole log as Markdown, from the mod, for the page to copy or save as a file.
+  if (req.method === 'POST' && path === 'export') {
+    heard = Date.now()
+    let body = ''
+    req.on('data', d => (body += d))
+    req.on('end', () => {
+      for (const w of watchers) w.write(`event: export\ndata: ${body.replace(/\n/g, ' ')}\n\n`)
+      res.writeHead(204, plain)
+      res.end()
+    })
+    return
+  }
   if (req.method === 'POST' && (path === 'push' || path === 'act')) {
     if (path === 'push') heard = Date.now()
     let body = ''
