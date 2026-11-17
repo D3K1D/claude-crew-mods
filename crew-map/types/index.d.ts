@@ -200,6 +200,8 @@ export type Crew = {
   pane?: { tab?: 'activity' | 'files' | 'search' | 'settings' | 'claude'; focus?: string; top?: number }
   /** The chats started from this one (and theirs), as the desktop app lists them: nested under it, by depth. */
   chats?: Chat[]
+  /** Whether the pane can read that list by itself; when not, each chat is only as new as Claude's last look at it (`seen`). */
+  chatsLive?: boolean
 }
 
 /** A chat started from this one with the app's start_session, or from one of those. */
@@ -213,6 +215,8 @@ export type Chat = {
   running: boolean
   at: number
   depth: number
+  /** When this was read from the app (ms). */
+  seen?: number
 }
 
 /**

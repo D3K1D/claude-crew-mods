@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.0'
+const VERSION = '1.8.1'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -555,11 +555,12 @@ let writeQueue: Promise<unknown> = Promise.resolve()
 let ticker: { cancel(): void } | undefined
 // ── Nested chats: the chats started from this one, read from the desktop app's own session list ──
 const LIST_TOOL = 'mcp__ccd_session_mgmt__list_sessions'
-const START_TOOL = 'mcp__ccd_session__start_session'
 let refreshChats: (() => Promise<void>) | undefined
 let chatPoller: { cancel(): void } | undefined
 /** True while the pane itself reads the list, so its own call is not logged as Claude's. */
 let pollingChats = false
+/** When the pane last read the list by itself. */
+let chatsReadAt = 0
 /**
  * The chats under this one, from list_sessions' `{ linked: true }` answer (this chat's family, less
  * itself): this chat is the one that started those whose starter the list doesn't hold.
@@ -575,7 +576,7 @@ const chatsOf = (text: string): Chat[] | undefined => {
   const str = (o: Record<string, unknown>, k: string) => (typeof o[k] === 'string' ? (o[k] as string) : '')
   const all = (rows.filter(r => r && typeof r === 'object') as Record<string, unknown>[])
     .filter(r => str(r, 'sessionId') && r.isArchived !== true)
-    .map(r => ({ id: str(r, 'sessionId'), title: str(r, 'title') || str(r, 'name') || 'A chat', name: str(r, 'name'), parent: str(r, 'startedBy'), cwd: str(r, 'cwd').replace(/\\/g, '/'), branch: str(r, 'branch'), running: r.isRunning === true, at: Date.parse(str(r, 'lastActivityAt')) || 0, depth: 1 }))
+    .map(r => ({ id: str(r, 'sessionId'), title: str(r, 'title') || str(r, 'name') || 'A chat', name: str(r, 'name'), parent: str(r, 'startedBy'), cwd: str(r, 'cwd').replace(/\\/g, '/'), branch: str(r, 'branch'), running: r.isRunning === true, at: Date.parse(str(r, 'lastActivityAt')) || 0, depth: 1, seen: Date.now() }))
   const ids = new Set(all.map(x => x.id))
   const self = [...new Set(all.filter(x => x.parent && !ids.has(x.parent)).map(x => x.parent))]
   if (self.length !== 1) return []
@@ -2011,6 +2012,8 @@ type GlanceRow = {
   progress: string
   /** It looks stuck: its second line says why, in amber. */
   stuck?: boolean
+  /** A nested chat not read live: the time (13:09) it was last seen; its state is drawn dim. */
+  asOf?: string
   model: string
   depth: number
   request: string[]
@@ -2478,6 +2481,8 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     deskAgents.filter(a => a.id === 'main' || !deskAgents.some(p => p.id === (a.parent ?? 'main'))).forEach(walk)
     // A chat started from this one: its title, working or idle, and where it works; nested under this chat.
     const chatList = src.chats ?? []
+    // Not read live (the list needs an approval to read): as of Claude's last look, its time at the right.
+    const asOfChat = (ch: Chat) => (src.chatsLive === false && ch.seen ? clock(ch.seen).slice(0, 5) : '')
     const rowOfChat = (ch: Chat): GlanceRow => ({
       id: `chat-${ch.id}`,
       name: ch.title,
@@ -2485,8 +2490,9 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       state: ch.running ? 'work' : 'idle',
       kind: ch.running ? 'msg' : 'idle',
       status: ch.running ? 'Working' : 'Idle',
-      object: ch.running ? 'in its own chat' : ch.at ? `last active ${since(ch.at, 's')} ago` : '',
-      time: '',
+      object: asOfChat(ch) ? `as of ${asOfChat(ch)}` : ch.running ? 'in its own chat' : ch.at ? `last active ${since(ch.at, 's')} ago` : '',
+      time: asOfChat(ch) && ch.at ? since(ch.at, 's') : '',
+      asOf: asOfChat(ch) || undefined,
       total: 0,
       done: 0,
       progress: `Chat · ${[ch.branch, baseName(ch.cwd)].filter(Boolean).join(' · ')}`,
@@ -2886,6 +2892,7 @@ const webView = async ($: EngineInterface) => {
       done: r.done,
       progress: r.progress,
       stuck: !!r.stuck,
+      asOf: r.asOf,
       model: r.model,
       depth: r.depth,
       ask: r.ask,
@@ -3278,8 +3285,9 @@ export const register: Register = on => {
           }))
       })()
     })
-    // The chats started from this one: read from the app's own list every 15 seconds, only where the
-    // session lets that read run without asking anyone (the desktop app; elsewhere it stops at once).
+    // The chats started from this one: read from the app's own list every 15 seconds, only while the
+    // session lets that read run without asking anyone. Where it doesn't (auto mode, the terminal), it
+    // keeps checking, and the chats are only as new as Claude's own last look (the cards say so).
     refreshChats = async () => {
       if (pollingChats) return
       pollingChats = true
@@ -3287,16 +3295,20 @@ export const register: Register = on => {
         const may = await Promise.resolve()
           .then(() => $.tool.check({ tool: LIST_TOOL, input: { linked: true } }))
           .catch(() => undefined)
-        if (may?.decision !== 'allow') {
-          chatPoller?.cancel()
-          chatPoller = undefined
-          return
-        }
-        const r = (await Promise.resolve()
-          .then(() => $.tool.call({ tool: LIST_TOOL, linked: true, limit: 50 } as never))
-          .catch(() => undefined)) as { text?: string; isError?: boolean } | undefined
+        const live = may?.decision === 'allow'
+        const r = live
+          ? ((await Promise.resolve()
+              .then(() => $.tool.call({ tool: LIST_TOOL, linked: true, limit: 50 } as never))
+              .catch(() => undefined)) as { text?: string; isError?: boolean } | undefined)
+          : undefined
         const chats = r && !r.isError && typeof r.text === 'string' ? chatsOf(r.text) : undefined
-        if (chats) await write?.(d => (JSON.stringify(d.chats ?? []) === JSON.stringify(chats) ? d : { ...d, chats }))
+        if (chats) chatsReadAt = Date.now()
+        await write?.(d => {
+          // Live: written only when a chat changed (its `seen` matters only once the reads stop).
+          const bare = (x: Chat[]) => JSON.stringify(x.map(({ seen, ...rest }) => rest))
+          if (chats) return d.chatsLive && bare(d.chats ?? []) === bare(chats) ? d : { ...d, chats, chatsLive: true }
+          return d.chatsLive === false ? d : { ...d, chatsLive: false, chats: (d.chats ?? []).map(x => ({ ...x, seen: Math.max(x.seen ?? 0, chatsReadAt) })) }
+        })
       } finally {
         pollingChats = false
       }
@@ -3621,9 +3633,26 @@ export const register: Register = on => {
     }
     return r
   })
-  on('tool.call', { tool: START_TOOL }, async ($, e, next) => {
+  // Claude working with the other chats (starting one, messaging it, reading it, changing it): the list
+  // is read again soon after, and a chat Claude read itself takes what it saw.
+  on('tool.call', { tool: /^(SendMessage|mcp__ccd_session(_mgmt)?__\w+)$/ }, async ($, e, next) => {
+    if (typeof e.tool !== 'string' || pollingChats || e.tool === LIST_TOOL) return next(e)
     const r = await next(e)
     after?.(1500, () => void refreshChats?.())
+    const text = 'text' in r && typeof r.text === 'string' && !r.isError ? r.text : ''
+    if (e.tool.endsWith('__get_session') && text) {
+      let s: Record<string, unknown> = {}
+      try {
+        s = JSON.parse(text)
+      } catch {}
+      const id = typeof s.sessionId === 'string' ? s.sessionId : ''
+      if (id)
+        await write?.(d =>
+          d.chats?.some(x => x.id === id)
+            ? { ...d, chats: d.chats.map(x => (x.id === id ? { ...x, running: s.isRunning === true, at: Date.parse(String(s.lastActivityAt ?? '')) || x.at, seen: Date.now() } : x)) }
+            : d,
+        )
+    }
     return r
   })
   on('tool.call', async ($, e, next) => {
@@ -3999,7 +4028,10 @@ export const register: Register = on => {
     const rowLines = (r: PaneRow): VLine[] => {
       const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * 2 * CELL_W
       const details: Seg = { t: r.focused ? 'Hide' : 'Details', role: 'dim', run: openDetails(r.id) }
-      const one: VLine = { indent, segs: [{ dot: hueRole(r.hue), t: r.name, b: r.state !== 'done', role: r.state === 'done' ? 'dim' : 'text' }, { icon: [r.kind, SR[r.state]], t: r.status, b: true, role: SR[r.state] }, { t: r.object, flex: true, role: r.state === 'done' ? 'dim' : 'text' }], right: [{ t: r.time, role: 'dim' }] }
+      // A chat not read live: its state dim, "as of 13:09" faint (in a terminal, after its state).
+      const sr = r.asOf ? 'dim' : SR[r.state]
+      const term = r.asOf && e.surface === 'terminal'
+      const one: VLine = { indent, segs: [{ dot: hueRole(r.hue), t: r.name, b: r.state !== 'done', role: r.state === 'done' ? 'dim' : 'text' }, { icon: [r.kind, sr], t: term ? `${r.status} (as of ${r.asOf})` : r.status, b: true, role: sr }, { t: term ? '' : r.object, flex: true, role: r.asOf ? 'faint' : r.state === 'done' ? 'dim' : 'text' }], right: [{ t: r.time, role: 'dim' }] }
       if (r.state === 'done') return [one]
       if (r.state === 'you') return [one, ...wrapRows(r.ask, Math.max(16, cols - 6), 6).map(t => ({ indent: indent + 2 * CELL_W, segs: [{ t }] })), { indent: indent + 2 * CELL_W, segs: [{ t: r.where, role: 'dim', flex: true }], right: [details] }]
       const pips = r.total ? `${'●'.repeat(Math.min(5, r.done))}${'○'.repeat(Math.max(0, Math.min(5, r.total) - r.done))}` : ''

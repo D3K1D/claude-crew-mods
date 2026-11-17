@@ -91,10 +91,11 @@ const drawHead = () => {
 
 // 2 · The Claudes
 const card = r => {
-  const sc = SC[r.state]
+  // A nested chat not read live: its state dim, "as of 13:09" faint, and a tooltip saying why.
+  const sc = r.asOf ? 'dim' : SC[r.state]
   const lead = r.state === 'done' ? `<span class="dot" style="background:${color(r.hue)}"></span>` : r.name === 'Codex' && r.hue === 'cx' ? codexIcon : sprite(r.hue)
   const details = btn(r.details, r.focused ? 'Hide' : 'Details', `u fix${r.focused ? ' text' : ''}`, `${r.focused ? 'Hide' : 'Show'} ${r.name}'s details`)
-  const l1 = `<div class="l1">${lead}<span class="fix ${r.state === 'done' ? 'dim' : 'text'}">${esc(r.name)}</span>${icon(r.kind, sc)}<span class="status" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut ${r.state === 'done' ? 'dim' : 'text'}">${esc(r.object)}</span><span class="time${r.state === 'you' ? ' amber' : ''}">${esc(r.time)}</span></div>`
+  const l1 = `<div class="l1">${lead}<span class="fix ${r.state === 'done' ? 'dim' : 'text'}">${esc(r.name)}</span>${icon(r.kind, sc)}<span class="status" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut ${r.asOf ? 'faint' : r.state === 'done' ? 'dim' : 'text'}">${esc(r.object)}</span><span class="time${r.state === 'you' ? ' amber' : ''}">${esc(r.time)}</span></div>`
   let more = ''
   if (r.state === 'you') more = `<div class="ask">${esc(r.ask)}</div><div class="l2"><span class="cut dim">${esc(r.where)}</span>${details}</div>`
   else if (r.state !== 'done') {
@@ -102,7 +103,7 @@ const card = r => {
     more = `<div class="l2">${pips}<span class="cut ${r.stuck ? 'amber' : 'dim'}">${esc(r.progress)}</span>${r.model ? `<span class="fix faint w">${esc(r.model)}</span>` : ''}${details}</div>`
   }
   const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * 20
-  return `<div class="card ${r.state === 'you' ? 'you' : ''} ${r.state === 'done' ? 'done' : ''} ${r.focused ? 'open' : ''}" style="margin-left:${indent}px">${l1}${more}</div>`
+  return `<div class="card ${r.state === 'you' ? 'you' : ''} ${r.state === 'done' ? 'done' : ''} ${r.focused ? 'open' : ''}" style="margin-left:${indent}px"${r.asOf ? ` title="Not read live. Shown as of ${esc(r.asOf)}; it updates the next time Claude checks."` : ''}>${l1}${more}</div>`
 }
 const drawCrew = () => {
   const rc = V.recap

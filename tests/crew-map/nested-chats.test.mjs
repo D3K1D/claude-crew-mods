@@ -44,7 +44,7 @@ const $ = {
 const regs = []
 register((ev, m, fn) => { regs.push({ ev, m: fn ? m : {}, fn: fn ?? m }); return { catch() {} } }, {})
 const fire = (ev, e, bottom) => {
-  const mine = regs.filter(r => r.ev === ev && Object.entries(r.m).every(([k, v]) => e[k] === v))
+  const mine = regs.filter(r => r.ev === ev && Object.entries(r.m).every(([k, v]) => (v instanceof RegExp ? typeof e[k] === 'string' && v.test(e[k]) : e[k] === v)))
   const run = i => (i < mine.length ? mine[i].fn($, e, x => run(i + 1, x)) : bottom(e))
   return run(0)
 }
@@ -87,7 +87,13 @@ decision = 'ask'
 const before = listed
 await every.find(x => x.ms === 15_000).fn()
 await tick()
-check('asked to approve: never called, and the poll stops', listed === before && !every.some(x => x.ms === 15_000))
+check('asked to approve: never called, but it keeps checking', listed === before && every.some(x => x.ms === 15_000))
+check('and the chats are marked as not live', globalThis.__store.get('crew').chatsLive === false)
+const asOf = new Date(now).toTimeString().slice(0, 5)
+t = await render()
+check('a card not read live says "as of" its last read, its state dim', said(t).some(w => w === `as of ${asOf}`) && !said(t).some(w => /in its own chat/.test(w)), said(t).join(' | ').slice(0, 300))
+const termStale = text(await render(100, 'terminal'))
+check('in a terminal: "Idle (as of …)", with its last activity at the right', termStale.includes(`Idle (as of ${asOf})   10s`), termStale.slice(0, 300))
 
 // Claude's own linked list call still lands in the log, and refreshes the rows.
 family.push({ sessionId: 'local_new', title: 'A new helper chat', cwd: 'C:\\work\\game', isArchived: false, isRunning: true, lastActivityAt: '2031-01-01T21:00:00Z', name: 'new', startedBy: 'local_me' })
@@ -95,6 +101,19 @@ await fire('tool.call', { tool: LIST, tool_use_id: 'm1', linked: true }, async (
 await tick()
 t = await render()
 check("Claude's own list call refreshes the rows", alts(t).some(a => a.startsWith('A new helper chat')))
+
+// Claude reads one chat itself: that card takes what it saw.
+now += 120_000
+await fire('tool.call', { tool: 'mcp__ccd_session_mgmt__get_session', tool_use_id: 'g1', session_id: 'local_grand' }, async () => ({ result: {}, text: JSON.stringify({ ...family[3], isRunning: true, lastActivityAt: '2031-01-01T21:02:00Z' }) }))
+await tick()
+const grand = globalThis.__store.get('crew').chats.find(c => c.id === 'local_grand')
+check("Claude's own read of one chat updates its card", grand?.running === true && grand.seen === now, JSON.stringify(grand))
+// The list may be readable again (the mode changed): the next check reads it.
+decision = 'allow'
+const was = listed
+await every.find(x => x.ms === 15_000).fn()
+await tick()
+check('allowed again: read again, and live', listed === was + 1 && globalThis.__store.get('crew').chatsLive === true)
 
 // The terminal draws them as well.
 const term = text(await render(100, 'terminal'))
