@@ -143,6 +143,17 @@ await tick()
 t = text(await render())
 check('a nested chat renamed: its lines show under its new name, without reading them again', /site-… ✎ {2}Editing docs\/index\.md/.test(t) && !/docs-…/.test(t), t.slice(-300))
 
+// 3b · A nested chat's touched files join Touched, marked as theirs; this chat writes its own beside its journal.
+put(`${DIR}/journals/cli-kid/touched.json`, JSON.stringify([{ path: 'C:/work/docs/index.md', added: 4, removed: 0, edits: 1, reads: 0, by: 'Quill', hue: 2, at: now, editing: true }]))
+now += 1000
+await timer(4000)
+await tick()
+t = text(await render())
+check("a nested chat's file is in Touched, counted as theirs", /index\.md/.test(t) && /1 by nested chats/.test(t), t.slice(0, 500))
+await timer(3000)
+await tick()
+check('this chat writes what it touched beside its journal', Array.isArray(JSON.parse(disk.get(`${DIR}/journals/cli-me/touched.json`)?.text ?? 'null')))
+
 // 4 · This chat's journal: chunks of 250 lines, and only the ones that changed are written.
 const writes = []
 const write0 = $.fs.write
@@ -191,6 +202,8 @@ check('a failed call is one line in the journal, marked bad', builds.length === 
 check('...and the log shows it failed', /Build the app ✗ failed/.test(text(await render())))
 
 // 7 · A new session in the same process starts from nothing: the last chat's lines don't follow it.
+// (What its Touched showed before, kept beside its journal: back when it starts.)
+put(`${DIR}/journals/cli-next/touched.json`, JSON.stringify([{ path: 'C:/work/src/kept.ts', added: 3, removed: 1, edits: 1, reads: 0, by: 'Claude', hue: 0, at: now }]))
 $.session.id = async () => 'cli-next'
 // (A new session's own state starts empty, as the engine keeps one per session.)
 globalThis.__store.set('crew', { ...crew(), log: [] })
@@ -200,8 +213,9 @@ now += 10
 await fire('tool.call', { tool: 'Grep', tool_use_id: 'n1', pattern: 'fresh start' }, async () => ({ text: 'ok' }))
 await timer(3000)
 await tick()
-const nextFiles = [...disk.keys()].filter(p => p.includes('/journals/cli-next/'))
+const nextFiles = [...disk.keys()].filter(p => /\/journals\/cli-next\/\d{6}\.json$/.test(p))
 const next = nextFiles.map(p => disk.get(p).text).join(' ')
 check("a new session's journal starts at its chunk 1, with none of the last one's lines", nextFiles.join() === `${DIR}/journals/cli-next/000001.json` && next.includes('fresh start') && !next.includes('Build the app') && !next.includes('searching p1'), nextFiles.join(' | '))
+check('what Touched showed comes back when the chat starts again', crew().changes['C:/work/src/kept.ts']?.added === 3, JSON.stringify(Object.keys(crew().changes)))
 console.log(`\n${fails} failing check(s)`)
 process.exit(fails ? 1 : 0)

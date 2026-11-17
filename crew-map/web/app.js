@@ -130,11 +130,14 @@ const fitPips = () => {
 }
 
 // 3 · Touched
+// A nested chat touched the file: the log's chat bubble in its colour, filled while it edits the file now.
+const chatMark = m =>
+  `<svg width="11" height="11" viewBox="0 0 16 16" fill="${m.fill ? color(m.hue) : 'none'}" stroke="${color(m.hue)}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>`
 const drawTouched = () => {
   const t = V.touched
-  const head = `<div class="row"><span class="b">Touched</span><span class="dim">${esc(t.sum)}</span><span class="grow"></span>${t.open ? btn(t.open, 'Open folder', 'u') : ''}</div>`
+  const head = `<div class="row"><span class="b">Touched</span><span class="dim">${esc(t.sum)}${t.nested ? W(esc(t.nested)) : ''}</span><span class="grow"></span>${t.open ? btn(t.open, 'Open folder', 'u') : ''}</div>`
   const rows = t.folders.length
-    ? t.folders.map(d => `<div class="row"><span class="folder" title="${esc(d.name)}">${esc(d.name)}</span>${d.files.map(f => btn(f.act, `${f.on ? `<span style="color:${color(f.on)}">● </span>` : ''}<span style="color:${f.errs ? 'var(--red)' : f.read ? 'var(--dim)' : 'var(--text)'}">${esc(f.name)}</span>${f.errs ? `<span class="red b"> ✕${f.errs}</span>` : ''}${f.add ? `<span class="green"> ${esc(f.add)}</span>` : ''}${f.del ? `<span class="dim"> ${esc(f.del)}</span>` : ''}`, 'fix')).join('')}${d.more ? btn(t.more, `+${d.more} more`, 'u fix') : ''}</div>`).join('')
+    ? t.folders.map(d => `<div class="row"><span class="folder" title="${esc(d.name)}">${esc(d.name)}</span>${d.files.map(f => btn(f.act, `<span class="tf" title="${esc(f.title ?? f.name)}">${f.on ? `<span style="color:${color(f.on)}">●</span>` : ''}${f.chat ? chatMark(f.chat) : ''}<span style="color:${f.errs ? 'var(--red)' : f.read ? 'var(--dim)' : 'var(--text)'}">${esc(f.name)}</span></span>${f.errs ? `<span class="red b"> ✕${f.errs}</span>` : ''}${f.add ? `<span class="green"> ${esc(f.add)}</span>` : ''}${f.del ? `<span class="dim"> ${esc(f.del)}</span>` : ''}`, 'fix')).join('')}${d.more ? btn(t.more, `+${d.more} more`, 'u fix') : ''}</div>`).join('')
     : `<div class="row dim">No files yet. Folders show here as the Claudes open files.</div>`
   $('touched').innerHTML = head + rows
 }
@@ -540,7 +543,7 @@ const addOlder = x => {
 }
 const seg = g => {
   const lead = `${g.dot ? `<span style="color:${color(g.dot)}">●</span> ` : ''}${g.icon ? icon(g.icon[0], g.icon[1], 13, 1.8) : ''}${g.bar !== undefined && g.bar !== null ? `<svg width="72" height="8" viewBox="0 0 72 8" aria-hidden="true"><rect width="72" height="8" rx="4" fill="var(--line)"/><rect width="${Math.max(8, 72 * Math.min(1, g.bar))}" height="8" rx="4" fill="${color(g.role === 'red' || g.role === 'amber' ? g.role : 'dim')}"/></svg>` : ''}`
-  const words = g.parts ? g.parts.map(([t, role]) => `<span style="color:${color(role)}">${esc(t)}</span>`).join('') : esc(g.t)
+  const words = (g.parts ? g.parts.map(([t, role]) => `<span style="color:${color(role)}">${esc(t)}</span>`).join('') : esc(g.t)) + (g.tail ? W(esc(g.tail)) : '')
   const cls = [g.b ? 'b' : '', g.i ? 'i' : '', g.u ? 'u' : '', g.flex ? 'cut' : 'fix'].join(' ')
   const style = `${g.parts ? '' : `color:${color(g.role)};`}${g.w ? `width:${g.w}ch;overflow:hidden;text-overflow:ellipsis;` : ''}`
   if (!lead && !words) return ''

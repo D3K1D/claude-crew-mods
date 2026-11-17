@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.5'
+const VERSION = '1.8.6'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -2144,6 +2144,8 @@ const NONE: Act = { k: 'none' }
 
 /** A run of text on a line of the viewer: words, a fixed column, the rest cut to fit, a button. */
 type Seg = {
+  /** (Website) words after `t` shown only on a wide page. */
+  tail?: string
   t?: string
   size?: number
   role?: string
@@ -2174,7 +2176,7 @@ type PaneRow = GlanceRow & { ask: string; focused: boolean }
 type Recap = { title: string; goal: string; ago: string; facts: [string, string, string][]; copy?: Act; demo?: Act }
 
 /** A file on a Touched line: its name, errors, lines added and removed, and the little Claude on it now. */
-type TouchFile = { name: string; errs: number; add: number; del: number; on: string; read?: boolean; run: Act }
+type TouchFile = { name: string; errs: number; add: number; del: number; on: string; read?: boolean; run: Act; /** A nested chat touched it: its colour, filled while it edits the file now. */ chat?: { hue: string; fill: boolean }; title?: string }
 type TouchFolder = { name: string; files: TouchFile[] }
 /** The viewer's tab row: the tabs (the one shown bold and underlined), then ▲ ▼ and back to the latest. */
 type Tab = { id: string; t: string; label: string; on: boolean; run: Act }
@@ -2556,6 +2558,26 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         seenFile.add(n.id)
         cardFiles.push({ id: n.id, label: n.label || baseName(n.id), touchedAt: n.touchedAt || 0 })
       }
+    // Files nested chats touched (any depth), joined to this chat's: one entry per path.
+    const nt = nestedTouched()
+    for (const [id, list] of nt)
+      if (!isSpecial(id) && !seenFile.has(id)) {
+        seenFile.add(id)
+        cardFiles.push({ id, label: baseName(id), touchedAt: list[0]?.at ?? 0 })
+      }
+    // A file's edits by every chat, and who: this chat (its Claude who changed it last) and the nested ones.
+    const editsOf = (id: string) => {
+      const ch = src.changes[id]
+      const others = nt.get(id) ?? []
+      const theirs = others.filter(x => x.edits)
+      return {
+        ch,
+        others,
+        edited: !!ch?.edits || theirs.length > 0,
+        added: (ch?.edits ? ch.added : 0) + theirs.reduce((n, x) => n + x.added, 0),
+        removed: (ch?.edits ? ch.removed : 0) + theirs.reduce((n, x) => n + x.removed, 0),
+      }
+    }
     const onFile = new Map<string, Agent[]>()
     for (const a of src.agents) if ((a.state === 'busy' || a.needs) && a.node) onFile.set(a.node, [...(onFile.get(a.node) ?? []), a])
     const groups = new Map<string, { files: CardFile[]; first: number }>()
@@ -2574,7 +2596,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const CHIPS = perRow === 1 ? 8 : 10
     const visibleFiles = [...groups.values()].flatMap(g => g.files)
     const matches = q ? visibleFiles.filter(matchesQ).length : 0
-    const errsOf = (id: string) => (src.problems ?? []).filter(pr => pr.path === id).length
+    const errsOf = (id: string) => (src.problems ?? []).filter(pr => pr.path === id).length + (nt.get(id) ?? []).reduce((n, x) => n + (x.errs ?? 0), 0)
     const natural = (x: CardFile, y: CardFile) => x.label.localeCompare(y.label, undefined, { numeric: true, sensitivity: 'base' }) || x.id.localeCompare(y.id)
     // ── The pane, as the design draws it: header, crew, Touched, and the viewer with its tabs ──
     const now = Date.now()
@@ -2631,7 +2653,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           : undefined
 
     // Touched: the three folders worked in most lately (in the order first reached), their files as buttons.
-    const lastIn = (files: CardFile[]) => Math.max(0, ...files.map(f => Math.max(f.touchedAt, src.changes[f.id]?.at ?? 0)))
+    const lastIn = (files: CardFile[]) => Math.max(0, ...files.map(f => Math.max(f.touchedAt, src.changes[f.id]?.at ?? 0, nt.get(f.id)?.[0]?.at ?? 0)))
     const touchFolders: TouchFolder[] = [...folders]
       .sort((x, y) => lastIn(y[1].files) - lastIn(x[1].files))
       .slice(0, 3)
@@ -2639,15 +2661,31 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       .map(([g, info]) => ({
         name: label(g),
         files: [...info.files]
-          .map(f => ({ f, ch: src.changes[f.id], who: onFile.get(f.id) ?? [], errs: errsOf(f.id) }))
-          .sort((x, y) => +!!y.who.length - +!!x.who.length || y.errs - x.errs || +!!y.ch?.edits - +!!x.ch?.edits || (y.ch?.at ?? 0) - (x.ch?.at ?? 0))
-          .map(({ f, ch, who, errs }) => ({ name: f.label, errs, add: ch?.edits ? ch.added : 0, del: ch?.edits ? ch.removed : 0, on: who.length ? hueRole(colorOf(who[0])) : '', read: !ch?.edits, run: openFile(f.id, f.label) })),
+          .map(f => ({ f, e: editsOf(f.id), who: onFile.get(f.id) ?? [], errs: errsOf(f.id) }))
+          .sort((x, y) => +!!(y.who.length || y.e.others.some(o => o.editing)) - +!!(x.who.length || x.e.others.some(o => o.editing)) || y.errs - x.errs || +y.e.edited - +x.e.edited || Math.max(y.e.ch?.at ?? 0, y.e.others[0]?.at ?? 0) - Math.max(x.e.ch?.at ?? 0, x.e.others[0]?.at ?? 0))
+          .map(({ f, e, who, errs }): TouchFile => {
+            // The bubble: the chat editing it now, else the latest one to touch it.
+            const mark = e.others.find(o => o.editing) ?? e.others[0]
+            const whom = [...(e.ch ? [`this chat (${e.ch.by})${who.length ? ', editing it now' : ''}`] : []), ...e.others.map(o => `${o.name} (${o.by})${o.editing ? ', editing it now' : ''}`)]
+            return {
+              name: f.label,
+              errs,
+              add: e.edited ? e.added : 0,
+              del: e.edited ? e.removed : 0,
+              on: who.length ? hueRole(colorOf(who[0])) : '',
+              read: !e.edited,
+              run: openFile(f.id, f.label),
+              ...(mark ? { chat: { hue: `h${mark.hue}`, fill: !!mark.editing } } : {}),
+              title: [f.label, e.edited ? `+${fmtK(e.added)} −${fmtK(e.removed)}` : 'read', whom.join(' and ')].filter(Boolean).join(' · '),
+            }
+          }),
       }))
     const problemsN = (src.problems ?? []).length
     // One count of the files the work touched (edited, read, or named by an error), the same in Touched and Files.
     const filesN = cardFiles.length
+    const byNested = cardFiles.filter(f => nt.has(f.id)).length
     const touchedSum = filesN
-      ? `${fmtK(filesN)} file${filesN === 1 ? '' : 's'}${wide && (totalAdded || totalRemoved) ? ` · +${fmtK(totalAdded)} −${fmtK(totalRemoved)}` : ''}${problemsN ? ` · ${fmtK(problemsN)} problem${problemsN === 1 ? '' : 's'}` : ''}`
+      ? `${fmtK(filesN)} file${filesN === 1 ? '' : 's'}${wide && (totalAdded || totalRemoved) ? ` · +${fmtK(totalAdded)} −${fmtK(totalRemoved)}` : ''}${problemsN ? ` · ${fmtK(problemsN)} problem${problemsN === 1 ? '' : 's'}` : ''}${!web && wide && byNested ? ` · ${fmtK(byNested)} by nested chats` : ''}`
       : ''
 
     // The viewer: what each tab lists, as lines; the body shows BODY_ROWS of them from where it is scrolled.
@@ -2770,10 +2808,21 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           right: g === OUTSIDE && sessionDir ? [{ t: 'hide them', role: 'dim', u: true, run: { k: 'set', hideOutside: true } }] : [],
         })
         for (const f of list) {
-          const ch = src.changes[f.id]
+          const e = editsOf(f.id)
+          const ch = e.ch
+          // Who: this chat's Claude, else the nested chat (its bubble, its name, and its helper on a wide page).
+          const other = e.others[0]
+          const who: Seg = ch
+            ? { t: trunc(ch.by, wide ? 18 : 8), w: wide ? 168 : 60, role: `h${ch.hue % PALETTE.length}` }
+            : other
+              ? // (The website shows the helper only on a wide page: its words go apart.)
+                web && other.by !== 'Claude'
+                ? { icon: ['msg', `h${other.hue}`], t: trunc(other.name, 12), tail: ` · ${trunc(other.by, 8)}`, w: 168, role: `h${other.hue}` }
+                : { icon: ['msg', `h${other.hue}`], t: trunc(wide && other.by !== 'Claude' ? `${other.name} · ${other.by}` : other.name, wide ? 18 : 5), w: wide ? 168 : 60, role: `h${other.hue}` }
+              : { t: '', w: wide ? 168 : 60, role: 'dim' }
           out.push({
-            segs: [{ t: f.label, flex: true, role: errsOf(f.id) ? 'red' : ch?.edits ? 'text' : 'dim', run: openFile(f.id, f.label) }],
-            right: [...(ch?.edits ? [{ t: `+${fmtK(ch.added)}`, role: 'green', gap: 5 }, { t: `−${fmtK(ch.removed)}`, role: 'dim' }] : [{ t: errsOf(f.id) ? `✕${errsOf(f.id)}` : 'read', role: errsOf(f.id) ? 'red' : 'faint' }]), { t: ch ? trunc(ch.by, 8) : '', w: 60, role: ch ? `h${ch.hue % PALETTE.length}` : 'dim' }],
+            segs: [{ t: f.label, flex: true, role: errsOf(f.id) ? 'red' : e.edited ? 'text' : 'dim', run: openFile(f.id, f.label) }],
+            right: [...(e.edited ? [{ t: `+${fmtK(e.added)}`, role: 'green', gap: 5 }, { t: `−${fmtK(e.removed)}`, role: 'dim' }] : [{ t: errsOf(f.id) ? `✕${errsOf(f.id)}` : 'read', role: errsOf(f.id) ? 'red' : 'faint' }]), who],
             indent: 18,
           })
         }
@@ -2849,7 +2898,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     // The website's log: its newest lines (the page keeps what it was sent, and loads older ones from the
     // journals), each whole (the page cuts it to fit and opens it), oldest first.
     const webLog = allLog.slice(-WEB_WINDOW).map(webLine)
-    return { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, BODY_ROWS, listed, top0, scroll, tabs, webLog }
+    return { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, byNested, BODY_ROWS, listed, top0, scroll, tabs, webLog }
 }
 
 /** A log line for the website: what it shows closed; `more` when opening it shows more than its words (the page asks for that). */
@@ -2926,6 +2975,7 @@ const webView = async ($: EngineInterface) => {
     icon: g.icon,
     bar: g.bar,
     parts: g.parts,
+    tail: g.tail,
     act: g.run && g.run.k !== 'none' ? actId(g.run) : undefined,
     label: g.label,
   })
@@ -2961,11 +3011,13 @@ const webView = async ($: EngineInterface) => {
       : null,
     touched: {
       sum: m.touchedSum,
+      // (" · 5 by nested chats": on a wide page only.)
+      nested: m.byNested ? ` · ${fmtK(m.byNested)} by nested chats` : '',
       open: sessionDir ? actId(m.openDir(sessionDir, 'the project folder')) : '',
       more: actId(m.paneAct({ tab: 'files', top: 0 })),
       folders: m.touchFolders.map(d => ({
         name: d.name,
-        files: d.files.slice(0, 12).map(f => ({ name: f.name, errs: f.errs, add: f.add ? `+${fmtK(f.add)}` : '', del: f.del ? `−${fmtK(f.del)}` : '', on: f.on, read: !!f.read, act: actId(f.run) })),
+        files: d.files.slice(0, 12).map(f => ({ name: f.name, errs: f.errs, add: f.add ? `+${fmtK(f.add)}` : '', del: f.del ? `−${fmtK(f.del)}` : '', on: f.on, read: !!f.read, act: actId(f.run), chat: f.chat, title: f.title })),
         more: Math.max(0, d.files.length - 12),
       })),
     },
@@ -3081,8 +3133,8 @@ const journalLines = () => [...journal.values()].sort((x, y) => x.at - y.at)
 const listDir = (path: string) => later$(() => fsList?.(path) ?? []).catch(() => []) as Promise<{ name: string; mtimeMs?: number }[]>
 const readJson = (path: string) => later$(async () => JSON.parse(String(await fsRead?.(path))) as unknown).catch(() => undefined)
 /** A journal folder's chunk numbers, oldest first. */
-const chunkList = async (dir: string) =>
-  (await listDir(dir))
+const chunkList = async (dir: string, entries?: { name: string; mtimeMs?: number }[]) =>
+  (entries ?? (await listDir(dir)))
     .filter(f => /^\d{6}\.json$/.test(f.name))
     .map(f => ({ n: Number(f.name.slice(0, 6)), at: f.mtimeMs ?? 0 }))
     .sort((x, y) => x.n - y.n)
@@ -3101,6 +3153,7 @@ const openJournal = async ($: EngineInterface) => {
   dirtyChunks.clear()
   lastChunk = 1
   selfSent = ''
+  touchedSent = ''
   nested.clear()
   nestedVer++
   fsList = p => $.fs.list(p)
@@ -3122,6 +3175,13 @@ const openJournal = async ($: EngineInterface) => {
   if (!have.length) {
     const old = await readJson(`${dir}.json`)
     if (Array.isArray(old)) for (const l of old.slice(-JOURNAL_KEEP)) if (isLine(l)) addToJournal(l)
+  }
+  // What Touched showed before Claude restarted: back, under what this session touches since.
+  const saved = await readJson(`${dir}/touched.json`)
+  if (Array.isArray(saved)) {
+    const back = Object.fromEntries((saved.filter(f => f && typeof f.path === 'string') as TouchedFile[]).map(({ path, errs: _e, editing: _x, ...ch }) => [path, ch as Change]))
+    await write?.(d => ({ ...d, changes: { ...back, ...d.changes } }))
+    touchedSent = JSON.stringify(saved)
   }
   journalDir = dir
   journalOpen = true
@@ -3150,7 +3210,29 @@ const syncJournal = async ($: EngineInterface) => {
       const lines = (chunks.get(n) ?? []).map(k => journal.get(k)).filter(isLine)
       await later$(() => $.fs.write(`${journalDir}/${chunkName(n)}`, JSON.stringify(lines))).catch(() => dirtyChunks.add(n))
     }
+  await writeTouched($, c)
   await writeSelf($, c)
+}
+/**
+ * What Touched shows, kept beside the journal as touched.json (the newest 200 files, written when it
+ * changes): read back when Claude restarts, and read by the chat above to show this chat's files.
+ */
+type TouchedFile = Change & { path: string; errs?: number; editing?: boolean }
+let touchedSent = ''
+const writeTouched = async ($: EngineInterface, c: Crew) => {
+  if (!journalDir) return
+  const busy = new Set(c.agents.filter(a => a.state === 'busy' && a.node).map(a => a.node))
+  const errs = new Map<string, number>()
+  for (const p of c.problems ?? []) errs.set(p.path, (errs.get(p.path) ?? 0) + 1)
+  const files: TouchedFile[] = Object.entries(c.changes ?? {})
+    .filter(([p]) => !isSpecial(p) && !p.startsWith('demo/'))
+    .sort((x, y) => y[1].at - x[1].at)
+    .slice(0, 200)
+    .map(([path, ch]) => ({ path, ...ch, ...(errs.get(path) ? { errs: errs.get(path) } : {}), ...(busy.has(path) ? { editing: true } : {}) }))
+  const s = JSON.stringify(files)
+  if (s === touchedSent) return
+  touchedSent = s
+  await later$(() => $.fs.write(`${journalDir}/touched.json`, s)).catch(() => (touchedSent = ''))
 }
 
 // ── Nested chats' steps and lines ──
@@ -3179,7 +3261,7 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
   await later$(() => $.fs.write(`${homeDir}/.claude/crew-map/chats/${hostId}.json`, `${s.slice(0, -1)},"at":${selfAt}}`)).catch(() => undefined)
 }
 /** What this chat knows of each nested chat: its file, and its journal's chunks (lines as this log shows them). */
-type Nested = { file?: ChatFile; fileM: number; title?: string; name?: string; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
+type Nested = { file?: ChatFile; fileM: number; title?: string; name?: string; touched?: TouchedFile[]; touchedM?: number; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
 const nested = new Map<string, Nested>()
 /** A nested chat's colour (its card's): an index into PALETTE. */
 const chatHue = (id: string) => [...id].reduce((n, x) => n + x.charCodeAt(0), 0) % PALETTE.length
@@ -3194,6 +3276,20 @@ const nestedLines = () => {
     sortedVer = nestedVer
   }
   return sortedNested
+}
+/** Nested chats' touched files by path: each chat that touched it, the latest first. Made again only on a change. */
+type NestedTouch = TouchedFile & { chat: string; name: string; hue: number }
+let touchVer = -1
+let touchByPath = new Map<string, NestedTouch[]>()
+const nestedTouched = () => {
+  if (touchVer !== nestedVer) {
+    touchByPath = new Map()
+    for (const [id, x] of nested)
+      for (const f of x.touched ?? []) touchByPath.set(f.path, [...(touchByPath.get(f.path) ?? []), { ...f, chat: id, name: x.name ?? 'a chat', hue: chatHue(id) }])
+    for (const list of touchByPath.values()) list.sort((a, b) => b.at - a.at)
+    touchVer = nestedVer
+  }
+  return touchByPath
 }
 /** How many of those come before a time. */
 const nestedBefore = (at: number) => {
@@ -3255,7 +3351,19 @@ const readNested = async ($: EngineInterface) => {
         if (!cur.file) continue
         // Only the chunks that changed since the last read, of its newest 5,000 lines.
         const asHere = (l: LogLine): LogLine => ({ ...l, chat: ch.id, ...(l.who !== 'Claude' ? { by: l.who } : {}) })
-        const have = (await chunkList(`${dir}/journals/${cur.file.journal}`)).slice(-Math.ceil(JOURNAL_KEEP / CHUNK))
+        const jdir = `${dir}/journals/${cur.file.journal}`
+        const entries = await listDir(jdir)
+        // Its touched files, when they changed.
+        const tm = entries.find(e => e.name === 'touched.json')?.mtimeMs ?? 0
+        if (tm && tm !== cur.touchedM) {
+          const t = await readJson(`${jdir}/touched.json`)
+          if (Array.isArray(t)) {
+            cur.touched = (t.filter(f => f && typeof f.path === 'string') as TouchedFile[]).slice(0, 200)
+            cur.touchedM = tm
+            changed = true
+          }
+        }
+        const have = (await chunkList(jdir, entries)).slice(-Math.ceil(JOURNAL_KEEP / CHUNK))
         let mine = false
         for (const n of [...cur.chunkLines.keys()])
           if (!have.some(x => x.n === n)) {
