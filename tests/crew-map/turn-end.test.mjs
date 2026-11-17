@@ -16,6 +16,7 @@ let now = Date.parse('2031-01-01T10:00:00')
 Date.now = () => now
 const P = 'C:/work/game'
 const disk = new Map()
+const stored = {}
 let timers = []
 const $ = {
   command: { register: async () => {} },
@@ -27,7 +28,7 @@ const $ = {
     write: async (p, t) => void disk.set(p, t),
     list: async () => [],
   },
-  store: { get: async () => undefined, set: async () => {} },
+  store: { get: async k => stored[k], set: async (k, v) => void (stored[k] = v) },
   session: { cwd: async () => P, id: async () => 'cli-t' },
   env: { get: async n => (n === 'USERPROFILE' ? 'C:/home' : n === 'CLAUDE_CODE_HOST_SESSION_ID' ? 'local_me' : n === 'OS' ? 'Windows_NT' : undefined) },
   state: { get: async () => ({ value: [] }) },
@@ -100,6 +101,24 @@ try {
   check('one chat left at work: waiting for it alone (a chat it did not start does not count)', /Waiting for crew-coder(?!,)/.test(await row('Claude')), await row('Claude'))
   globalThis.__store.set('crew', { ...crew(), chats: [chat('local_a', 'crew-coder', false), chat('local_d', 'deeper', true, 2)] })
   check('nothing it started still works: your turn', /Idle .*your turn/.test(await row('Claude')), await row('Claude'))
+
+  // ── 3. Test toasts: a setting, off by default; the card and the log say how a run went either way ──
+  const toasts = []
+  $.ui.toast = async t => void toasts.push(t)
+  const jest = () => fire('tool.call', { tool: 'Bash', tool_use_id: `j${n++}`, command: 'npx jest auth' }, async () => ({ text: 'Tests:       3 passed, 3 total' }))
+  await jest()
+  check('test toasts are off by default: none when a run passes', !toasts.some(t => /Tests passed/.test(t)) && crew().log.some(l => /tests passed \(3 passed\)/.test(l.text)), toasts.join(' | '))
+  const press = makePress(elements, render, tick)
+  await press('⚙')
+  check('Settings has a Test toasts row: off, on', /Test toasts \| off \| on/.test(words(await render(), 'view').join(' | ')), words(await render(), 'view').join(' | ').slice(0, 400))
+  await press('on')
+  check('turned on: kept in the store', crew().testToasts === true && stored.testToasts === true)
+  await jest()
+  check('...a run that ends says so in a toast', toasts.some(t => t.startsWith('✓ Tests passed (3 passed)')), toasts.join(' | '))
+  await press('off')
+  const had = toasts.length
+  await jest()
+  check('turned off again: no toast', crew().testToasts === false && stored.testToasts === false && toasts.length === had, toasts.join(' | '))
 } catch (err) {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 400)}`, false)
 }

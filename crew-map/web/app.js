@@ -599,6 +599,7 @@ const settingsHtml = s => {
     row('Open files in', `<select id="editor" aria-label="Open files in">${editors.map(([v, t]) => `<option value="${v}"${s.editor === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`),
     row('Outside files', choice('shown', !s.hideOutside, s.outside[0]) + choice('hidden', s.hideOutside, s.outside[1])),
     row('Save log', choice('when I press Save', !s.autoSave, s.autoActs[0]) + choice('after each task', s.autoSave, s.autoActs[1]) + `<span class="faint cut w">to .claude/crew-logs, with a summary</span>`),
+    row('Test toasts', choice('off', !s.testToasts, s.toastActs[0]) + choice('on', s.testToasts, s.toastActs[1]) + `<span class="faint cut w">when a test run ends</span>`),
     row('Demo', s.demoOn ? '<span class="dim">a pretend session is playing</span>' : btn(s.demo, '▶ try a pretend session', 'u')),
     `<div class="faint" style="margin-top:12px">Claude Crew ${esc(s.version)}</div>`,
   ].join('')

@@ -2181,7 +2181,7 @@ type Act =
   | { k: 'dir'; path: string; name: string }
   | { k: 'pane'; tab?: NonNullable<Crew['pane']>['tab']; focus?: string; top?: number }
   | { k: 'log'; anchor?: number | null; toggle?: string; hold?: number | null }
-  | { k: 'set'; theme?: ThemeMode; budget?: number; editor?: string; hideOutside?: boolean; autoSave?: boolean }
+  | { k: 'set'; theme?: ThemeMode; budget?: number; editor?: string; hideOutside?: boolean; autoSave?: boolean; testToasts?: boolean }
   | { k: 'logout'; how: 'copy' | 'download' | 'save' }
   | { k: 'demo' }
   | { k: 'copy' }
@@ -2251,6 +2251,7 @@ const doAction = async ($: EngineInterface, a: Act, surface: unknown) => {
     if (a.theme) void $.store.set('theme', a.theme).catch(() => undefined)
     if (a.editor) void $.store.set('editor', a.editor).catch(() => undefined)
     if (a.autoSave !== undefined) void $.store.set('autoSave', a.autoSave).catch(() => undefined)
+    if (a.testToasts !== undefined) void $.store.set('testToasts', a.testToasts).catch(() => undefined)
     if (a.budget !== undefined) {
       void $.store.set('budget', a.budget).catch(() => undefined)
       void $.ui.toast(a.budget ? `Budget set to ${fmtUsd(a.budget)}: you'll get a heads-up at 50%, 80% and 100%` : 'Budget cleared')
@@ -2262,6 +2263,7 @@ const doAction = async ($: EngineInterface, a: Act, surface: unknown) => {
       ...(a.budget !== undefined ? { budget: a.budget, budgetWarned: 0 } : {}),
       ...(a.hideOutside !== undefined ? { hideOutside: a.hideOutside } : {}),
       ...(a.autoSave !== undefined ? { autoSave: a.autoSave } : {}),
+      ...(a.testToasts !== undefined ? { testToasts: a.testToasts } : {}),
     }))
   }
   if (a.k === 'logout') return a.how === 'save' ? saveLog($, 'button') : exportLog($, a.how)
@@ -3011,6 +3013,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       { segs: [{ t: 'Open files in', w: setW, role: 'dim', gap: 12 }, ...([['code', 'VS Code'], ['cursor', 'Cursor'], ['system', 'default app']] as const).map(([v, t]) => choice(t, (c.editor || 'code') === v, { k: 'set', editor: v }))] },
       { segs: [{ t: 'Outside files', w: setW, role: 'dim', gap: 12 }, choice('shown', !src.hideOutside, { k: 'set', hideOutside: false }), choice('hidden', !!src.hideOutside, { k: 'set', hideOutside: true })] },
       { segs: [{ t: 'Save log', w: setW, role: 'dim', gap: 12 }, choice('when I press Save', !c.autoSave, { k: 'set', autoSave: false }), choice('after each task', !!c.autoSave, { k: 'set', autoSave: true })] },
+      { segs: [{ t: 'Test toasts', w: setW, role: 'dim', gap: 12 }, choice('off', !c.testToasts, { k: 'set', testToasts: false }), choice('on', !!c.testToasts, { k: 'set', testToasts: true }), ...(wide ? [{ t: 'when a test run ends', role: 'faint', flex: true }] : [])] },
       { segs: [{ t: 'Demo', w: setW, role: 'dim', gap: 12 }, { t: demoOn ? 'a pretend session is playing' : '▶ try a pretend session', role: 'dim', u: !demoOn, run: { k: 'demo' } }] },
       { segs: [] },
       { segs: [{ t: `Claude Crew ${VERSION}`, role: 'faint' }] },
@@ -3190,6 +3193,8 @@ const webView = async ($: EngineInterface) => {
             demo: actId({ k: 'demo' }),
             autoSave: !!m.c.autoSave,
             autoActs: [actId({ k: 'set', autoSave: false }), actId({ k: 'set', autoSave: true })],
+            testToasts: !!m.c.testToasts,
+            toastActs: [actId({ k: 'set', testToasts: false }), actId({ k: 'set', testToasts: true })],
             version: VERSION,
           }
         : null,
@@ -3972,6 +3977,7 @@ export const register: Register = on => {
     nestedTimer?.cancel()
     nestedTimer = $.clock.every(4000, () => void readNested($))
     if ((await $.store.get('autoSave').catch(() => undefined)) === true) await write?.(d => ({ ...d, autoSave: true }))
+    if ((await $.store.get('testToasts').catch(() => undefined)) === true) await write?.(d => ({ ...d, testToasts: true }))
     void findLogs($)
     webTimer?.cancel()
     webTimer = $.clock.every(800, () => void publishWeb($))
@@ -4579,8 +4585,9 @@ export const register: Register = on => {
       })
       if (stuckNote) void $.ui.toast(stuckNote)
       if (problemNote && !settled.length) void $.ui.toast(problemNote)
-      for (const t of settled)
-        // Short and in words: who, how it went, what for. Never the command.
+      const toastTests = settled.length ? !!(await readCrew?.())?.testToasts : false
+      for (const t of toastTests ? settled : [])
+        // Short and in words: who, how it went, what for. Never the command. (Settings: Test toasts, off by default.)
         void $.ui.toast(`${t.status === 'failed' ? '✗ Tests failed' : '✓ Tests passed'} (${testWords(t)}) · ${trunc(t.purpose || testPurpose(t.command, ''), 48)}${t.agentId === 'main' ? '' : ` · ${t.who}`}`)
       settleLater(id, stamp)
     }

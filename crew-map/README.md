@@ -39,7 +39,7 @@ Without Node, `/crew` opens the mod's own pane instead, with the same view as te
 
 ![Claude Crew's log: a failed test run opened to its output and exit, an edit opened to its diff, with filters and resizable columns](../docs/crew-log.png)
 
-**Other tabs.** **Files** lists every file touched, under its folder, with lines added and removed and who touched it. **⌕** searches files and the log. A Claude's **Details**: its model, cost, tokens and context (red when it compacts soon), what it was asked, the helpers it started (and the main Claude's nested chats), each a row that opens its own Details, its steps and its own lines. **⚙ Settings**: theme (auto, light, dark), a budget (with a heads-up at 50%, 80% and 100%), where files open, files outside the project shown or hidden, when to save the log, and a pretend session to try it.
+**Other tabs.** **Files** lists every file touched, under its folder, with lines added and removed and who touched it. **⌕** searches files and the log. A Claude's **Details**: its model, cost, tokens and context (red when it compacts soon), what it was asked, the helpers it started (and the main Claude's nested chats), each a row that opens its own Details, its steps and its own lines. **⚙ Settings**: theme (auto, light, dark), a budget (with a heads-up at 50%, 80% and 100%), where files open, files outside the project shown or hidden, when to save the log, a toast when a test run ends (off by default), and a pretend session to try it.
 
 **Light and dark, wide and narrow.** It follows the app's theme (Settings can override it) and fits the browser pane down to about 450 px wide.
 

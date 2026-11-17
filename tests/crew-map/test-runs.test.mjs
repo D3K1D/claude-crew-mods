@@ -46,6 +46,8 @@ let fails = 0
 const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra ? `  [${extra}]` : ''}`) }
 
 await hooks['turn.start']($, { text: 'Fix the login test', turnId: 'T1' }, async () => ({}))
+// (Test toasts are off unless turned on in Settings: on here, to check what they say.)
+globalThis.__store.set('crew', { ...crew(), testToasts: true })
 
 // 1. A foreground jest run: shown while it runs, then passed with counts.
 let mid

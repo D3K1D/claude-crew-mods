@@ -186,6 +186,8 @@ export type Crew = {
   hideOutside?: boolean
   /** Save the log to the project after each task, not only on the Save button. */
   autoSave?: boolean
+  /** A toast when a test run ends ("✓ Tests passed …"); off unless the person turns it on. Kept in the store. */
+  testToasts?: boolean
   /** Finished helpers whose windows the person opened again (true) or folded at once (false). */
   unfolded?: Record<string, boolean>
   /** Where the person scrolled the log to (absent: it follows the newest line), and the lines they opened. */

@@ -132,6 +132,8 @@ check('nothing is laid over a picture (a Button there would get no clicks): no C
   const toasts = []
   const realToast = $.ui.toast
   $.ui.toast = async t => { toasts.push(t) }
+  // (Test toasts are off unless turned on in Settings: on here, to check what they say.)
+  globalThis.__store.set('crew', { ...globalThis.__store.get('crew'), testToasts: true })
   let g = 0
   const bash = (command, out, description) => hooks['tool.call']($, { tool: 'Bash', tool_use_id: 'g' + g++, command, description }, async () => ({ text: out }))
   // The command from the screenshot: a Python heredoc that edits files, then the tests.
