@@ -121,6 +121,8 @@ svg { flex-shrink: 0; }
 #body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; font-size: 12px; }
 .ln { display: flex; align-items: center; gap: 8px; white-space: nowrap; min-width: 0; height: 19px; }
 .ln .when { width: 62px; flex-shrink: 0; color: var(--faint); }
+/* The dot (this chat) or bubble (a nested chat), centred in one slot so the columns line up */
+.ln .lead { width: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 #app.narrow .ln .when { width: 40px; }
 .ln .who { width: 52px; flex-shrink: 0; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
 .ln .dur { flex-shrink: 0; min-width: 44px; text-align: right; color: var(--faint); }

@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.1'
+const VERSION = '1.8.2'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 const MAX_AGENTS = 12
@@ -993,7 +993,7 @@ const shortOf = (l: LogLine) => {
 const fullOf = (l: LogLine) => (l.kind === 'think' && l.full ? l.full : l.more ? `${shortOf(l)}\n${l.more}` : shortOf(l))
 const clock = (ms: number) => new Date(ms).toTimeString().slice(0, 8)
 /** A log line's address, for opening it: its time and what it says. */
-const logKey = (l: LogLine) => `${l.at}:${(hash(`${l.who}|${l.kind}|${l.text}`) >>> 0).toString(36)}`
+const logKey = (l: LogLine) => `${l.at}:${(hash(`${l.chat ? `${l.chat}|` : ''}${l.who}|${l.kind}|${l.text}`) >>> 0).toString(36)}`
 const hash = (s: string) => {
   let h = 2166136261
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
@@ -1631,6 +1631,25 @@ const applyTaskCall = (c: Crew, tool: string, a: Record<string, unknown>, ran: u
   const ids = Object.keys(tasks)
   if (ids.length > 200) for (const k of ids.sort((x, y) => (Number(x) || 0) - (Number(y) || 0)).slice(0, ids.length - 200)) delete tasks[k]
   return { ...c, tasks }
+}
+
+/**
+ * The desktop app's task list after an update_plan call: `items` is the whole list; `advance` completes
+ * the step in progress and starts the next; `done` ([n]) and `start` (n) name steps from 1.
+ */
+const PLAN_TOOL = 'mcp__ccd_turn__update_plan'
+const planAfter = (was: { content: string; status: string }[], a: Record<string, unknown>) => {
+  const p = Array.isArray(a.items)
+    ? (a.items.filter(i => i && typeof i === 'object') as Record<string, unknown>[]).slice(0, 40).map(i => ({ content: trunc(oneLine(String(i.content ?? '')), 120), status: String(i.status ?? 'pending') }))
+    : was.map(x => ({ ...x }))
+  const set = (step: { status: string } | undefined, status: string) => step && (step.status = status)
+  if (a.advance === true) {
+    set(p.find(x => x.status === 'in_progress'), 'completed')
+    set(p.find(x => x.status === 'pending'), 'in_progress')
+  }
+  if (Array.isArray(a.done)) for (const n of a.done) if (typeof n === 'number') set(p[n - 1], 'completed')
+  if (typeof a.start === 'number') set(p[a.start - 1], 'in_progress')
+  return p
 }
 
 /** What a Claude is on now, from its plan: the task in progress (its spinner words), else the to-do. */
@@ -2320,7 +2339,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     // The log: its lines, scrolled (held at a line while new ones come in below), and the ones opened whole.
     const lv = c.logView ?? {}
     const openLog = new Set(lv.open ?? [])
-    const allLog = [...c.log, ...codexLog].sort((x, y) => x.at - y.at)
+    const allLog = [...c.log, ...codexLog, ...nestedLines()].sort((x, y) => x.at - y.at)
     const held = typeof lv.anchor === 'number'
     let upto = held ? allLog.filter(l => l.at <= (lv.anchor as number)) : allLog
     if (!upto.length) upto = allLog.slice(0, 1)
@@ -2483,24 +2502,33 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const chatList = src.chats ?? []
     // Not read live (the list needs an approval to read): as of Claude's last look, its time at the right.
     const asOfChat = (ch: Chat) => (src.chatsLive === false && ch.seen ? clock(ch.seen).slice(0, 5) : '')
-    const rowOfChat = (ch: Chat): GlanceRow => ({
-      id: `chat-${ch.id}`,
-      name: ch.title,
-      hue: PALETTE[[...ch.id].reduce((n, x) => n + x.charCodeAt(0), 0) % PALETTE.length],
-      state: ch.running ? 'work' : 'idle',
-      kind: ch.running ? 'msg' : 'idle',
-      status: ch.running ? 'Working' : 'Idle',
-      object: asOfChat(ch) ? `as of ${asOfChat(ch)}` : ch.running ? 'in its own chat' : ch.at ? `last active ${since(ch.at, 's')} ago` : '',
-      time: asOfChat(ch) && ch.at ? since(ch.at, 's') : '',
-      asOf: asOfChat(ch) || undefined,
-      total: 0,
-      done: 0,
-      progress: `Chat · ${[ch.branch, baseName(ch.cwd)].filter(Boolean).join(' · ')}`,
-      model: '',
-      depth: ch.depth,
-      request: [],
-      where: '',
-    })
+    // Its steps, from the file it writes about itself: as a Claude's card shows them (its branch and folder
+    // are then in Details only); without steps, where it works.
+    const rowOfChat = (ch: Chat): GlanceRow => {
+      const f = nested.get(ch.id)?.file
+      const total = Math.max(0, Math.round(Number(f?.total) || 0))
+      const done = Math.min(total, Math.max(0, Math.round(Number(f?.done) || 0)))
+      return {
+        id: `chat-${ch.id}`,
+        name: ch.title,
+        hue: PALETTE[chatHue(ch.id)],
+        state: ch.running ? 'work' : 'idle',
+        kind: ch.running ? 'msg' : 'idle',
+        status: ch.running ? 'Working' : 'Idle',
+        object: asOfChat(ch) ? `as of ${asOfChat(ch)}` : ch.running ? 'in its own chat' : ch.at ? `last active ${since(ch.at, 's')} ago` : '',
+        time: asOfChat(ch) && ch.at ? since(ch.at, 's') : '',
+        asOf: asOfChat(ch) || undefined,
+        total,
+        done,
+        progress: total
+          ? `Step ${fmtK(Math.min(total, done + 1))} of ${fmtK(total)}${f?.doing ? ` · ${trunc(oneLine(String(f.doing)), 120)}` : ''}`
+          : `Chat · ${[ch.branch, baseName(ch.cwd)].filter(Boolean).join(' · ')}`,
+        model: '',
+        depth: ch.depth,
+        request: [],
+        where: '',
+      }
+    }
     const glance = [...ordered.map(rowOfAgent), ...chatList.map(rowOfChat), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
     const glanceList = [...glance.filter(r => r.state === 'you'), ...glance.filter(r => r.state !== 'you')]
     // Room: the rows shown, at least; while anyone works, two lines for each of the most Claudes lately.
@@ -2552,8 +2580,10 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const focusRow = ps.tab === 'claude' ? glanceList.find(r => r.id === ps.focus) : undefined
     const tab = ps.tab === 'claude' && !focusRow ? 'activity' : ps.tab ?? 'activity'
     const rowsP: PaneRow[] = glanceList.map(r => ({ ...r, ask: r.ask ?? r.request.join(' '), focused: tab === 'claude' && r.id === ps.focus }))
-    const count = (s: GlanceRow['state']) => rowsP.filter(r => r.state === s).length
-    const standby = !rowsP.some(r => r.state === 'work' || r.state === 'wait' || r.state === 'you')
+    // The header counts only what is known live: a nested chat not read live ("as of") is left out.
+    const liveRows = rowsP.filter(r => !r.asOf)
+    const count = (s: GlanceRow['state']) => liveRows.filter(r => r.state === s).length
+    const standby = !liveRows.some(r => r.state === 'work' || r.state === 'wait' || r.state === 'you')
     const openDetails = (id: string) => (tab === 'claude' && ps.focus === id ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: 'claude', focus: id, top: 0 }))
     const openFile = (id: string, name: string): Act => {
       const at = (src.problems ?? []).find(p => p.path === id)?.line
@@ -2641,15 +2671,18 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       const first = rowsOf[0] && !/^\S*[/.\\]/.test(rowsOf[0]) ? `${rowsOf[0].charAt(0).toUpperCase()}${rowsOf[0].slice(1)}` : rowsOf[0] ?? ''
       const running = l.took === undefined && !!l.call && now - l.at >= 1000 && now - l.at < SHELL_GIVE_UP_MS
       const dur = l.took !== undefined ? took(l.took) : running ? `● ${since(l.at, 't')}` : ''
-      const who = m ? (m.from ? trunc(m.from, 6) : 'You') : trunc(l.who, 6)
+      // A nested chat's line: its chat's name and colour, and the helper there (or who wrote) first.
+      const who = l.chat ? trunc(l.who, 6) : m ? (m.from ? trunc(m.from, 6) : 'You') : trunc(l.who, 6)
+      const by = l.chat ? (m ? m.from || 'You' : l.by) : ''
       const tone = l.kind === 'think' || l.kind === 'info' ? 'dim' : 'text'
       return [
         {
           segs: [
             { t: wide ? clock(l.at) : clock(l.at).slice(0, 5), w: timeW, role: 'faint' },
-            { dot: m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}` },
+            { dot: l.chat ? `h${chatHue(l.chat)}` : m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}` },
             { t: who, w: 6 * CELL_W, role: 'dim' },
             { icon: [kind, running ? 'green' : l.kind === 'you' ? 'text' : 'dim'] },
+            ...(by ? [{ t: `${by} ·`, role: 'dim' } as Seg] : []),
             { t: first, flex: true, role: tone, i: l.kind === 'think' },
             ...(vCut(l) ? [{ t: open ? '▾' : '›', role: 'dim', run: { k: 'log', toggle: k, hold: upto[upto.length - 1]?.at ?? null }, label: open ? 'Fold the line' : 'Show the whole line', w: 12 } as Seg] : []),
           ] as Seg[],
@@ -2685,7 +2718,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       if (chat) {
         // A nested chat: its whole title, who started it, where it works, and when it last did anything.
         const by = chatList.find(x => x.id === chat.parent)
-        out.push({ segs: [{ t: 'Chat', b: true }, { t: [chat.running ? 'working' : 'idle', chat.at ? `last active ${shortTime(Date.now() - chat.at)} ago` : ''].filter(Boolean).join(' · '), role: 'dim', flex: true }] })
+        out.push({ segs: [{ t: 'Chat', b: true }, { t: [chat.running ? 'working' : 'idle', chat.at ? `last active ${since(chat.at, 's')} ago` : ''].filter(Boolean).join(' · '), role: 'dim', flex: true }] })
         for (const t of wrapRows(chat.title, textCols, 3)) out.push({ segs: [{ t }] })
         out.push({ segs: [{ t: `Started by ${by ? by.title : 'this chat'}`, role: 'dim', flex: true }] })
         for (const t of wrapRows([chat.cwd, chat.branch ? `branch ${chat.branch}` : ''].filter(Boolean).join(' · '), textCols, 2)) out.push({ segs: [{ t, role: 'dim' }] })
@@ -2819,12 +2852,17 @@ const webLine = (l: LogLine) => {
   const m = messageOf(l)
   const said = oneLine(shortOf(l))
   const t = l.kind === 'think' || m ? said : said.replace(/^[^\p{L}\p{N}"'(\[$~./]+/u, '')
+  // A nested chat's line: a bubble in the chat's colour, its name, and the helper there (or who wrote) first.
+  const by = l.chat ? (m ? m.from || 'You' : l.by) : ''
   return {
     key: logKey(l),
     at: l.at,
     time: clock(l.at),
-    dot: m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}`,
-    who: m ? m.from || 'You' : l.who,
+    dot: l.chat ? `h${chatHue(l.chat)}` : m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}`,
+    who: l.chat ? l.who : m ? m.from || 'You' : l.who,
+    chat: l.chat ? l.who : undefined,
+    chatTitle: l.chat ? nested.get(l.chat)?.title : undefined,
+    by: by || undefined,
     kind: l.kind === 'think' ? 'thought' : m ? 'msg' : LOG_GLYPH[[...l.text][0]] ?? (l.kind === 'info' ? 'plan' : 'tool'),
     // Still running: the page counts its time up.
     run: l.took === undefined && !!l.call && Date.now() - l.at < SHELL_GIVE_UP_MS ? true : undefined,
@@ -2847,6 +2885,7 @@ let webSent = ''
 let webBusy = false
 let webTimer: { cancel(): void } | undefined
 let journalTimer: { cancel(): void } | undefined
+let nestedTimer: { cancel(): void } | undefined
 /** What each press on the page does, by the id the page sends back (only ids the mod handed out). */
 const webActs = new Map<string, Act>()
 const actId = (a: Act) => {
@@ -2972,7 +3011,7 @@ const JOURNAL_KEEP = 5000
 const savedBefore = (at: number) => {
   let left = 0
   let first = Infinity
-  for (const l of journal.values()) {
+  for (const l of [...journal.values(), ...nestedLines()]) {
     if (l.at < at) left++
     first = Math.min(first, l.at)
   }
@@ -2985,6 +3024,9 @@ const openJournal = async ($: EngineInterface) => {
   journalPath = ''
   journalSid = String((await later$(() => $.session.id()).catch(() => '')) ?? '')
   const home = String((await later$(() => $.env.get('USERPROFILE')).catch(() => undefined)) ?? (await later$(() => $.env.get('HOME')).catch(() => undefined)) ?? '').replace(/\\/g, '/')
+  homeDir = home
+  hostId = String((await later$(() => $.env.get('CLAUDE_CODE_HOST_SESSION_ID')).catch(() => undefined)) ?? '')
+  if (!/^local_[\w-]+$/.test(hostId)) hostId = ''
   const path = journalSid && home ? `${home}/.claude/crew-map/journals/${journalSid}.json` : ''
   if (!path) return
   try {
@@ -3013,6 +3055,90 @@ const syncJournal = async ($: EngineInterface) => {
   if (journalDirty && journalPath) {
     journalDirty = false
     await later$(() => $.fs.write(journalPath, JSON.stringify(journalLines()))).catch(() => undefined)
+  }
+  await writeSelf($, c)
+}
+
+// ── Nested chats' steps and lines ──
+// Each chat's mod writes a small file about itself, ~/.claude/crew-map/chats/<its app id>.json: its
+// journal's name and its steps. The chat that started it (any chat above it) reads that file and the
+// journal it names, every few seconds and only when one changed, so their steps fill its card and their
+// lines join its log. (Files, not $.store: one file per chat, so two chats never write the same one.)
+type ChatFile = { id: string; journal: string; total: number; done: number; doing: string; at: number }
+/** This chat's id in the desktop app (local_…), and the home folder the files live under. */
+let hostId = ''
+let homeDir = ''
+let selfSent = ''
+let selfAt = 0
+const writeSelf = async ($: EngineInterface, c: Crew) => {
+  const a = c.agents.find(x => x.id === 'main')
+  if (!hostId || !homeDir || !journalSid || !a) return
+  const tasks = tasksOf(a, c)
+  const total = tasks.length || a.todosTotal
+  const done = tasks.length ? tasks.filter(t => t.status === 'completed').length : a.todosDone
+  const doing = doingOf(a, c) || tasks.find(t => t.status !== 'completed')?.subject || ''
+  const s = JSON.stringify({ id: hostId, journal: journalSid, total, done, doing: trunc(oneLine(doing), 120) })
+  // Written when it changed, and once a minute so a reader can tell it is still there.
+  if (s === selfSent && Date.now() - selfAt < 60_000) return
+  selfSent = s
+  selfAt = Date.now()
+  await later$(() => $.fs.write(`${homeDir}/.claude/crew-map/chats/${hostId}.json`, `${s.slice(0, -1)},"at":${selfAt}}`)).catch(() => undefined)
+}
+/** What this chat knows of each nested chat: its file, and its journal's lines (as this log shows them). */
+const nested = new Map<string, { file?: ChatFile; lines: LogLine[]; fileM: number; journalM: number; title?: string }>()
+/** A nested chat's colour (its card's): an index into PALETTE. */
+const chatHue = (id: string) => [...id].reduce((n, x) => n + x.charCodeAt(0), 0) % PALETTE.length
+const nestedLines = () => [...nested.values()].flatMap(x => x.lines)
+let readingNested = false
+const readNested = async ($: EngineInterface) => {
+  const c = await readCrew?.()
+  if (!c || !homeDir || readingNested) return
+  readingNested = true
+  try {
+    const chats = c.chats ?? []
+    let changed = false
+    for (const k of [...nested.keys()])
+      if (!chats.some(x => x.id === k)) {
+        nested.delete(k)
+        changed = true
+      }
+    if (chats.length) {
+      const dir = `${homeDir}/.claude/crew-map`
+      const ls = (p: string) => later$(() => $.fs.list(p)).catch(() => []) as Promise<{ name: string; mtimeMs?: number }[]>
+      const [files, journals] = await Promise.all([ls(`${dir}/chats`), ls(`${dir}/journals`)])
+      const mtime = (list: { name: string; mtimeMs?: number }[], name: string) => list.find(f => f.name === name)?.mtimeMs ?? 0
+      for (const ch of chats) {
+        const cur = nested.get(ch.id) ?? { lines: [], fileM: 0, journalM: 0 }
+        cur.title = ch.title
+        nested.set(ch.id, cur)
+        const fm = mtime(files, `${ch.id}.json`)
+        if (fm && fm !== cur.fileM) {
+          const f = await later$(async () => JSON.parse(String(await $.fs.read(`${dir}/chats/${ch.id}.json`))) as ChatFile).catch(() => undefined)
+          if (f && typeof f.journal === 'string' && /^[\w-]+$/.test(f.journal)) {
+            cur.file = f
+            cur.fileM = fm
+            changed = true
+          }
+        }
+        const jm = cur.file ? mtime(journals, `${cur.file.journal}.json`) : 0
+        if (jm && jm !== cur.journalM) {
+          const old = await later$(async () => JSON.parse(String(await $.fs.read(`${dir}/journals/${cur.file?.journal}.json`))) as unknown).catch(() => undefined)
+          if (Array.isArray(old)) {
+            const name = trunc(ch.name || ch.title, 24)
+            // Its lines as this log shows them: under the chat's name, a helper's name kept apart.
+            cur.lines = (old as LogLine[])
+              .filter(l => l && typeof l.at === 'number' && typeof l.text === 'string' && !l.chat)
+              .slice(-JOURNAL_KEEP)
+              .map(l => ({ ...l, chat: ch.id, who: name, ...(l.who !== 'Claude' ? { by: l.who } : {}) }))
+            cur.journalM = jm
+            changed = true
+          }
+        }
+      }
+    }
+    if (changed) $.ui.invalidate('ui.render')
+  } finally {
+    readingNested = false
   }
 }
 const pad2 = (n: number) => String(n).padStart(2, '0')
@@ -3103,7 +3229,7 @@ const exportLog = async ($: EngineInterface, how: 'copy' | 'download') => {
 /** A log line opened on the page: all of it (a thought whole, an action and what came of it), from the log or the journal. */
 const openLine = async (key: string) => {
   const c = await readCrew?.()
-  const l = c?.log.find(x => logKey(x) === key) ?? journal.get(key)
+  const l = c?.log.find(x => logKey(x) === key) ?? journal.get(key) ?? nestedLines().find(x => logKey(x) === key)
   // An action's line already says what it was: below it, what came of it (an edit with its Open diff).
   const act = l?.path ? actId({ k: 'file', path: l.path, name: baseName(l.path), edits: true }) : ''
   await webPost?.('reply', JSON.stringify({ open: { key, text: l ? (l.kind !== 'think' && l.more) || fullOf(l) : '', act } }))
@@ -3112,7 +3238,8 @@ const openLine = async (key: string) => {
 const OLDER_PAGE = 200
 const olderLines = async ($: EngineInterface, before: number) => {
   await syncJournal($)
-  const all = journalLines().filter(l => l.at < before)
+  // This chat's journal and its nested chats', in time order.
+  const all = [...journalLines(), ...nestedLines()].filter(l => l.at < before).sort((x, y) => x.at - y.at)
   await webPost?.('reply', JSON.stringify({ older: { before, lines: all.slice(-OLDER_PAGE).map(webLine), end: all.length <= OLDER_PAGE } }))
 }
 /** Tells new chats in the project that earlier chats left logs and summaries, so Claude reads them when useful. */
@@ -3327,6 +3454,8 @@ export const register: Register = on => {
     void openJournal($)
     journalTimer?.cancel()
     journalTimer = $.clock.every(3000, () => void syncJournal($))
+    nestedTimer?.cancel()
+    nestedTimer = $.clock.every(4000, () => void readNested($))
     if ((await $.store.get('autoSave').catch(() => undefined)) === true) await write?.(d => ({ ...d, autoSave: true }))
     void findLogs($)
     webTimer?.cancel()
@@ -3666,8 +3795,9 @@ export const register: Register = on => {
     const started = Date.now()
     const line = trunc(actionLine(e.tool, node, detail, typeof a.description === 'string' ? a.description : ''), 200)
 
-    // Todo lists are the agent's own word on how far along it is.
+    // Todo lists are the agent's own word on how far along it is: TodoWrite's, or the desktop app's task list.
     const todos = Array.isArray(a.todos) ? (a.todos.filter(t => t && typeof t === 'object') as { status?: string; content?: string; activeForm?: string }[]) : undefined
+    const plans = e.tool === PLAN_TOOL
 
     // Lines this call adds and removes, known before it runs (a Write's from the file it replaces).
     const str = (k: string, o: Record<string, unknown> = a) => (typeof o[k] === 'string' ? (o[k] as string) : '')
@@ -3752,9 +3882,17 @@ export const register: Register = on => {
           actions: [line, ...x.actions].slice(0, 5),
           kinds: [kindOf(e.tool), ...(x.kinds ?? [])].slice(0, 8),
         }
-        if (todos) {
-          const doing = todos.find(t => t.status === 'in_progress')
-          upd = { ...upd, todosTotal: todos.length, todosDone: todos.filter(t => t.status === 'completed').length, todosDoing: todos.filter(t => t.status === 'in_progress').length, doing: doing?.activeForm ?? doing?.content ?? '' }
+        const list = plans ? planAfter(x.plan ?? [], a) : todos
+        if (list) {
+          const doing = list.find(t => t.status === 'in_progress') as { content?: string; activeForm?: string } | undefined
+          upd = {
+            ...upd,
+            ...(plans ? { plan: list as Agent['plan'] } : {}),
+            todosTotal: list.length,
+            todosDone: list.filter(t => t.status === 'completed').length,
+            todosDoing: list.filter(t => t.status === 'in_progress').length,
+            doing: doing?.activeForm ?? doing?.content ?? '',
+          }
         }
         return upd
       })

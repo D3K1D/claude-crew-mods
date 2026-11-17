@@ -138,22 +138,31 @@ const KINDS = [
 const filt = (() => {
   try {
     const f = JSON.parse(store.get('crew.filter') || '{}')
-    return { who: String(f.who ?? ''), kind: KINDS.some(k => k[0] === f.kind) ? f.kind : '' }
+    // Who: '' everyone, '@this' this chat only, 'w:<name>' one of this chat's, 'c:<name>' a nested chat (all of it).
+    const who = String(f.who ?? '')
+    return { who: who && !/^(@this|[wc]:)/.test(who) ? `w:${who}` : who, kind: KINDS.some(k => k[0] === f.kind) ? f.kind : '' }
   } catch {
     return { who: '', kind: '' }
   }
 })()
 const filtered = () => !!(filt.who || filt.kind)
-const shown = l =>
-  (!filt.who || l.who === filt.who) &&
-  (!filt.kind || (filt.kind === 'nothought' ? !l.thought : filt.kind === 'bad' ? !!l.bad : l.kind === filt.kind))
+const whoOk = l =>
+  !filt.who || (filt.who === '@this' ? !l.chat : filt.who.startsWith('c:') ? l.chat === filt.who.slice(2) : !l.chat && l.who === filt.who.slice(2))
+const shown = l => whoOk(l) && (!filt.kind || (filt.kind === 'nothought' ? !l.thought : filt.kind === 'bad' ? !!l.bad : l.kind === filt.kind))
+// This chat's names (You, Claude, its helpers) and the nested chats' short names, as the Who list offers them.
 const whoList = () => {
-  const names = ['You']
-  for (const l of LOG) if (!names.includes(l.who)) names.push(l.who)
-  for (const r of V.rows ?? []) if (!names.includes(r.name)) names.push(r.name)
-  if (filt.who && !names.includes(filt.who)) names.push(filt.who)
-  return names
+  const mine = ['You']
+  const chats = []
+  for (const l of LOG) {
+    if (l.chat) chats.includes(l.chat) || chats.push(l.chat)
+    else mine.includes(l.who) || mine.push(l.who)
+  }
+  for (const r of V.rows ?? []) if (!r.id.startsWith('chat-') && !mine.includes(r.name)) mine.push(r.name)
+  if (filt.who.startsWith('w:') && !mine.includes(filt.who.slice(2))) mine.push(filt.who.slice(2))
+  if (filt.who.startsWith('c:') && !chats.includes(filt.who.slice(2))) chats.push(filt.who.slice(2))
+  return { mine, chats }
 }
+const whoWord = () => (filt.who === '@this' ? 'this chat' : filt.who.slice(2) || 'anyone')
 const countHtml = () => {
   const n = LOG.length
   if (!filtered()) return W(`${n} line${n === 1 ? '' : 's'}`)
@@ -167,7 +176,13 @@ const drawTools = () => {
   const names = whoList()
   band('toolsWho', [names, filt.who], () => {
     const w = $('fWho')
-    w.innerHTML = [`<option value="">Everyone</option>`, ...names.map(n => `<option value="${esc(n)}"${filt.who === n ? ' selected' : ''}>${esc(n)}</option>`)].join('')
+    const opt = (v, t) => `<option value="${esc(v)}"${filt.who === v ? ' selected' : ''}>${esc(t)}</option>`
+    w.innerHTML = [
+      opt('', 'Everyone'),
+      ...(names.chats.length
+        ? [opt('@this', 'This chat only'), `<optgroup label="This chat">`, ...names.mine.map(n => opt(`w:${n}`, n)), `</optgroup><optgroup label="Nested chats">`, ...names.chats.map(n => opt(`c:${n}`, n)), `</optgroup>`]
+        : names.mine.map(n => opt(`w:${n}`, n))),
+    ].join('')
     w.classList.toggle('on', !!filt.who)
   })
   band('toolsKind', filt.kind, () => {
@@ -272,8 +287,12 @@ const boxHtml = l => {
 // One line of the log, in its wrapper (the line, and its box below when it is open).
 const logLine = l => {
   const open = opened.has(l.key)
+  // A nested chat's line: a bubble in its colour, its short name (its title on hover), and the helper there first.
+  const lead = l.chat
+    ? `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="${color(l.dot)}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>`
+    : `<span style="color:${color(l.dot)}">●</span>`
   // A click on the line opens it (and again folds it); › marks one with more than it shows.
-  return `<div class="lw" data-k="${esc(l.key)}"><div class="ln${l.more ? ' can' : ''}${open ? ' open' : ''}" data-line="${esc(l.key)}"><span class="when">${esc(l.time.slice(0, 5))}${W(esc(l.time.slice(5)))}</span><span style="color:${color(l.dot)}">●</span><span class="who">${esc(l.who)}</span>${icon(l.kind, l.run ? 'green' : l.bad ? 'red' : 'dim', 13, 1.8)}<span class="cut ${l.thought ? 'thought' : l.dim ? 'dim' : ''}">${esc(l.text)}</span>${l.more ? `<span class="more" aria-hidden="true">${open ? '▾' : '›'}</span>` : ''}${l.run ? `<span class="dur run">${timer('r', l.at)}</span>` : `<span class="dur${l.bad ? ' red' : ''}">${l.bad ? '✕ ' : ''}${esc(l.dur)}</span>`}</div>${open ? `<div class="box${l.bad ? ' bad' : ''}">${boxHtml(l).join('')}</div>` : ''}</div>`
+  return `<div class="lw" data-k="${esc(l.key)}"><div class="ln${l.more ? ' can' : ''}${open ? ' open' : ''}" data-line="${esc(l.key)}"><span class="when">${esc(l.time.slice(0, 5))}${W(esc(l.time.slice(5)))}</span><span class="lead">${lead}</span><span class="who"${l.chat ? ` title="Nested chat: ${esc(l.chatTitle || l.chat)}"` : ''}>${esc(l.who)}</span>${icon(l.kind, l.run ? 'green' : l.bad ? 'red' : 'dim', 13, 1.8)}<span class="cut ${l.thought ? 'thought' : l.dim ? 'dim' : ''}">${l.by ? `<span class="dim" style="font-style:normal">${esc(l.by)} · </span>` : ''}${esc(l.text)}</span>${l.more ? `<span class="more" aria-hidden="true">${open ? '▾' : '›'}</span>` : ''}${l.run ? `<span class="dur run">${timer('r', l.at)}</span>` : `<span class="dur${l.bad ? ' red' : ''}">${l.bad ? '✕ ' : ''}${esc(l.dur)}</span>`}</div>${open ? `<div class="box${l.bad ? ' bad' : ''}">${boxHtml(l).join('')}</div>` : ''}</div>`
 }
 // A line the page's width cuts off can be opened too: marked like the others.
 const markCut = root => {
@@ -346,7 +365,7 @@ const renderLog = () => {
   const body = $('body')
   const lines = LOG.filter(shown)
   const none = LOG.length
-    ? `<div class="empty">No ${KINDS.find(k => k[0] === filt.kind)[2]} from ${esc(filt.who || 'anyone')} in the last ${LOG.length} lines.</div>`
+    ? `<div class="empty">No ${KINDS.find(k => k[0] === filt.kind)[2]} from ${esc(whoWord())} in the last ${LOG.length} lines.</div>`
     : EMPTY
   body.innerHTML = `<div id="olderRow" class="older"></div>${lines.length ? lines.map(logLine).join('') : none}`
   last.older = ''
@@ -372,7 +391,7 @@ const drawOlder = () => {
       older === 'asking'
         ? `<span class="cut faint">Loading older lines…</span>`
         : left
-          ? `<button class="nb ib u text" data-older="1">${uiIcon('up')}${W('Load 200 older', '200 older')}</button><span class="cut faint">${W(`${left} more saved, back to ${esc(V.older.first)}`, `${left} more, back to ${esc(V.older.first)}`)}</span>`
+          ? `<button class="nb ib u text" data-older="1">${uiIcon('up')}${W('Load 200 older', '200 older')}</button><span class="cut faint">${W(`${left} more saved, back to ${esc(V.older.first)}${LOG.some(l => l.chat) ? ' · from every chat' : ''}`, `${left} more, back to ${esc(V.older.first)}`)}</span>`
           : `<span class="cut faint">Start of this chat · ${esc(LOG[0]?.time ?? '')}</span>`
   })
 }
