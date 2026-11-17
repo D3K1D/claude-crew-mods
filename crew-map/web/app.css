@@ -191,8 +191,9 @@ svg { flex-shrink: 0; }
 #app.narrow .dr { padding-left: calc(var(--d) * 12px + 3px); }
 .dr .lead { width: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .dr .lead .dot { margin: 0; }
-.dr .nm { width: 84px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
-#app.narrow .dr .nm { width: 72px; }
+/* The name gives up what the row is indented by, so status, object and time stay in line on every row */
+.dr .nm { width: calc(84px - var(--d) * 20px); flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
+#app.narrow .dr .nm { width: calc(72px - var(--d) * 12px); }
 .dr .st { flex-shrink: 0; font-weight: 700; }
 .dr.done, .dr.done .nm, .dr.done .st { color: var(--dim); font-weight: 400; }
 #app.narrow .dr .pips { display: none; }
