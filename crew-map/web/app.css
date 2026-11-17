@@ -6,7 +6,7 @@
   --hover: rgba(139, 148, 158, 0.28); --hover-soft: rgba(139, 148, 158, 0.14); --eye: #0D1117;
   /* Identity colours: each Claude its own, for the whole chat */
   --h0: #D97757; --h1: #6CB6FF; --h2: #F778BA; --h3: #56D4DD; --h4: #C297FF; --h5: #C9A47E;
-  --h6: #F2B49B; --h7: #B6DCFF; --h8: #FFB8DA; --h9: #A8EEF2; --h10: #E2CCFF; --h11: #E8D2B4; --cx: #8B949E;
+  --h6: #B6DCFF; --h7: #A8EEF2; --h8: #E2CCFF; --h9: #FFB8DA; --h10: #E8D2B4; --h11: #F2B49B; --cx: #8B949E;
   color-scheme: dark;
 }
 :root[data-theme="light"] {
@@ -15,7 +15,7 @@
   --hover: rgba(89, 99, 110, 0.16); --hover-soft: rgba(89, 99, 110, 0.08);
   /* Identity colours: each Claude its own, for the whole chat */
   --h0: #BC5A34; --h1: #0969DA; --h2: #BF3989; --h3: #0A7B83; --h4: #8250DF; --h5: #8A6234;
-  --h6: #7C3115; --h7: #0A3F8A; --h8: #7D1D56; --h9: #05555B; --h10: #55279E; --h11: #5A3E1C; --cx: #59636E;
+  --h6: #0A3F8A; --h7: #05555B; --h8: #55279E; --h9: #7D1D56; --h10: #5A3E1C; --h11: #7C3115; --cx: #59636E;
   color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
@@ -25,7 +25,7 @@
     --hover: rgba(89, 99, 110, 0.16); --hover-soft: rgba(89, 99, 110, 0.08);
     /* Identity colours: each Claude its own, for the whole chat */
     --h0: #BC5A34; --h1: #0969DA; --h2: #BF3989; --h3: #0A7B83; --h4: #8250DF; --h5: #8A6234;
-    --h6: #7C3115; --h7: #0A3F8A; --h8: #7D1D56; --h9: #05555B; --h10: #55279E; --h11: #5A3E1C; --cx: #59636E;
+    --h6: #0A3F8A; --h7: #05555B; --h8: #55279E; --h9: #7D1D56; --h10: #5A3E1C; --h11: #7C3115; --cx: #59636E;
     color-scheme: light;
   }
 }

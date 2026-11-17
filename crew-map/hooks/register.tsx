@@ -601,9 +601,9 @@ let demo: { cancel: () => void } | undefined
 // ─── Vocabulary ─────────────────────────────────────────────────────────────
 
 // Twelve identity colours, given out in this order (the main Claude always the first, clay); 7-12 are
-// 1-6 paler. No green, yellow, red or grey: those mean working, waiting on you, an error, and Codex.
+// paler ones (the pale clay last, as it reads close to the main Claude's). No green, yellow, red or grey: those mean working, waiting on you, an error, and Codex.
 // (The dark theme's; the website has each theme's own.)
-const PALETTE = ['#D97757', '#6CB6FF', '#F778BA', '#56D4DD', '#C297FF', '#C9A47E', '#F2B49B', '#B6DCFF', '#FFB8DA', '#A8EEF2', '#E2CCFF', '#E8D2B4']
+const PALETTE = ['#D97757', '#6CB6FF', '#F778BA', '#56D4DD', '#C297FF', '#C9A47E', '#B6DCFF', '#A8EEF2', '#E2CCFF', '#FFB8DA', '#E8D2B4', '#F2B49B']
 const NAMES: Record<string, string> = { Explore: 'Scout', Plan: 'Architect', 'general-purpose': 'Helper', fork: 'Twin' }
 const VERB: Record<string, string> = {
   Read: 'reading',
@@ -1684,6 +1684,16 @@ const planAfter = (was: { content: string; status: string }[], a: Record<string,
   return p
 }
 
+/**
+ * A Claude's steps, as its card counts them: Claude Code's task list, else its latest list, the to-dos
+ * (TodoWrite) or the app's plan (update_plan; checked off on wrap-up).
+ */
+const stepsOf = (a: Agent, c: Pick<Crew, 'tasks'>): { text: string; status: string }[] => {
+  const tasks = tasksOf(a, c)
+  if (tasks.length) return tasks.map(t => ({ text: t.active && t.status === 'in_progress' ? t.active : t.subject, status: t.status }))
+  return (a.todoList ?? a.plan ?? []).map(t => ({ text: t.status === 'in_progress' && 'activeForm' in t && t.activeForm ? t.activeForm : t.content, status: t.status }))
+}
+const stepMark = (status: string) => (status === 'completed' ? '✓' : status === 'in_progress' ? '▸' : '○')
 /** What a Claude is on now, from its plan: the task in progress (its spinner words), else the to-do. */
 const doingOf = (a: Agent, c: Pick<Crew, 'tasks'>) => {
   const t = tasksOf(a, c).find(x => x.status === 'in_progress')
@@ -2927,11 +2937,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
             chatList.flatMap(ch => glance.filter(r => r.id === `chat-${ch.id}`).map(r => ({ r, depth: Math.min(3, Math.max(0, ch.depth - 1)) }))),
           ),
         )
-      for (const t of a ? tasksOf(a, src).slice(0, 12) : []) {
-        const mark = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○'
-        const words = wrapRows(t.active && t.status === 'in_progress' ? t.active : t.subject, textCols - 2, 3)
-        words.forEach((w, i) => out.push({ segs: [{ t: `${i ? ' ' : mark} ${w}`, role: t.status === 'in_progress' ? 'text' : 'dim' }] }))
-      }
+      for (const t of a ? stepsOf(a, src).slice(0, 12) : []) wrapRows(t.text, textCols - 2, 3).forEach((w, i) => out.push({ segs: [{ t: `${i ? ' ' : stepMark(t.status)} ${w}`, role: t.status === 'in_progress' ? 'text' : 'dim' }] }))
       const mine = allLog.filter(l => (run ? l.who === 'Codex' : l.who === focusRow.name && l.hue === (a?.hue ?? -2))).slice(-30).reverse()
       for (const l of mine) out.push(...logLinesOf(l).slice(0, 1))
       return out
@@ -3443,9 +3449,9 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
                 ...(x.ctx ? { ctx: { tokens: x.ctx.tokens, window: x.ctx.window } } : {}),
                 ...(x.compactions ? { compactions: x.compactions } : {}),
                 asked: trunc(asked, 600),
-                steps: tasksOf(x, c)
+                steps: stepsOf(x, c)
                   .slice(0, 12)
-                  .map(t => ({ mark: t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○', text: trunc(t.active && t.status === 'in_progress' ? t.active : t.subject, 160), on: t.status === 'in_progress' })),
+                  .map(t => ({ mark: stepMark(t.status), text: trunc(t.text, 160), on: t.status === 'in_progress' })),
               },
             }
           : {}),
@@ -4022,7 +4028,7 @@ export const register: Register = on => {
         ...a,
         state: a.state === 'busy' ? 'busy' : 'thinking',
         ...(id === 'main' && e.text
-          ? { goal: trunc(oneLine(promptOf(e.text)), 500), progress: -1, progressSrc: 'est' as const, todosDone: 0, todosTotal: 0, todosDoing: 0, doing: '', calls: 0, since: Date.now(), thoughts: [], actions: [], stuck: '', recent: [] }
+          ? { goal: trunc(oneLine(promptOf(e.text)), 500), progress: -1, progressSrc: 'est' as const, todosDone: 0, todosTotal: 0, todosDoing: 0, doing: '', plan: undefined, todoList: undefined, calls: 0, since: Date.now(), thoughts: [], actions: [], stuck: '', recent: [] }
           : {}),
       }))
       if (id === 'main' && e.text) {
@@ -4394,13 +4400,15 @@ export const register: Register = on => {
           kinds: [kindOf(e.tool), ...(x.kinds ?? [])].slice(0, 8),
         }
         // The app checks off the whole task list itself when Claude wraps up (no update_plan follows): every step done.
-        const wrapped = e.tool === WRAP_TOOL && !!x.plan?.length
+        const wrapped = e.tool === WRAP_TOOL && !!x.plan?.length && !x.todoList
         const list = plans ? planAfter(x.plan ?? [], a) : wrapped ? (x.plan ?? []).map(t => ({ ...t, status: 'completed' })) : todos
         if (list) {
           const doing = list.find(t => t.status === 'in_progress') as { content?: string; activeForm?: string } | undefined
           upd = {
             ...upd,
-            ...(plans || wrapped ? { plan: list as Agent['plan'] } : {}),
+            ...(plans || wrapped
+              ? { plan: list as Agent['plan'], todoList: undefined }
+              : { todoList: list.slice(0, 40).map(t => ({ content: trunc(oneLine(String(t.content ?? '')), 120), status: String(t.status ?? 'pending'), ...(t.activeForm ? { activeForm: trunc(oneLine(String(t.activeForm)), 120) } : {}) })) }),
             todosTotal: list.length,
             todosDone: list.filter(t => t.status === 'completed').length,
             todosDoing: list.filter(t => t.status === 'in_progress').length,

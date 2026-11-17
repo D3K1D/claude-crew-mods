@@ -3,7 +3,7 @@
 //     "your turn" only once nothing it started works.
 //  2. Wrapping up (the desktop app's wrap_up, which checks off the task list itself) fills every pip:
 //     "Step 3 of 3", all done; in this chat and in the file the chat above reads.
-import { words, rowGlyphs } from './kit.mjs'
+import { words, rowGlyphs, makePress } from './kit.mjs'
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
@@ -57,17 +57,23 @@ try {
   await fire('turn.start', { text: 'Ship the docs', turnId: 'T' }, async () => ({}))
   await call('mcp__ccd_turn__update_plan', { items: [{ content: 'Write', status: 'completed' }, { content: 'Check', status: 'in_progress' }, { content: 'Ship', status: 'pending' }] })
   check('the plan: Step 2 of 3', /Step 2 of 3/.test(await row('Claude')), await row('Claude'))
+  // Details list the steps the card counts (the app's plan here).
+  await makePress(elements, render, tick)('Claude: Details')
+  let det = words(await render(), 'view').join(' | ')
+  check("Details list the plan's steps", /✓ Write \| ▸ Check \| ○ Ship/.test(det), det.slice(0, 300))
 
   // ── 2. Wrapping up checks off every step ──
   await call('mcp__ccd_turn__wrap_up', { recap: 'Shipped.' })
   const main = crew().agents.find(a => a.id === 'main')
   check('wrap_up completes every step', main.todosDone === 3 && main.todosTotal === 3 && main.plan.every(s => s.status === 'completed'), JSON.stringify(main.plan))
   check('...the card: Step 3 of 3, nothing on now', /Step 3 of 3/.test(await row('Claude')) && main.doing === '', await row('Claude'))
+  det = words(await render(), 'view').join(' | ')
+  check('...Details: every step checked', /✓ Write \| ✓ Check \| ✓ Ship/.test(det), det.slice(0, 300))
   await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'T' }, async () => ({ text: 'ok' }))
   await tick()
   await timer(3000)
   const self = JSON.parse(disk.get('C:/home/.claude/crew-map/chats/local_me.json') ?? '{}')
-  check('...and in the file the chat above reads', self.done === 3 && self.total === 3 && self.card?.rows?.[0]?.done === 3, JSON.stringify({ done: self.done, total: self.total, card: self.card?.rows?.[0]?.done }))
+  check('...and in the file the chat above reads (its Details steps too)', self.done === 3 && self.total === 3 && self.card?.rows?.[0]?.done === 3 && self.card.rows[0].info?.steps?.map(s => s.mark + s.text).join(',') === '✓Write,✓Check,✓Ship', JSON.stringify({ done: self.done, total: self.total, card: self.card?.rows?.[0]?.done, steps: self.card?.rows?.[0]?.info?.steps }))
   check("a wrap-up with no plan leaves a Claude's to-dos alone", await (async () => {
     await fire('turn.start', { text: 'Next', turnId: 'T2' }, async () => ({}))
     await call('TodoWrite', { todos: [{ content: 'A', status: 'completed', activeForm: 'A' }, { content: 'B', status: 'in_progress', activeForm: 'B' }] })
@@ -77,6 +83,8 @@ try {
     const after = crew().agents.find(a => a.id === 'main')
     return was.todosTotal === 2 && after.todosTotal === 2 && after.todosDone === 1
   })())
+  det = words(await render(), 'view').join(' | ')
+  check("Details list a Claude's to-dos (TodoWrite), the one on now in its own words; the last task's plan is gone", /✓ A \| ▸ B/.test(det) && !/Ship/.test(det), det.slice(0, 300))
   await fire('turn.complete', { reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 'T2' }, async () => ({ text: 'ok' }))
   await tick()
 

@@ -34,6 +34,8 @@ export type Agent = {
   doing: string
   /** Its steps on the desktop app's task list (update_plan), as the app holds them. */
   plan?: { content: string; status: string }[]
+  /** Its to-do list (TodoWrite), when that is its latest list. */
+  todoList?: { content: string; status: string; activeForm?: string }[]
   /** When it took on its current goal: the window's clock for a Claude without a to-do list. */
   since: number
   /** The node it last moved from, and when: the map zips it across. */
