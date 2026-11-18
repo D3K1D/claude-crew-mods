@@ -95,8 +95,10 @@ try {
   // ── 1. Turn over, a chat it started still at work: waiting for it, not "your turn" ──
   const chat = (id, name, running, depth = 1) => ({ id, title: name, name, parent: 'local_me', cwd: P, branch: '', running, at: now, depth })
   globalThis.__store.set('crew', { ...crew(), chats: [chat('local_a', 'crew-coder', true), chat('local_b', 'crew-designer', true), chat('local_c', 'crew-docs', true), chat('local_d', 'deeper', true, 2)] })
+  now += 4 * 60_000
   let r = await row('Claude')
   check('turn over, its chats at work: "Waiting for crew-coder, crew-designer +1"', /Claude .*Waiting for crew-coder, crew-designer \+1/.test(r) && !/your turn/.test(r), r)
+  check('...with how long it has been waiting (since its turn ended)', /crew-designer \+1 4m/.test(r), r)
   check('...in the wait colour (indigo), counted as waiting, the header count indigo too', rowGlyphs(await render(), 'Claude').find(g => g.t === 'Waiting')?.role === 'wait' && glyphs(await render(), 'top').some(g => /1 waiting/.test(g.t) && g.role === 'wait'), JSON.stringify(glyphs(await render(), 'top').slice(0, 6)))
   globalThis.__store.set('crew', { ...crew(), chats: [chat('local_a', 'crew-coder', true), chat('local_b', 'crew-designer', false), chat('local_d', 'deeper', true, 2)] })
   check('one chat left at work: waiting for it alone (a chat it did not start does not count)', /Waiting for crew-coder(?!,)/.test(await row('Claude')), await row('Claude'))

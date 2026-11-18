@@ -2520,7 +2520,8 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         kind,
         status,
         object,
-        time: at && a.since ? since(a.since, 's') : state === 'done' && a.since ? shortTime((a.doneAt || now) - a.since) : '',
+        // At work: since it took this on; its turn over and waiting on what it started: since its turn ended.
+        time: at && a.since ? since(a.since, 's') : state === 'wait' && (a.doneAt || a.since) ? since(a.doneAt || a.since, 's') : state === 'done' && a.since ? shortTime((a.doneAt || now) - a.since) : '',
         total,
         done,
         progress: a.stuck && state !== 'done' ? `Stuck? It ${a.stuck}.` : progress,
