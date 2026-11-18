@@ -9,7 +9,7 @@ export const find = (x, pred, out = []) => {
   return out
 }
 /** The colour roles of the pane's text, by colour. */
-const ROLE_OF = { '#E6EDF3': 'text', '#8B949E': 'dim', '#6E7681': 'faint', '#E3B341': 'amber', '#3FB950': 'green', '#F85149': 'red', '#D97757': 'brand', text: 'text', inactive: 'dim', subtle: 'faint', warning: 'amber', success: 'green', error: 'red', claude: 'brand' }
+const ROLE_OF = { '#8C8CFF': 'wait', '#E6EDF3': 'text', '#8B949E': 'dim', '#6E7681': 'faint', '#E3B341': 'amber', '#3FB950': 'green', '#F85149': 'red', '#D97757': 'brand', text: 'text', inactive: 'dim', subtle: 'faint', warning: 'amber', success: 'green', error: 'red', claude: 'brand' }
 /** The viewer: the Box keyed "view", and its height in rows. */
 export const viewHeight = t => viewOf(t)?.props?.height
 const viewOf = t => find(t, x => x.type === 'Box' && x.props?.key === 'view')[0]

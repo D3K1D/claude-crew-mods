@@ -159,6 +159,12 @@ try {
   const dr = page.vLine({ segs: [], right: [], row: { hue: 'h3', chat: false, name: 'Atlas', state: 'work', status: 'Running tests', object: 'npm test', done: 1, total: 3, time: '6m', depth: 1, act: 'a7' } })
   check('a helper in Details: one button with its colour, name, state, what, pips and time', /^<button class="nb dr" style="--d:1" data-act="a7"/.test(dr) && dr.includes('background:var(--h3)') && />Atlas</.test(dr) && />Running tests</.test(dr) && dr.includes('class="pips"') && />6m</.test(dr), dr.slice(0, 200))
   const dc = page.vLine({ segs: [], right: [], row: { hue: 'h2', chat: true, name: 'docs-build', state: 'done', status: 'Done', object: '', done: 0, total: 0, time: '', depth: 0, act: 'a8' } })
+  // Waiting on its helpers or chats: the wait colour (indigo) on its status and pips; other waits stay grey.
+  const waiting = page.card(row({ state: 'wait', kind: 'wait', status: 'Waiting', object: 'for Scout', helpers: true, total: 3, done: 1 }))
+  check('waiting on helpers: status and pips in the wait colour', /class="status" style="color:var\(--wait\)"/.test(waiting) && /background:var\(--wait\)/.test(waiting), waiting.slice(0, 300))
+  check('waiting on something else (a command): grey', /class="status" style="color:var\(--dim\)"/.test(page.card(row({ state: 'wait', kind: 'wait', status: 'Waiting', object: 'for npm test' }))))
+  check('...and a chat not read live stays grey', /class="status" style="color:var\(--dim\)"/.test(page.card(row({ state: 'wait', status: 'Waiting', helpers: true, asOf: '13:09' }))))
+  check('a Details row waiting on helpers: the wait colour', page.vLine({ segs: [], right: [], row: { hue: 'h1', name: 'Scout', state: 'wait', helpers: true, status: 'Waiting', object: 'for Atlas', done: 0, total: 0, time: '', depth: 0, act: 'a9' } }).includes('color:var(--wait)'))
   check("a section's title gets the space above it", /^<div class="vl gh"/.test(page.vLine({ head: true, segs: [{ t: 'Steps', b: true, role: 'dim' }], right: [] })))
   check('a nested chat: its bubble; done is dim', dc.includes('stroke="var(--h2)"') && dc.includes('class="nb dr done"'), dc.slice(0, 200))
 } catch (err) {

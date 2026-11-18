@@ -40,9 +40,11 @@ const send = msg => fetch('act', { method: 'POST', body: JSON.stringify(msg) }).
 
 let V = null
 const opened = new Set()
-const ROLE = { text: 'var(--text)', dim: 'var(--dim)', faint: 'var(--faint)', amber: 'var(--amber)', green: 'var(--green)', red: 'var(--red)', brand: 'var(--brand)', line: 'var(--line)', cx: 'var(--cx)' }
+const ROLE = { text: 'var(--text)', dim: 'var(--dim)', faint: 'var(--faint)', amber: 'var(--amber)', green: 'var(--green)', red: 'var(--red)', brand: 'var(--brand)', line: 'var(--line)', cx: 'var(--cx)', wait: 'var(--wait)' }
 const color = role => ROLE[role] ?? (/^h\d+$/.test(role ?? '') ? `var(--${role})` : 'var(--text)')
 const SC = { work: 'green', wait: 'dim', you: 'amber', done: 'dim', idle: 'dim' }
+// A row's state colour: waiting on its helpers or chats has its own (indigo); a chat not read live is grey.
+const stateRole = r => (r.asOf ? 'dim' : r.state === 'wait' && r.helpers ? 'wait' : SC[r.state])
 
 // Pictures: a kind's icon, the little Claude, Codex's terminal.
 const icon = (kind, role, size = 15, width = 1.9) => {
@@ -100,7 +102,7 @@ const ctxBar = pct => {
 }
 const card = r => {
   // A nested chat not read live: its state dim, "as of 13:09" faint, and a tooltip saying why.
-  const sc = r.asOf ? 'dim' : SC[r.state]
+  const sc = stateRole(r)
   const lead = r.state === 'done' ? `<span class="dot" style="background:${color(r.hue)}"></span>` : r.name === 'Codex' && r.hue === 'cx' ? codexIcon : sprite(r.hue)
   const details = btn(r.details, r.focused ? 'Hide' : 'Details', `u fix${r.focused ? ' text' : ''}`, `${r.focused ? 'Hide' : 'Show'} ${r.name}'s details`)
   const l1 = `<div class="l1">${lead}<span class="fix ${r.state === 'done' ? 'dim' : 'text'}">${esc(r.name)}</span>${icon(r.kind, sc)}<span class="status" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut ${r.asOf ? 'faint' : r.state === 'done' ? 'dim' : 'text'}">${esc(r.object)}</span>${r.state === 'done' ? '' : ctxBar(r.ctx)}<span class="time${r.state === 'you' ? ' amber' : ''}">${esc(r.time)}</span></div>`
@@ -582,7 +584,7 @@ const lead = (hue, chat) =>
     ? `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="${color(hue)}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>`
     : `<span class="dot" style="background:${color(hue)}"></span>`
 const dRow = r => {
-  const sc = SC[r.state]
+  const sc = stateRole(r)
   const done = r.state === 'done'
   const pips = r.total && r.total <= 15 ? `<span class="pips">${Array.from({ length: r.total }, (_, k) => `<span class="pip" style="${k < r.done ? `background:${color(sc)};` : ''}${k <= r.done ? `border-color:${color(sc)}` : ''}"></span>`).join('')}</span>` : ''
   return `<button class="nb dr${done ? ' done' : ''}" style="--d:${Math.min(3, r.depth)}" data-act="${esc(r.act)}" aria-label="${esc(`Show ${r.name}'s details`)}"><span class="lead">${lead(r.hue, r.chat)}</span><span class="nm">${esc(r.name)}</span><span class="st" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut">${esc(r.object)}</span>${done ? '' : pips}<span class="time">${esc(r.time)}</span><span class="dim">›</span></button>`

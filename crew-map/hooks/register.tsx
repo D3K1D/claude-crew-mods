@@ -904,6 +904,8 @@ const LIGHT_OF: Record<string, string> = {
   '#D2A8FF': '#8250DF', '#56D4DD': '#0A7B83', '#10A37F': '#0B7A5F', '#F778BA': '#BF3989',
   '#E3B341': '#9A6700', '#E3B95C': '#9A6700', '#F0BC55': '#9A6700', '#F0D58C': '#7D5A00', '#E0AF68': '#9A6700',
   '#F85149': '#CF222E', '#FF7B72': '#CF222E', '#FFA657': '#BC4C00',
+  // The identity colours past the first five, and waiting's own colour (as the website's light theme has them).
+  '#C297FF': '#8250DF', '#C9A47E': '#8A6234', '#B6DCFF': '#0A3F8A', '#A8EEF2': '#05555B', '#E2CCFF': '#55279E', '#FFB8DA': '#7D1D56', '#E8D2B4': '#5A3E1C', '#F2B49B': '#7C3115', '#8C8CFF': '#4D4DD8',
 }
 const rgbOf = (h: string) => { const x = hex6(h); return [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16) / 255) as [number, number, number] }
 const hexOf = (c: number[]) => `#${c.map(v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('').toUpperCase()}`
@@ -2081,6 +2083,8 @@ type GlanceRow = {
   depth: number
   /** How full its context is (0-100), -1 when unknown (Codex, a chat not read live); none for a done one. */
   ctx?: number
+  /** Waiting on its helpers or the chats it started: its own state colour (indigo), not the grey of other waits. */
+  helpers?: boolean
   request: string[]
   /** Needing you: the whole request, in one line (the pane wraps it). */
   ask?: string
@@ -2088,6 +2092,8 @@ type GlanceRow = {
   /** Opened: its model and cost, what it was asked (wrapped), its steps, its recent kinds of action. */
   detail?: { model: string; info: string; asked: string[]; steps: { mark: 'done' | 'now' | 'todo'; lines: string[] }[]; lately: { k: string; n: number }[] }
 }
+/** A row's state colour: green working, indigo waiting on its helpers or chats, amber needing you, else grey (a chat not read live: grey). */
+const stateRole = (r: Pick<GlanceRow, 'state' | 'asOf' | 'helpers'>) => (r.asOf ? 'dim' : r.state === 'work' ? 'green' : r.state === 'you' ? 'amber' : r.state === 'wait' && r.helpers ? 'wait' : 'dim')
 /** Rows of text a row takes: done one; at work two; needing you, its request and who it helps; and its Details, opened. */
 const glanceBase = (r: GlanceRow) => (r.state === 'done' ? 1 : r.state === 'you' ? 1 + r.request.length + (r.where ? 1 : 0) : 2)
 /**
@@ -2214,7 +2220,7 @@ type Seg = {
   label?: string
 }
 /** (Details) A Claude under the one shown, drawn on the website as one button: its colour (a bubble for a nested chat), name, state, what it is on, steps, time. */
-type DRow = { hue: string; chat?: boolean; name: string; state: GlanceRow['state']; status: string; object: string; done: number; total: number; time: string; depth: number; run: Act }
+type DRow = { hue: string; chat?: boolean; name: string; state: GlanceRow['state']; helpers?: boolean; status: string; object: string; done: number; total: number; time: string; depth: number; run: Act }
 type VLine = { segs: Seg[]; right?: Seg[]; indent?: number; row?: DRow; /** A section's title (the website puts space above it). */ head?: boolean }
 /** One Claude's row as the pane draws it: the glance row, its whole request unwrapped, and whether its Details show. */
 type PaneRow = GlanceRow & { ask: string; focused: boolean }
@@ -2522,6 +2528,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         model: shortModel(agentModel.get(a.id) ?? (a.id === 'main' ? mainModel : '')),
         depth: depthOf(a),
         ctx: state === 'done' ? undefined : ctxPct(a.ctx),
+        ...(state === 'wait' && wait?.kind === 'helpers' ? { helpers: true } : {}),
         request: ask ? wrapRows(ask, Math.max(20, cols - 18), 2) : [],
         ask,
         where: a.needs && a.id !== 'main' && parent ? `helping ${parent.name}` : '',
@@ -2602,6 +2609,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         model: main?.model ?? '',
         depth: ch.depth,
         ctx: main && !asOf && stateOf(main) === 'done' ? undefined : asOf ? -1 : ctxPct(main?.info?.ctx),
+        ...(main && !asOf && main.state === 'wait' && main.helpers === true ? { helpers: true } : {}),
         request: [],
         where: '',
       }
@@ -2625,6 +2633,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           model: h.model,
           depth: ch.depth + Math.max(1, h.depth),
           ctx: stateOf(h) === 'done' ? undefined : asOf ? -1 : ctxPct(h.info?.ctx),
+          ...(!asOf && h.state === 'wait' && h.helpers === true ? { helpers: true } : {}),
           // (Not read live: as stale as its chat, so dim and left out of the counts.)
           asOf: asOf || undefined,
           request: [],
@@ -2724,7 +2733,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       : ([
           [n.you ? (wide ? `⏸ ${fmtK(n.you)} needs you` : `⏸ ${fmtK(n.you)}`) : '', 'amber', true],
           [n.work ? (wide ? `● ${fmtK(n.work)} working` : `● ${fmtK(n.work)}`) : '', 'green', false],
-          [n.wait ? (wide ? `◌ ${fmtK(n.wait)} waiting` : `◌ ${fmtK(n.wait)}`) : '', 'dim', false],
+          [n.wait ? (wide ? `◌ ${fmtK(n.wait)} waiting` : `◌ ${fmtK(n.wait)}`) : '', liveRows.some(r => r.state === 'wait' && r.helpers && !r.asOf) ? 'wait' : 'dim', false],
           [n.done ? (wide ? `✓ ${fmtK(n.done)} done` : `✓ ${fmtK(n.done)}`) : '', 'dim', false],
         ] as [string, string, boolean][]).filter(x => x[0])
     const costRole = c.budget > 0 && totalCost >= c.budget ? 'red' : c.budget > 0 && totalCost >= c.budget * 0.8 ? 'amber' : 'text'
@@ -2876,7 +2885,6 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       const lineSection = (list: LogLine[]): VLine[] => (list.length ? [title('Its lines', 'newest first'), ...list.flatMap(l => logLinesOf(l).slice(0, 1))] : [])
       // A group of the Claudes under this one: its title and their states, then a row each that opens its Details.
       type Under = { r: GlanceRow; depth: number }
-      const STATE_ROLE: Record<GlanceRow['state'], string> = { work: 'green', wait: 'dim', idle: 'dim', you: 'amber', done: 'dim' }
       const group = (name: string, note: string, list: Under[]): VLine[] => {
         if (!list.length) return []
         const n = (st: GlanceRow['state']) => list.filter(x => x.r.state === st).length
@@ -2884,7 +2892,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         return [
           title(name, note || states),
           ...list.map(({ r, depth }): VLine => {
-            const role = r.asOf ? 'dim' : STATE_ROLE[r.state]
+            const role = stateRole(r)
             const run = openDetails(r.id)
             const done = r.state === 'done'
             return {
@@ -2892,7 +2900,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
               // (In the pane's text: its dot and 11 letters of its name; the website draws `row`.)
               segs: [{ dot: hueRole(r.hue), t: r.name, w: 13 * CELL_W, b: !done, role: done ? 'dim' : 'text', run }, { t: r.status, b: !done, role }, { t: r.object, flex: true, role: done ? 'dim' : 'text' }],
               right: [{ t: r.time, role: 'dim' }, { t: '›', role: 'dim' }],
-              row: { hue: hueRole(r.hue), chat: r.id.startsWith('chat-') && !r.id.includes('~'), name: r.name, state: r.state, status: r.status, object: r.object, done: r.done, total: r.total, time: r.time, depth, run },
+              row: { hue: hueRole(r.hue), chat: r.id.startsWith('chat-') && !r.id.includes('~'), name: r.name, state: r.state, ...(r.helpers && !r.asOf ? { helpers: true } : {}), status: r.status, object: r.object, done: r.done, total: r.total, time: r.time, depth, run },
             }
           }),
         ]
@@ -3158,6 +3166,7 @@ const webView = async ($: EngineInterface) => {
       model: r.model,
       depth: r.depth,
       ctx: r.ctx,
+      helpers: r.helpers || undefined,
       ask: r.ask,
       where: r.where,
       focused: r.focused,
@@ -3421,7 +3430,7 @@ const writeTouched = async ($: EngineInterface, c: Crew) => {
 // journal chunks that changed, every few seconds, so their steps fill its card and their lines join its
 // log. (Files, not $.store: one file per chat, so two chats never write the same one.)
 /** A Claude of a nested chat, as that chat's own pane shows it: its card, and what its Details show. */
-type NestedRow = Pick<GlanceRow, 'id' | 'name' | 'hue' | 'state' | 'kind' | 'status' | 'object' | 'time' | 'total' | 'done' | 'progress' | 'model' | 'depth'> & {
+type NestedRow = Pick<GlanceRow, 'id' | 'name' | 'hue' | 'state' | 'kind' | 'status' | 'object' | 'time' | 'total' | 'done' | 'progress' | 'model' | 'depth' | 'helpers'> & {
   stuck?: boolean
   ask?: string
   info?: { cost: number; tokens: number; ctx?: { tokens: number; window: number }; compactions?: number; asked: string; steps: { mark: string; text: string; on: boolean }[] }
@@ -3451,6 +3460,7 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
       return {
         ...{ id: r.id, name: r.name, hue: r.hue, state: r.state, kind: r.kind, status: r.status, object: trunc(r.object, 200), time: r.time, total: r.total, done: r.done, progress: trunc(r.progress, 200), model: r.model, depth: r.depth },
         ...(r.stuck ? { stuck: true } : {}),
+        ...(r.helpers ? { helpers: true } : {}),
         ...(r.state === 'you' ? { ask: trunc(r.ask, 600) } : {}),
         ...(x
           ? {
@@ -4644,7 +4654,7 @@ export const register: Register = on => {
     const m = await paneModel($, cols, e.props?.scroll?.bodyRows ?? 0)
     const { c, sq, vwCols, totalCost, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, BODY_ROWS, listed, top0, scroll, tabs } = m
     const mode = c.theme ?? 'auto'
-    const TONE: Record<string, string> = { text: '#E6EDF3', dim: '#8B949E', faint: '#8B949E', amber: '#E3B341', green: '#3FB950', red: '#F85149', brand: '#D97757', line: '#30363D', cx: '#8B949E' }
+    const TONE: Record<string, string> = { text: '#E6EDF3', dim: '#8B949E', faint: '#8B949E', amber: '#E3B341', green: '#3FB950', red: '#F85149', brand: '#D97757', line: '#30363D', cx: '#8B949E', wait: '#8C8CFF' }
     const toneOf = (role: string) => TONE[role] ?? (/^h\d+$/.test(role) ? PALETTE[Number(role.slice(1))] : '#E6EDF3')
     const press = (act: Act) => (p: { surface: unknown }) => void doAction($, act, p?.surface)
     const segEl = (g: Seg, k: string) => {
@@ -4706,12 +4716,11 @@ export const register: Register = on => {
     const headLine: VLine = { segs: [{ t: '✻ Claude Crew', b: true, role: 'brand' }, ...counts.map(([t, role, b]) => ({ t, role, b }))], right: totalCost > 0 || c.budget > 0 ? [{ t: `${fmtUsd(totalCost)}${budgetText ? ` ${budgetText}` : ''}`, role: costRole }] : [] }
 
     // The Claudes: a row's lines in a Box of its own, its Details a Button on its last line.
-    const SR: Record<GlanceRow['state'], string> = { work: 'green', wait: 'dim', idle: 'dim', you: 'amber', done: 'dim' }
     const rowLines = (r: PaneRow): VLine[] => {
       const indent = r.state === 'you' ? 0 : Math.min(3, r.depth) * 2 * CELL_W
       const details: Seg = { t: r.focused ? 'Hide' : 'Details', role: 'dim', run: openDetails(r.id) }
       // A chat not read live: its state dim, "as of 13:09" faint (in a terminal, after its state).
-      const sr = r.asOf ? 'dim' : SR[r.state]
+      const sr = stateRole(r)
       const term = r.asOf && e.surface === 'terminal'
       const one: VLine = { indent, segs: [{ dot: hueRole(r.hue), t: r.name, b: r.state !== 'done', role: r.state === 'done' ? 'dim' : 'text' }, { icon: [r.kind, sr], t: term ? `${r.status} (as of ${r.asOf})` : r.status, b: true, role: sr }, { t: term ? '' : r.object, flex: true, role: r.asOf ? 'faint' : r.state === 'done' ? 'dim' : 'text' }], right: [{ t: r.time, role: 'dim' }] }
       if (r.state === 'done') return [one]

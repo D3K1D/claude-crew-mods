@@ -2,7 +2,7 @@
    setting in ⚙ (auto follows the system). */
 :root {
   --bg: #0D1117; --panel: #121821; --line: #30363D; --text: #E6EDF3; --dim: #8B949E; --faint: #6E7681;
-  --amber: #E3B341; --amber-bg: rgba(227, 179, 65, 0.10); --green: #3FB950; --red: #F85149; --brand: #D97757;
+  --amber: #E3B341; --amber-bg: rgba(227, 179, 65, 0.10); --green: #3FB950; --red: #F85149; --brand: #D97757; --wait: #8C8CFF;
   --hover: rgba(139, 148, 158, 0.28); --hover-soft: rgba(139, 148, 158, 0.14); --eye: #0D1117;
   /* Identity colours: each Claude its own, for the whole chat */
   --h0: #D97757; --h1: #6CB6FF; --h2: #F778BA; --h3: #56D4DD; --h4: #C297FF; --h5: #C9A47E;
@@ -11,7 +11,7 @@
 }
 :root[data-theme="light"] {
   --bg: #FFFFFF; --panel: #F6F8FA; --line: #D0D7DE; --text: #1F2328; --dim: #59636E; --faint: #6E7781;
-  --amber: #9A6700; --amber-bg: rgba(154, 103, 0, 0.07); --green: #1A7F37; --red: #CF222E; --brand: #BC5A34;
+  --amber: #9A6700; --amber-bg: rgba(154, 103, 0, 0.07); --green: #1A7F37; --red: #CF222E; --brand: #BC5A34; --wait: #4D4DD8;
   --hover: rgba(89, 99, 110, 0.16); --hover-soft: rgba(89, 99, 110, 0.08);
   /* Identity colours: each Claude its own, for the whole chat */
   --h0: #BC5A34; --h1: #0969DA; --h2: #BF3989; --h3: #0A7B83; --h4: #8250DF; --h5: #8A6234;
@@ -21,7 +21,7 @@
 @media (prefers-color-scheme: light) {
   :root[data-theme="auto"] {
     --bg: #FFFFFF; --panel: #F6F8FA; --line: #D0D7DE; --text: #1F2328; --dim: #59636E; --faint: #6E7781;
-    --amber: #9A6700; --amber-bg: rgba(154, 103, 0, 0.07); --green: #1A7F37; --red: #CF222E; --brand: #BC5A34;
+    --amber: #9A6700; --amber-bg: rgba(154, 103, 0, 0.07); --green: #1A7F37; --red: #CF222E; --brand: #BC5A34; --wait: #4D4DD8;
     --hover: rgba(89, 99, 110, 0.16); --hover-soft: rgba(89, 99, 110, 0.08);
     /* Identity colours: each Claude its own, for the whole chat */
     --h0: #BC5A34; --h1: #0969DA; --h2: #BF3989; --h3: #0A7B83; --h4: #8250DF; --h5: #8A6234;

@@ -55,7 +55,7 @@ await call('Agent', { description: 'Map the loader', prompt: 'Find how chunks lo
   await call('Read', { file_path: `${P}/src/loader.ts` }, async () => { t = await render() }, { text: 'ok' }, { agentId: 'sub1' })
 })
 check('running a helper, the main row says it waits on a helper, and which', /Claude Waiting for .*Scout/.test(row(t)), row(t))
-check('...in grey (waiting: not working itself)', word(t, 'Waiting')?.role === 'dim')
+check('...in indigo, the wait colour (waiting on its helpers: not working itself)', word(t, 'Waiting')?.role === 'wait')
 
 // ── A command it runs and waits for ──
 await call('Bash', { command: 'npm run build', description: 'Build the app' }, async () => { now += 3000; t = await render() })

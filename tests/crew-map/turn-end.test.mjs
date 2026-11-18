@@ -3,7 +3,7 @@
 //     "your turn" only once nothing it started works.
 //  2. Wrapping up (the desktop app's wrap_up, which checks off the task list itself) fills every pip:
 //     "Step 3 of 3", all done; in this chat and in the file the chat above reads.
-import { words, rowGlyphs, makePress } from './kit.mjs'
+import { words, glyphs, rowGlyphs, makePress } from './kit.mjs'
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
@@ -16,7 +16,8 @@ let now = Date.parse('2031-01-01T10:00:00')
 Date.now = () => now
 const P = 'C:/work/game'
 const disk = new Map()
-const stored = {}
+// (Dark: the colours are drawn as tuned, so a check can name them.)
+const stored = { theme: 'dark' }
 let timers = []
 const $ = {
   command: { register: async () => {} },
@@ -96,7 +97,7 @@ try {
   globalThis.__store.set('crew', { ...crew(), chats: [chat('local_a', 'crew-coder', true), chat('local_b', 'crew-designer', true), chat('local_c', 'crew-docs', true), chat('local_d', 'deeper', true, 2)] })
   let r = await row('Claude')
   check('turn over, its chats at work: "Waiting for crew-coder, crew-designer +1"', /Claude .*Waiting for crew-coder, crew-designer \+1/.test(r) && !/your turn/.test(r), r)
-  check('...in the grey wait state, counted as waiting', rowGlyphs(await render(), 'Claude').find(g => g.t === 'Waiting')?.role === 'dim' && words(await render(), 'top').some(w => /1 waiting/.test(w)), words(await render(), 'top').slice(0, 6).join(' | '))
+  check('...in the wait colour (indigo), counted as waiting, the header count indigo too', rowGlyphs(await render(), 'Claude').find(g => g.t === 'Waiting')?.role === 'wait' && glyphs(await render(), 'top').some(g => /1 waiting/.test(g.t) && g.role === 'wait'), JSON.stringify(glyphs(await render(), 'top').slice(0, 6)))
   globalThis.__store.set('crew', { ...crew(), chats: [chat('local_a', 'crew-coder', true), chat('local_b', 'crew-designer', false), chat('local_d', 'deeper', true, 2)] })
   check('one chat left at work: waiting for it alone (a chat it did not start does not count)', /Waiting for crew-coder(?!,)/.test(await row('Claude')), await row('Claude'))
   globalThis.__store.set('crew', { ...crew(), chats: [chat('local_a', 'crew-coder', false), chat('local_d', 'deeper', true, 2)] })
