@@ -1,5 +1,12 @@
 # Claude Crew (plugin `crew-map`)
 
+<p align="center">
+  <a href="https://github.com/D3K1D/claude-crew-mods/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/D3K1D/claude-crew-mods?label=release"></a>
+  <a href="../LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="https://nodejs.org"><img alt="Node.js 18 or later" src="https://img.shields.io/badge/node-%E2%89%A518-339933?logo=nodedotjs&logoColor=white"></a>
+  <a href="https://claude.com/claude-code"><img alt="Claude Code 2.1.275 or later" src="https://img.shields.io/badge/Claude%20Code-%E2%89%A52.1.275-D97757"></a>
+</p>
+
 A live website of what Claude, its helper Claudes and the chats it started are doing, for when you give Claude Code a task and want to *see* the work instead of scrolling through a transcript.
 
 ```
@@ -21,6 +28,8 @@ Without Node, `/crew` opens the mod's own pane instead, with the same view as te
 **The header.** Counts by state (**⏸ 1 needs you**, **● 3 working**, **◌ 1 waiting**, **✓ 2 done**) and what the chat has cost, nested chats included (hover for each chat's share), against a budget if you set one.
 
 **The Claudes.** A card per Claude. Line one: its name, what it is doing in plain words ("Writing code · fixture.js", "Running tests · 42s", "Waiting · for Scout"), a small bar for how full its context is (amber from 60%, red from 85%), and its time. Line two: a pip per step and "Step 2 of 4 · Wire the fixture" (or "4 actions so far"), its model, and **Details**. Each Claude has a colour of its own for the whole chat (the main one always clay), on its card, its log lines and the files it touched; the state words have theirs: green working, grey waiting or idle, amber needs you, dim done. Helpers sit indented under the Claude that started them. One that needs you is pinned on top in amber with its whole request. One that looks stuck says why, in amber (the same command failing three times, and the like).
+
+**This project.** The other chats working in the same project (the same git repository, its worktrees included, or folder), under a "This project" heading after this chat's crew: a card for each one at work, waiting or needing you (not pinned; answer it in its own chat), and a dim line for the idle ones (three, then "+N idle"). The heading folds; it starts folded when all are idle. Their lines join the log only when you pick "Whole project" or one of them in the log's Who filter, and they are not in the header's counts or cost, Touched or Files.
 
 **Nested chats.** A chat Claude started from this one (and the chats that one started) shows like a helper: its card under its short name and colour, its own helpers under it, its steps, model and cost. One that needs you is pinned on top too, with "answer in that chat" (Claude Crew can't answer another chat's prompt). Its files join Touched and Files, and its lines join the log, marked with a chat bubble in its colour.
 
