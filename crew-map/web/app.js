@@ -105,7 +105,7 @@ const card = r => {
   const sc = stateRole(r)
   const lead = r.state === 'done' ? `<span class="dot" style="background:${color(r.hue)}"></span>` : r.name === 'Codex' && r.hue === 'cx' ? codexIcon : sprite(r.hue)
   const details = btn(r.details, r.focused ? 'Hide' : 'Details', `u fix${r.focused ? ' text' : ''}`, `${r.focused ? 'Hide' : 'Show'} ${r.name}'s details`)
-  const l1 = `<div class="l1">${lead}<span class="fix ${r.state === 'done' ? 'dim' : 'text'}">${esc(r.name)}</span>${icon(r.kind, sc)}<span class="status" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut ${r.asOf ? 'faint' : r.state === 'done' ? 'dim' : 'text'}">${esc(r.object)}</span>${r.state === 'done' ? '' : ctxBar(r.ctx)}<span class="time${r.state === 'you' ? ' amber' : ''}">${esc(r.time)}</span></div>`
+  const l1 = `<div class="l1">${lead}<span class="fix ${r.title ? 'pname ' : ''}${r.state === 'done' ? 'dim' : 'text'}"${r.title ? ` title="${esc(r.title)}"` : ''}>${esc(r.name)}</span>${icon(r.kind, sc)}<span class="status" style="color:${color(sc)}">${esc(r.status)}</span><span class="cut ${r.asOf ? 'faint' : r.state === 'done' ? 'dim' : 'text'}">${esc(r.object)}</span>${r.state === 'done' ? '' : ctxBar(r.ctx)}<span class="time${r.state === 'you' ? ' amber' : ''}">${esc(r.time)}</span></div>`
   let more = ''
   if (r.state === 'you') more = `<div class="ask">${esc(r.ask)}</div><div class="l2"><span class="cut dim">${esc(r.where)}</span>${details}</div>`
   else if (r.state !== 'done') {
@@ -130,8 +130,37 @@ const drawCrew = () => {
     : rc.full
       ? `<div class="recap"><div class="l1">${icon('done', 'green', 15, 2)}<span class="fix b">${esc(rc.title)}</span><span class="cut dim">${esc(rc.goal)}</span><span class="time">${esc(rc.ago)}</span></div>${rc.facts.map(([k, v, role]) => `<div class="fact"><span>${esc(k)}</span><span class="cut" style="color:${color(role)}">${esc(v)}</span></div>`).join('')}</div>`
       : `<div class="recap"><span class="dim">${esc(rc.title)}</span></div>${rc.demo ? `<div style="padding-left:12px">${btn(rc.demo, '▶ Try a pretend session', 'u')}</div>` : ''}`
-  $('crew').innerHTML = V.rows.map(card).join('') + recap
+  $('crew').innerHTML = V.rows.map(card).join('') + recap + projectHtml()
   fitPips()
+}
+// The other chats in this project: a group under its fold button, after this chat's crew. One at work, waiting or
+// needing you has its card (not pinned on top); an idle one is a dim line (3 at most, then "+N idle"). The group
+// starts open when one is not idle, folded when all are; your fold is kept in this browser; one needing you opens it.
+let moreIdle = false
+const projectOpen = rows => {
+  if (rows.some(r => r.state === 'you')) return true
+  const kept = store.get('crew.project')
+  return kept ? kept === 'open' : rows.some(r => !r.idle)
+}
+const idleLine = r =>
+  `<div class="pidle"><span class="hdot"${r.plain ? '' : ` style="border-color:${color(r.hue)}"`}></span><span class="pname dim" title="${esc(r.title)}">${esc(r.name)}</span><span class="dim">Idle</span><span class="cut faint">${r.ago ? `${W('last active ')}${esc(r.ago)} ago` : ''}</span>${btn(r.details, r.focused ? 'Hide' : 'Details', `u fix small${r.focused ? ' text' : ''}`, `${r.focused ? 'Hide' : 'Show'} ${r.title}'s details`)}</div>`
+const projectHtml = () => {
+  const rows = V.project ?? []
+  if (!rows.length) return ''
+  const open = projectOpen(rows)
+  const n = st => rows.filter(r => (st === 'idle' ? r.idle : !r.idle && r.state === st)).length
+  const waitRole = rows.some(r => r.state === 'wait' && r.helpers && !r.asOf) ? 'wait' : 'dim'
+  const parts = [['you', 'needs you', 'amber'], ['work', 'working', 'green'], ['wait', 'waiting', waitRole], ['idle', 'idle', 'dim']]
+    .filter(([st]) => n(st))
+    .map(([st, w, role]) => `<span style="color:${color(role)}">${n(st)} ${w}</span>`)
+    .join(', ')
+  const title = `<div class="ptitle"><button class="nb b dim fix" data-proj="1" aria-expanded="${open}">${open ? '▾' : '▸'} This project</button><span class="cut faint">· ${parts}</span></div>`
+  if (!open) return title
+  const busy = rows.filter(r => !r.idle)
+  const idle = rows.filter(r => r.idle)
+  const shownIdle = moreIdle ? idle : idle.slice(0, 3)
+  const more = idle.length > 3 ? `<div class="pmore">${`<button class="nb u dim" data-pmore="1">${moreIdle ? 'show fewer' : `+${idle.length - 3} idle`}</button>`}</div>` : ''
+  return title + busy.map(r => card({ ...r, depth: 0 })).join('') + shownIdle.map(idleLine).join('') + more
 }
 // A card whose pips, "Step n of m" and Details don't fit even with the step's name cut away (a page
 // narrower than 450, or deep nesting) shows "Step n of m" alone.
@@ -187,25 +216,31 @@ const filt = (() => {
   }
 })()
 const filtered = () => !!(filt.who || filt.kind)
+// (A project chat's lines show only while the Who list names the project or that chat.)
 const whoOk = l =>
-  !filt.who || (filt.who === '@this' ? !l.chat : filt.who.startsWith('c:') ? l.chat === filt.who.slice(2) : !l.chat && l.who === filt.who.slice(2))
+  filt.who.startsWith('p:')
+    ? !!l.proj && (filt.who === 'p:*' || l.proj === filt.who.slice(2))
+    : !l.proj && (!filt.who || (filt.who === '@this' ? !l.chat : filt.who.startsWith('c:') ? l.chat === filt.who.slice(2) : !l.chat && l.who === filt.who.slice(2)))
 const shown = l => whoOk(l) && (!filt.kind || (filt.kind === 'nothought' ? !l.thought : filt.kind === 'bad' ? !!l.bad : l.kind === filt.kind))
 // This chat's names (You, Claude, its helpers) and the nested chats' short names, as the Who list offers them.
 const whoList = () => {
   const mine = ['You']
   const chats = []
   for (const l of LOG) {
+    if (l.proj) continue
     if (l.chat) chats.includes(l.chat) || chats.push(l.chat)
     else mine.includes(l.who) || mine.push(l.who)
   }
   for (const r of V.rows ?? []) if (!r.id.startsWith('chat-') && !mine.includes(r.name)) mine.push(r.name)
   if (filt.who.startsWith('w:') && !mine.includes(filt.who.slice(2))) mine.push(filt.who.slice(2))
   if (filt.who.startsWith('c:') && !chats.includes(filt.who.slice(2))) chats.push(filt.who.slice(2))
-  return { mine, chats }
+  const project = (V.project ?? []).map(r => [r.id.replace(/^chat-/, ''), r.title])
+  return { mine, chats, project }
 }
-const whoWord = () => (filt.who === '@this' ? 'this chat' : filt.who.slice(2) || 'anyone')
+const whoWord = () => (filt.who === '@this' ? 'this chat' : filt.who === 'p:*' ? 'this project' : filt.who.startsWith('p:') ? (V.project ?? []).find(r => r.id === `chat-${filt.who.slice(2)}`)?.title ?? 'a chat' : filt.who.slice(2) || 'anyone')
+// The count: this chat's log (with its nested chats), and the project's lines only while they are picked.
 const countHtml = () => {
-  const n = LOG.length
+  const n = filt.who.startsWith('p:') ? LOG.length : LOG.reduce((s, l) => s + (l.proj ? 0 : 1), 0)
   if (!filtered()) return W(`${n} line${n === 1 ? '' : 's'}`)
   const k = LOG.reduce((s, l) => s + (shown(l) ? 1 : 0), 0)
   return W(`${k} of ${n} lines`, `${k}/${n}`)
@@ -218,11 +253,13 @@ const drawTools = () => {
   band('toolsWho', [names, filt.who], () => {
     const w = $('fWho')
     const opt = (v, t) => `<option value="${esc(v)}"${filt.who === v ? ' selected' : ''}>${esc(t)}</option>`
+    const grouped = names.chats.length || names.project.length
     w.innerHTML = [
       opt('', 'Everyone'),
-      ...(names.chats.length
-        ? [opt('@this', 'This chat only'), `<optgroup label="This chat">`, ...names.mine.map(n => opt(`w:${n}`, n)), `</optgroup><optgroup label="Nested chats">`, ...names.chats.map(n => opt(`c:${n}`, n)), `</optgroup>`]
+      ...(grouped
+        ? [opt('@this', 'This chat only'), `<optgroup label="This chat">`, ...names.mine.map(n => opt(`w:${n}`, n)), `</optgroup>`, ...(names.chats.length ? [`<optgroup label="Nested chats">`, ...names.chats.map(n => opt(`c:${n}`, n)), `</optgroup>`] : [])]
         : names.mine.map(n => opt(`w:${n}`, n))),
+      ...(names.project.length ? [`<optgroup label="This project">`, opt('p:*', 'Whole project'), ...names.project.map(([id, t]) => opt(`p:${id}`, t)), `</optgroup>`] : []),
     ].join('')
     w.classList.toggle('on', !!filt.who)
   })
@@ -675,7 +712,7 @@ new ResizeObserver(([e]) => {
     last.crew = ''
     last.head = ''
     last.touched = ''
-    band('crew', [V.rows, V.recap], drawCrew)
+    band('crew', [V.rows, V.recap, V.project], drawCrew)
     band('head', [V.head, V.v], drawHead)
     band('touched', V.touched, drawTouched)
   }
@@ -694,7 +731,7 @@ const draw = () => {
   const theme = V.theme || 'auto'
   if (document.documentElement.dataset.theme !== theme) document.documentElement.dataset.theme = theme
   band('head', [V.head, V.v], drawHead)
-  band('crew', [V.rows, V.recap], drawCrew)
+  band('crew', [V.rows, V.recap, V.project], drawCrew)
   band('touched', V.touched, drawTouched)
   const body = $('body')
   const fresh = V.tab !== lastTab
@@ -710,8 +747,11 @@ const draw = () => {
   if (fresh) body.scrollTop = V.tab === 'activity' ? body.scrollHeight : 0
 }
 // A filter picked or cleared: kept for next time, and the log drawn again with it.
+const askProject = () => send({ project: filt.who.startsWith('p:') ? filt.who.slice(2) : '' })
 const setFilter = f => {
+  const was = filt.who
   Object.assign(filt, f)
+  if (filt.who !== was && (filt.who.startsWith('p:') || was.startsWith('p:'))) askProject()
   store.set('crew.filter', filtered() ? JSON.stringify(filt) : null)
   if (bodyMode === 'activity') renderLog()
   drawTools()
@@ -753,6 +793,13 @@ document.addEventListener('click', ev => {
     send({ set: { budget: Math.max(0, Number($('budget').value) || 0) } })
     $('budget').blur()
   } else if (b.dataset.older) askOlder()
+  else if (b.dataset.proj) {
+    store.set('crew.project', projectOpen(V.project ?? []) ? 'closed' : 'open')
+    drawCrew()
+  } else if (b.dataset.pmore) {
+    moreIdle = !moreIdle
+    drawCrew()
+  }
   else if (b.dataset.clear) setFilter({ who: '', kind: '' })
 })
 document.addEventListener('change', ev => {
@@ -814,6 +861,7 @@ grip.addEventListener('dblclick', () => {
 
 // The view, live from the mod
 const events = new EventSource('events')
+let asked = false
 events.onmessage = ev => {
   try {
     V = JSON.parse(ev.data)
@@ -821,6 +869,8 @@ events.onmessage = ev => {
     return
   }
   $('gone').hidden = true
+  if (!asked && filt.who.startsWith('p:')) askProject()
+  asked = true
   draw()
 }
 // The mod's answers to what this page asked: all of an opened line, or older lines.

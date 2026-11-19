@@ -615,7 +615,9 @@ const siblingsOf = (text: string, selfId: string, nestedIds: Set<string>): Chat[
     .filter(r => str(r, 'sessionId') && str(r, 'sessionId') !== selfId && !nestedIds.has(str(r, 'sessionId')) && r.isArchived !== true && inProject(str(r, 'cwd')))
     .map(r => ({ id: str(r, 'sessionId'), title: str(r, 'title') || str(r, 'name') || 'A chat', name: str(r, 'name'), parent: str(r, 'startedBy'), cwd: str(r, 'cwd').replace(/\\/g, '/'), branch: str(r, 'branch'), running: r.isRunning === true, at: Date.parse(str(r, 'lastActivityAt')) || 0, depth: 1, seen: Date.now() }))
     .sort((a, b) => b.at - a.at)
-    .slice(0, SIBLINGS_MAX)
+    // Every one at work; of the rest, the newest few (a bound on what is read).
+    .filter((x, i, all) => x.running || all.filter(y => !y.running).indexOf(x) < SIBLINGS_MAX)
+    .slice(0, 20)
 }
 let readCrew: (() => Promise<Crew>) | undefined
 let after: ((ms: number, fn: () => void) => void) | undefined
@@ -2084,6 +2086,11 @@ const shortTime = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000))
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, '0')}`
 }
+/** How long ago, in one whole unit: 3m, 2h, 4d. */
+const agoText = (ms: number) => {
+  const m = Math.max(1, Math.floor(ms / 60_000))
+  return m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`
+}
 /** How full a context window is, 0-100; -1 when unknown. */
 const ctxPct = (x?: { tokens: number; window: number }) => (x && x.window > 0 && Number.isFinite(x.tokens) ? Math.min(100, Math.max(0, Math.round((x.tokens / x.window) * 100))) : -1)
 const xmlEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -2111,6 +2118,9 @@ type GlanceRow = {
   ctx?: number
   /** Waiting on its helpers or the chats it started: its own state colour (indigo), not the grey of other waits. */
   helpers?: boolean
+  /** (A chat in this project) when it was last active, as a mark; and whether it has no identity colour yet (idle so far). */
+  ago?: string
+  plain?: boolean
   request: string[]
   /** Needing you: the whole request, in one line (the pane wraps it). */
   ask?: string
@@ -2671,6 +2681,29 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     }
     const glance = [...ordered.map(rowOfAgent), ...chatList.flatMap(rowsOfChat), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
     const glanceList = [...glance.filter(r => r.state === 'you'), ...glance.filter(r => r.state !== 'you')]
+    // The other chats in this project: each its main card, no indent (its helpers only in its Details); its
+    // title for a name; "branch · folder" when it has no steps; needing you, it says to answer there. In
+    // order: needing you, working, waiting, then idle by last active (6 idle at most). Not counted above.
+    const siblingList = src.siblings ?? []
+    const RANK: Record<GlanceRow['state'], number> = { you: 0, work: 1, wait: 2, idle: 3, done: 3 }
+    const projAll = siblingList
+      .map(ch => {
+        const [head, ...helpers] = rowsOfChat(ch)
+        const row: GlanceRow = {
+          ...head,
+          name: ch.title,
+          depth: 0,
+          progress: head.total > 0 ? head.progress : [ch.branch, baseName(ch.cwd)].filter(Boolean).join(' · '),
+          ...(head.state === 'you' ? { where: 'its own chat · answer there' } : {}),
+          // (In whole minutes, hours or days: "2h", not a clock.)
+          ago: ch.at ? agoText(Date.now() - ch.at) : '',
+          plain: !knownColors[`chat:${ch.id}`],
+        }
+        return { row, helpers, at: ch.at }
+      })
+      .sort((x, y) => RANK[x.row.state] - RANK[y.row.state] || y.at - x.at)
+    const projRows = [...projAll.filter(x => RANK[x.row.state] < 3), ...projAll.filter(x => RANK[x.row.state] === 3).slice(0, SIBLINGS_MAX)].map(x => x.row)
+    const projHelpers = projAll.flatMap(x => x.helpers)
     // Room: the rows shown, at least; while anyone works, two lines for each of the most Claudes lately.
     const desksH = Math.max(glanceList.reduce((n, r) => n + glanceBase(r), 0), anyAtWork ? Math.max(1, deskMax) * 2 : 0)
     // ── Folder cards: each folder the work touched, its files as chips (green edited, red with errors) ──
@@ -2737,9 +2770,10 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const wide = cols >= 70
     const ps = c.pane ?? {}
     const paneAct = (p: Omit<Extract<Act, { k: 'pane' }>, 'k'>): Act => ({ k: 'pane', ...p })
-    const focusRow = ps.tab === 'claude' ? glanceList.find(r => r.id === ps.focus) : undefined
+    const focusRow = ps.tab === 'claude' ? [...glanceList, ...projRows, ...projHelpers].find(r => r.id === ps.focus) : undefined
     const tab = ps.tab === 'claude' && !focusRow ? 'activity' : ps.tab ?? 'activity'
     const rowsP: PaneRow[] = glanceList.map(r => ({ ...r, ask: r.ask ?? r.request.join(' '), focused: tab === 'claude' && r.id === ps.focus }))
+    const projP: PaneRow[] = projRows.map(r => ({ ...r, ask: r.ask ?? r.request.join(' '), focused: tab === 'claude' && r.id === ps.focus }))
     // The header counts only what is known live: a nested chat not read live ("as of") is left out.
     const liveRows = rowsP.filter(r => !r.asOf)
     const count = (s: GlanceRow['state']) => liveRows.filter(r => r.state === s).length
@@ -2943,22 +2977,23 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         // A nested chat, or one of its helpers: the same Details as a Claude's here, from what that chat
         // wrote about itself; its title, branch and folder under the first line; its own lines in the log.
         const [cid = '', hid] = focusRow.id.slice(5).split('~')
-        const chat = chatList.find(x => x.id === cid)
+        const sib = siblingList.find(x => x.id === cid)
+        const chat = chatList.find(x => x.id === cid) ?? sib
         const card = nested.get(cid)?.file?.card?.rows ?? []
         const nrow = card.find(r => r.id === (hid ?? 'main'))
         const by = chat ? chatList.find(x => x.id === chat.parent) : undefined
         const helping = hid ? card.find(r => r.id === 'main')?.name : ''
-        const head = [focusRow.model, hid ? `helping ${helping || 'Claude'} in ${trunc(chat?.name || chat?.title || 'its chat', 24)}` : `started from ${by ? trunc(by.title, 40) : 'this chat'}`, focusRow.asOf ? '' : focusRow.time].filter(Boolean).join(' · ')
+        const head = [focusRow.model, hid ? `helping ${helping || 'Claude'} in ${trunc(chat?.name || chat?.title || 'its chat', 24)}` : sib ? 'a chat in this project' : `started from ${by ? trunc(by.title, 40) : 'this chat'}`, focusRow.asOf ? '' : focusRow.time].filter(Boolean).join(' · ')
         out.push({ segs: [{ t: focusRow.name, b: true }, { t: head, role: 'dim', flex: !focusRow.asOf }, ...(focusRow.asOf ? [{ t: `· as of ${focusRow.asOf}`, role: 'faint', flex: true }] : [])] })
         if (chat && !hid) for (const t of wrapRows([chat.title, chat.branch, chat.cwd].filter(Boolean).join(' · '), textCols, 2)) out.push({ segs: [{ t, role: 'dim' }] })
         if (nrow?.info) {
           out.push(costLine(nrow.info))
           for (const t of nrow.info.asked ? wrapRows(nrow.info.asked, textCols, 8) : []) out.push({ segs: [{ t }] })
         }
-        if (!hid) out.push(...group('Helpers', '', glance.filter(r => r.id.startsWith(`chat-${cid}~`)).map(r => ({ r, depth: Math.min(3, Math.max(0, r.depth - (chat?.depth ?? 1) - 1)) }))))
+        if (!hid) out.push(...group('Helpers', '', [...glance, ...projHelpers].filter(r => r.id.startsWith(`chat-${cid}~`)).map(r => ({ r, depth: Math.min(3, Math.max(0, r.depth - (chat?.depth ?? 1) - 1)) }))))
         if (nrow?.info) out.push(...stepSection(nrow.info.steps))
         else if (!nrow) out.push({ segs: [{ t: 'Open it from the sidebar, under this chat.', role: 'dim' }] })
-        out.push(...lineSection(nestedLines().filter(l => l.chat === cid && (hid ? l.by === nrow?.name : !l.by)).slice(-30).reverse()))
+        out.push(...lineSection((sib ? projectLines() : nestedLines()).filter(l => l.chat === cid && (hid ? l.by === nrow?.name : !l.by)).slice(-30).reverse()))
         return out
       }
       const parent = a ? src.agents.find(x => x.id === (a.parent ?? 'main')) : undefined
@@ -3088,8 +3123,9 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     }))
     // The website's log: its newest lines (the page keeps what it was sent, and loads older ones from the
     // journals), each whole (the page cuts it to fit and opens it), oldest first.
-    const webLog = allLog.slice(-WEB_WINDOW).map(webLine)
-    return { c, sq, vwCols, totalCost, costTitle, wide, paneAct, tab, rowsP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, byNested, BODY_ROWS, listed, top0, scroll, tabs, webLog }
+    const projLog = web && webProject ? projectLines().filter(l => webProject === '*' || l.chat === webProject).slice(-WEB_WINDOW) : []
+    const webLog = [...allLog.slice(-WEB_WINDOW), ...projLog].map(webLine)
+    return { c, sq, vwCols, totalCost, costTitle, wide, paneAct, tab, rowsP, projP, openDetails, openDir, counts, costRole, budgetText, recap, touchFolders, touchedSum, byNested, BODY_ROWS, listed, top0, scroll, tabs, webLog }
 }
 
 /** A log line for the website: what it shows closed; `more` when opening it shows more than its words (the page asks for that). */
@@ -3103,7 +3139,8 @@ const webLine = (l: LogLine) => {
     key: logKey(l),
     at: l.at,
     time: clock(l.at),
-    dot: l.chat ? `h${chatHue(l.chat)}` : m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}`,
+    dot: l.chat ? (nested.get(l.chat)?.sibling && !knownColors[`chat:${l.chat}`] ? 'dim' : `h${chatHue(l.chat)}`) : m ? 'text' : l.hue < 0 ? 'cx' : `h${l.hue % PALETTE.length}`,
+    ...(l.chat && nested.get(l.chat)?.sibling ? { proj: l.chat } : {}),
     who: l.chat ? l.who : m ? m.from || 'You' : l.who,
     chat: l.chat ? l.who : undefined,
     chatTitle: l.chat ? nested.get(l.chat)?.title : undefined,
@@ -3154,6 +3191,29 @@ const newActs = () => {
 const webView = async ($: EngineInterface) => {
   newActs()
   const m = await paneModel($, 160, 700, true)
+  const webRow = (r: PaneRow) => ({
+    id: r.id,
+    name: r.name,
+    hue: hueRole(r.hue),
+    state: r.state,
+    kind: r.kind,
+    status: r.status,
+    object: r.object,
+    time: r.time,
+    total: r.total,
+    done: r.done,
+    progress: r.progress,
+    stuck: !!r.stuck,
+    asOf: r.asOf,
+    model: r.model,
+    depth: r.depth,
+    ctx: r.ctx,
+    helpers: r.helpers || undefined,
+    ask: r.ask,
+    where: r.where,
+    focused: r.focused,
+    details: actId(m.openDetails(r.id)),
+  })
   const seg = (g: Seg) => ({
     t: g.t ?? '',
     role: g.role,
@@ -3176,29 +3236,8 @@ const webView = async ($: EngineInterface) => {
     theme: m.c.theme ?? 'auto',
     icons: KIND_ICON,
     head: { counts: m.counts, cost: m.totalCost > 0 || m.c.budget > 0 ? fmtUsd(m.totalCost) : '', costRole: m.costRole, budget: m.budgetText, costTitle: m.costTitle },
-    rows: m.rowsP.map(r => ({
-      id: r.id,
-      name: r.name,
-      hue: hueRole(r.hue),
-      state: r.state,
-      kind: r.kind,
-      status: r.status,
-      object: r.object,
-      time: r.time,
-      total: r.total,
-      done: r.done,
-      progress: r.progress,
-      stuck: !!r.stuck,
-      asOf: r.asOf,
-      model: r.model,
-      depth: r.depth,
-      ctx: r.ctx,
-      helpers: r.helpers || undefined,
-      ask: r.ask,
-      where: r.where,
-      focused: r.focused,
-      details: actId(m.openDetails(r.id)),
-    })),
+    rows: m.rowsP.map(webRow),
+    project: m.projP.map(r => ({ ...webRow(r), title: r.name, idle: r.state === 'idle' || r.state === 'done', ago: r.ago, plain: r.plain || undefined })),
     recap: m.recap
       ? { title: m.recap.title, goal: m.recap.goal, ago: m.recap.ago, facts: m.recap.facts, full: !!m.recap.copy, demo: m.recap.demo ? actId(m.recap.demo) : '' }
       : null,
@@ -3528,6 +3567,18 @@ const chatWorking = (ch: Chat) => {
 }
 /** All nested chats' lines in time order, made again only when one changed. */
 let nestedVer = 0
+/** Which project chats' lines the website's Who list asks for: '' none, '*' all of them, or one chat's app id. */
+let webProject = ''
+let projVer = -1
+let sortedProject: LogLine[] = []
+/** The project chats' lines in time order (under their titles), made again only when one changed. */
+const projectLines = () => {
+  if (projVer !== nestedVer) {
+    sortedProject = [...nested.values()].filter(x => x.sibling).flatMap(x => x.lines.map(l => ({ ...l, who: x.title ?? l.who }))).sort((x, y) => x.at - y.at)
+    projVer = nestedVer
+  }
+  return sortedProject
+}
 let sortedVer = -1
 let sortedNested: LogLine[] = []
 const nestedLines = () => {
@@ -3649,7 +3700,8 @@ const readNested = async ($: EngineInterface) => {
       }
     }
     // Each nested chat and each of its helpers: a colour of its own, the first time it is seen.
-    const keys = chats.flatMap(ch => [`chat:${ch.id}`, ...(nested.get(ch.id)?.file?.card?.rows ?? []).filter(r => r && typeof r.id === 'string' && r.id !== 'main').map(r => `chat:${ch.id}~${r.id}`)])
+    // (A chat in this project only once it works: an idle one keeps the plain dot.)
+    const keys = chats.filter(ch => !siblingIds.has(ch.id) || chatWorking(ch)).flatMap(ch => [`chat:${ch.id}`, ...(nested.get(ch.id)?.file?.card?.rows ?? []).filter(r => r && typeof r.id === 'string' && r.id !== 'main').map(r => `chat:${ch.id}~${r.id}`)])
     if (keys.some(k => !c.colors?.[k])) await write?.(d => keys.reduce(giveColor, d))
     if (changed) {
       nestedVer++
@@ -3840,13 +3892,15 @@ const startWeb = ($: EngineInterface, onlyIfKept = false) => {
             webSent = ''
             void publishWeb($)
           } else if (line.startsWith('ACT ')) {
-            let msg: { id?: unknown; search?: unknown; next?: unknown; open?: unknown; older?: unknown; set?: { budget?: unknown; editor?: unknown } } = {}
+            let msg: { id?: unknown; search?: unknown; next?: unknown; open?: unknown; older?: unknown; project?: unknown; set?: { budget?: unknown; editor?: unknown } } = {}
             try {
               msg = JSON.parse(line.slice(4))
             } catch {}
             const act = typeof msg.id === 'string' ? actOf(msg.id) : undefined
             if (act) await doAction($, act, undefined)
             else if (typeof msg.search === 'string') await searchFor($, msg.search.slice(0, 200), msg.next === true)
+            // The Who list picked the whole project or one chat in it (or let it go): its lines come with the view.
+            else if (typeof msg.project === 'string') webProject = msg.project === '*' || /^local_[\w-]+$/.test(msg.project) ? msg.project : ''
             // The page's own asks (a line opened, older lines): answered with a reply, the view is unchanged.
             else if (typeof msg.open === 'string') {
               await openLine(msg.open)

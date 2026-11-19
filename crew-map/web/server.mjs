@@ -9,6 +9,7 @@
 //   ACT {"set":{…}}         Settings' budget box or editor list
 //   ACT {"open":"<key>"}    a log line opened: the mod replies with all of it
 //   ACT {"older":<ms>}      the log scrolled back: the mod replies with the lines before that time
+//   ACT {"project":"…"}     the Who list picked the project's chats ('*' or a chat's id; '' lets them go)
 //
 // The mod's replies (POST reply) and the log it exports (POST export) reach the pages as events of their own.
 //
@@ -152,7 +153,9 @@ const srv = http.createServer((req, res) => {
                 ? { open: msg.open.slice(0, 60) }
                 : Number.isFinite(msg.older)
                   ? { older: msg.older }
-                  : set
+                  : typeof msg.project === 'string'
+                    ? { project: /^(\*|local_[\w-]{1,80})?$/.test(msg.project) ? msg.project : '' }
+                    : set
                     ? { set: { ...(Number.isFinite(set.budget) ? { budget: set.budget } : {}), ...(typeof set.editor === 'string' ? { editor: set.editor.slice(0, 20) } : {}) } }
                     : undefined
         if (out) say(`ACT ${JSON.stringify(out)}`)

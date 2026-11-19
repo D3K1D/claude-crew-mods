@@ -70,12 +70,18 @@ try {
   const ids = (crew().siblings ?? []).map(x => x.id)
   check('same-project chats: the same folder, a worktree of the repository, a folder inside it', ['local_same', 'local_tree', 'local_sub'].every(x => ids.includes(x)), ids.join(','))
   check('...not a nested one (shown as nested), another project, a folder that only starts alike, or an archived chat', !['local_kid', 'local_other', 'local_away', 'local_old'].some(x => ids.includes(x)), ids.join(','))
-  check('...the newest 6 at most, newest first', ids.length === 6 && ids.join(',') === 'local_same,local_tree,local_sub,local_more0,local_more1,local_more2', ids.join(','))
+  check('...every one at work, and the newest 6 of the rest, newest first', ids.join(',') === 'local_same,local_tree,local_sub,local_more0,local_more1,local_more2,local_more3', ids.join(','))
   check('...each with its folder, running or not, and when last active', crew().siblings[0].running === true && crew().siblings[1].cwd === 'C:/work/game/.claude/worktrees/fix' && crew().siblings[0].at === now - 2 * 60_000)
   // Claude's own read of the whole list keeps them current too.
   all.push(row('local_new', 'C:\\work\\game', { lastActivityAt: at(0) }))
   await fire('tool.call', { tool: LIST_TOOL_NAME(), tool_use_id: 'mine', limit: 20 }, async () => ({ result: {}, text: JSON.stringify(all) }))
   check("Claude's own look at the list updates them", crew().siblings?.[0]?.id === 'local_new', (crew().siblings ?? []).map(x => x.id).join(','))
+  // A project chat's Details: as a nested chat's, "a chat in this project".
+  globalThis.__store.set('crew', { ...crew(), pane: { tab: 'claude', focus: 'chat-local_same' } })
+  const t = await fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: 120, scroll: { bodyRows: 40 } }, viewport: { columns: 120 } }, async () => ({}))
+  const said = JSON.stringify(t)
+  check("a project chat's Details say it is a chat in this project", said.includes('a chat in this project') && said.includes('local_same'), said.slice(0, 300))
+  check('...and the project chats are not counted in the header', !/\d+ working/.test(said.match(/Claude Crew[^\]]{0,200}/)?.[0] ?? ''))
 } catch (err) {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 400)}`, false)
 }

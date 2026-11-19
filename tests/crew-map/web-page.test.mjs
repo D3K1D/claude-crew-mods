@@ -75,7 +75,7 @@ const context = {
 }
 vm.createContext(context)
 // The script's own names (const at its top level) are read through what it is given at its end.
-vm.runInContext(`${readFileSync(APP, 'utf8')}\n;globalThis.__page = { LOG, byKey, filt, shown, cols, sizeCol, loadCols, card, vLine, setV: v => (V = v) }`, context)
+vm.runInContext(`${readFileSync(APP, 'utf8')}\n;globalThis.__page = { LOG, byKey, filt, shown, cols, sizeCol, loadCols, card, vLine, projectHtml, setV: v => (V = v) }`, context)
 const page = context.__page
 const view = log => ({
   v: 'test',
@@ -166,6 +166,31 @@ try {
   check('...and a chat not read live stays grey', /class="status" style="color:var\(--dim\)"/.test(page.card(row({ state: 'wait', status: 'Waiting', helpers: true, asOf: '13:09' }))))
   check('a Details row waiting on helpers: the wait colour', page.vLine({ segs: [], right: [], row: { hue: 'h1', name: 'Scout', state: 'wait', helpers: true, status: 'Waiting', object: 'for Atlas', done: 0, total: 0, time: '', depth: 0, act: 'a9' } }).includes('color:var(--wait)'))
   check("a section's title gets the space above it", /^<div class="vl gh"/.test(page.vLine({ head: true, segs: [{ t: 'Steps', b: true, role: 'dim' }], right: [] })))
+  // ── The other chats in this project ──
+  const sib = (id, o = {}) => ({ id: `chat-${id}`, name: `Chat ${id}`, title: `Chat ${id}: a long title for it`, hue: 'h3', state: 'idle', kind: 'idle', status: 'Idle', object: '', time: '', total: 0, done: 0, progress: 'main · game', model: '', depth: 0, details: `d${id}`, idle: true, ago: '2h', plain: true, ...o })
+  const busy = [sib('a', { state: 'you', idle: false, status: 'Needs you', ask: 'Allow this?', where: 'its own chat · answer there' }), sib('b', { state: 'work', idle: false, status: 'Writing code', object: 'a.js', ctx: 30, plain: false })]
+  page.setV({ ...view([]), project: [...busy, ...['c', 'd', 'e', 'f', 'g'].map(x => sib(x))] })
+  let ph = page.projectHtml()
+  check('a group under "This project", its counts in state colours', /data-proj="1" aria-expanded="true">▾ This project/.test(ph) && /color:var\(--amber\)">1 needs you/.test(ph) && /color:var\(--green\)">1 working/.test(ph) && /5 idle/.test(ph), ph.slice(0, 400))
+  check('...a card for each one at work or needing you (its title whole in the tooltip, not pinned: no indent, amber)', /class="card you/.test(ph) && /title="Chat b: a long title for it">Chat b</.test(ph) && /its own chat · answer there/.test(ph))
+  check('...the idle ones as dim lines with a hollow dot, 3 of them, then "+2 idle"', (ph.match(/class="pidle"/g) ?? []).length === 3 && /class="hdot"><\/span>/.test(ph) && />\+2 idle</.test(ph) && /<span class="w">last active <\/span>2h ago/.test(ph), ph.slice(-600))
+  page.setV({ ...view([]), project: ['c', 'd'].map(x => sib(x)) })
+  ph = page.projectHtml()
+  check('all idle: folded to its title', /aria-expanded="false">▸ This project/.test(ph) && !/pidle/.test(ph), ph)
+  // Their lines: only while the Who list picks the project or one of its chats.
+  const own = line('9:own')
+  const theirs = line('9:proj', { chat: 'Chat b', proj: 'b' })
+  Object.assign(page.filt, { who: '', kind: '' })
+  check("Everyone: this chat's lines, not the project's", page.shown(own) && !page.shown(theirs))
+  Object.assign(page.filt, { who: 'p:*' })
+  check('Whole project: its lines only', page.shown(theirs) && !page.shown(own))
+  Object.assign(page.filt, { who: 'p:b' })
+  check('...one chat in it: its lines', page.shown(theirs))
+  Object.assign(page.filt, { who: 'p:c' })
+  check('...another: not these', !page.shown(theirs))
+  Object.assign(page.filt, { who: 'c:Chat b' })
+  check('a nested-chat pick never shows a project chat of the same name', !page.shown(theirs))
+  Object.assign(page.filt, { who: '' })
   check('a nested chat: its bubble; done is dim', dc.includes('stroke="var(--h2)"') && dc.includes('class="nb dr done"'), dc.slice(0, 200))
 } catch (err) {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 400)}`, false)
