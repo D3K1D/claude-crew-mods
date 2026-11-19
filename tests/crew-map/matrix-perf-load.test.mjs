@@ -79,7 +79,10 @@ const check = (label, cond, extra = '') => { if (!cond) fails++; console.log(`${
     const k = i % 10
     total += await ms(() => call(s, { agentId: i % 12 ? `a${i % 12}` : undefined, ...(k < 4 ? { tool: 'Read', file_path: file(i * 13) } : k < 7 ? { tool: 'Edit', file_path: file(i * 7 + 3), old_string: 'a\nb', new_string: 'c\nd\ne' } : k < 9 ? { tool: 'Bash', command: k === 8 ? 'npm test' : 'cargo build', description: 'Build' } : { tool: 'Grep', pattern: 'foo', path: P }) }, { text: k === 8 ? 'Tests: 3 passed, 3 total' : 'ok' }))
   }
-  check('a tool call costs under 5 ms on average over 2,000 calls', total / 2000 < 5, `${(total / 2000).toFixed(2)} ms`)
+  // (Shared CI runners are slower and noisier than a desk computer: there the bound is 15 ms, still well
+  // under a tool call's own cost, so a call that got many times slower still fails.)
+  const bound = process.env.CI ? 15 : 5
+  check(`a tool call costs under ${bound} ms on average over 2,000 calls`, total / 2000 < bound, `${(total / 2000).toFixed(2)} ms`)
   for (let i = 0; i < 12; i++) void s.hooks['tool.call'](s.$, { tool: 'Edit', tool_use_id: `w${i}`, agentId: i ? `a${i}` : undefined, file_path: file(i * 5), old_string: 'a', new_string: 'b' }, () => new Promise(() => {}))
   await new Promise(r => setTimeout(r, 20))
   const c = s.crew()
