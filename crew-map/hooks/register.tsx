@@ -2254,6 +2254,8 @@ type Seg = {
   /** A Button's words in their colours: [text, role]. */
   parts?: [string, string][]
   label?: string
+  /** (Website) the whole of what the words cut short, on hover. */
+  tip?: string
 }
 /** (Details) A Claude under the one shown, drawn on the website as one button: its colour (a bubble for a nested chat), name, state, what it is on, steps, time. */
 type DRow = { hue: string; chat?: boolean; name: string; state: GlanceRow['state']; helpers?: boolean; status: string; object: string; done: number; total: number; time: string; depth: number; run: Act }
@@ -2985,10 +2987,14 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         const helping = hid ? card.find(r => r.id === 'main')?.name : ''
         const head = [focusRow.model, hid ? `helping ${helping || 'Claude'} in ${trunc(chat?.name || chat?.title || 'its chat', 24)}` : sib ? 'a chat in this project' : `started from ${by ? trunc(by.title, 40) : 'this chat'}`, focusRow.asOf ? '' : focusRow.time].filter(Boolean).join(' · ')
         out.push({ segs: [{ t: focusRow.name, b: true }, { t: head, role: 'dim', flex: !focusRow.asOf }, ...(focusRow.asOf ? [{ t: `· as of ${focusRow.asOf}`, role: 'faint', flex: true }] : [])] })
-        if (chat && !hid) for (const t of wrapRows([chat.title, chat.branch, chat.cwd].filter(Boolean).join(' · '), textCols, 2)) out.push({ segs: [{ t, role: 'dim' }] })
+        // Where it works: a project chat's title is its name already, so "branch · folder" (a long folder
+        // from its end, whole on hover); a nested chat's title too, under its short name. Cut to fit.
+        if (chat && !hid) out.push({ segs: [{ t: [sib ? '' : chat.title, chat.branch, sib && chat.cwd.length > 40 ? `…/${chat.cwd.split('/').filter(Boolean).slice(-2).join('/')}` : chat.cwd].filter(Boolean).join(' · '), role: 'dim', flex: true, tip: chat.cwd }] })
         if (nrow?.info) {
           out.push(costLine(nrow.info))
-          for (const t of nrow.info.asked ? wrapRows(nrow.info.asked, textCols, 8) : []) out.push({ segs: [{ t }] })
+          // (What it was asked, unless that is its title: the header has it.)
+          const asked = nrow.info.asked && !(sib && oneLine(nrow.info.asked).toLowerCase() === oneLine(chat?.title ?? '').toLowerCase()) ? nrow.info.asked : ''
+          for (const t of asked ? wrapRows(asked, textCols, 8) : []) out.push({ segs: [{ t }] })
         }
         if (!hid) out.push(...group('Helpers', '', [...glance, ...projHelpers].filter(r => r.id.startsWith(`chat-${cid}~`)).map(r => ({ r, depth: Math.min(3, Math.max(0, r.depth - (chat?.depth ?? 1) - 1)) }))))
         if (nrow?.info) out.push(...stepSection(nrow.info.steps))
@@ -3229,6 +3235,7 @@ const webView = async ($: EngineInterface) => {
     tail: g.tail,
     act: g.run && g.run.k !== 'none' ? actId(g.run) : undefined,
     label: g.label,
+    tip: g.tip,
   })
   const line = (l: VLine) => ({ segs: l.segs.map(seg), right: (l.right ?? []).map(seg), indent: l.indent ? Math.round(l.indent / CELL_W) : 0, ...(l.head ? { head: true } : {}), ...(l.row ? { row: { ...l.row, run: undefined, act: actId(l.row.run) } } : {}) })
   return {

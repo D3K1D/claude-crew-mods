@@ -81,6 +81,7 @@ try {
   const t = await fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: 120, scroll: { bodyRows: 40 } }, viewport: { columns: 120 } }, async () => ({}))
   const said = JSON.stringify(t)
   check("a project chat's Details say it is a chat in this project", said.includes('a chat in this project') && said.includes('local_same'), said.slice(0, 300))
+  check('...and say where it works without its title again', said.includes('"C:/work/game"') && !said.includes('local_same · C:/work/game'), said.match(/.{80}C:\/work\/game.{20}/)?.[0])
   check('...and the project chats are not counted in the header', !/\d+ working/.test(said.match(/Claude Crew[^\]]{0,200}/)?.[0] ?? ''))
 } catch (err) {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 400)}`, false)

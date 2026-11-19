@@ -613,7 +613,7 @@ const seg = g => {
   const cls = [g.b ? 'b' : '', g.i ? 'i' : '', g.u ? 'u' : '', g.flex ? 'cut' : 'fix'].join(' ')
   const style = `${g.parts ? '' : `color:${color(g.role)};`}${g.w ? `width:${g.w}ch;overflow:hidden;text-overflow:ellipsis;` : ''}`
   if (!lead && !words) return ''
-  return g.act ? `<button class="nb ${cls}" style="${style}" data-act="${esc(g.act)}"${g.label ? ` aria-label="${esc(g.label)}"` : ''}>${lead}${words}</button>` : `<span class="${cls}" style="${style}display:flex;align-items:center;gap:6px">${lead}<span class="${g.flex ? 'cut' : ''}">${words}</span></span>`
+  return g.act ? `<button class="nb ${cls}" style="${style}" data-act="${esc(g.act)}"${g.label ? ` aria-label="${esc(g.label)}"` : ''}>${lead}${words}</button>` : `<span class="${cls}" style="${style}display:flex;align-items:center;gap:6px"${g.tip ? ` title="${esc(g.tip)}"` : ''}>${lead}<span class="${g.flex ? 'cut' : ''}">${words}</span></span>`
 }
 // (Details) A Claude under the one shown: one button that opens its Details. Done ones dim, not bold.
 const lead = (hue, chat) =>
