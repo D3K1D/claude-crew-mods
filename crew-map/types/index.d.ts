@@ -213,6 +213,8 @@ export type Crew = {
    * as chat:<id>, its helpers as chat:<id>~<their id>. (The main Claude always has colour 0.)
    */
   colors?: Record<string, { i: number; at: number }>
+  /** The other chats working in this project (not started from this one), newest first, as the app lists them. */
+  siblings?: Chat[]
 }
 
 /** A chat started from this one with the app's start_session, or from one of those. */

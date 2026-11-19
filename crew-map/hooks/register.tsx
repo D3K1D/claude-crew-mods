@@ -565,7 +565,8 @@ let chatsReadAt = 0
  * The chats under this one, from list_sessions' `{ linked: true }` answer (this chat's family, less
  * itself): this chat is the one that started those whose starter the list doesn't hold.
  */
-const chatsOf = (text: string): Chat[] | undefined => {
+/** The app's list as rows: each chat's id, title, short name, who started it, folder, branch, running, last active. */
+const listRows = (text: string) => {
   let rows: unknown
   try {
     rows = JSON.parse(text)
@@ -573,12 +574,17 @@ const chatsOf = (text: string): Chat[] | undefined => {
     return undefined
   }
   if (!Array.isArray(rows)) return undefined
+  return rows
+}
+const chatsOf = (text: string, selfId = ''): Chat[] | undefined => {
+  const rows = listRows(text)
+  if (!rows) return undefined
   const str = (o: Record<string, unknown>, k: string) => (typeof o[k] === 'string' ? (o[k] as string) : '')
   const all = (rows.filter(r => r && typeof r === 'object') as Record<string, unknown>[])
     .filter(r => str(r, 'sessionId') && r.isArchived !== true)
     .map(r => ({ id: str(r, 'sessionId'), title: str(r, 'title') || str(r, 'name') || 'A chat', name: str(r, 'name'), parent: str(r, 'startedBy'), cwd: str(r, 'cwd').replace(/\\/g, '/'), branch: str(r, 'branch'), running: r.isRunning === true, at: Date.parse(str(r, 'lastActivityAt')) || 0, depth: 1, seen: Date.now() }))
   const ids = new Set(all.map(x => x.id))
-  const self = [...new Set(all.filter(x => x.parent && !ids.has(x.parent)).map(x => x.parent))]
+  const self = selfId ? [selfId] : [...new Set(all.filter(x => x.parent && !ids.has(x.parent)).map(x => x.parent))]
   if (self.length !== 1) return []
   const mine: Chat[] = []
   const add = (p: string, depth: number) => {
@@ -590,6 +596,26 @@ const chatsOf = (text: string): Chat[] | undefined => {
   }
   add(self[0], 1)
   return mine
+}
+/** The project this chat works in: its git repository's top (the main checkout, for a worktree), else its folder. */
+let projectRoot = ''
+/** How many same-project chats are shown at most (the most recently active). */
+const SIBLINGS_MAX = 6
+const inProject = (cwd: string) => {
+  const root = projectRoot.toLowerCase()
+  const at = norm(cwd).toLowerCase()
+  return !!root && !!at && (at === root || at.startsWith(`${root}/`))
+}
+/** The other chats in this project, from the app's whole list: not archived, not this chat, not one nested under it. */
+const siblingsOf = (text: string, selfId: string, nestedIds: Set<string>): Chat[] | undefined => {
+  const rows = listRows(text)
+  if (!rows || !selfId) return undefined
+  const str = (o: Record<string, unknown>, k: string) => (typeof o[k] === 'string' ? (o[k] as string) : '')
+  return (rows.filter(r => r && typeof r === 'object') as Record<string, unknown>[])
+    .filter(r => str(r, 'sessionId') && str(r, 'sessionId') !== selfId && !nestedIds.has(str(r, 'sessionId')) && r.isArchived !== true && inProject(str(r, 'cwd')))
+    .map(r => ({ id: str(r, 'sessionId'), title: str(r, 'title') || str(r, 'name') || 'A chat', name: str(r, 'name'), parent: str(r, 'startedBy'), cwd: str(r, 'cwd').replace(/\\/g, '/'), branch: str(r, 'branch'), running: r.isRunning === true, at: Date.parse(str(r, 'lastActivityAt')) || 0, depth: 1, seen: Date.now() }))
+    .sort((a, b) => b.at - a.at)
+    .slice(0, SIBLINGS_MAX)
 }
 let readCrew: (() => Promise<Crew>) | undefined
 let after: ((ms: number, fn: () => void) => void) | undefined
@@ -3488,7 +3514,7 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
   await later$(() => $.fs.write(`${homeDir}/.claude/crew-map/chats/${hostId}.json`, `${s.slice(0, -1)},"at":${selfAt}}`)).catch(() => undefined)
 }
 /** What this chat knows of each nested chat: its file, and its journal's chunks (lines as this log shows them). */
-type Nested = { file?: ChatFile; fileM: number; title?: string; name?: string; touched?: TouchedFile[]; touchedM?: number; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
+type Nested = { file?: ChatFile; fileM: number; title?: string; name?: string; /** A same-project chat (not started from this one). */ sibling?: boolean; touched?: TouchedFile[]; touchedM?: number; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
 const nested = new Map<string, Nested>()
 /**
  * A nested chat still at work (its Claude working, waiting on its own helpers or chats, or needing you):
@@ -3507,7 +3533,7 @@ let sortedNested: LogLine[] = []
 const nestedLines = () => {
   if (sortedVer !== nestedVer) {
     // Under the chat's name now (the app may rename it; the lines keep their keys, which use its id).
-    sortedNested = [...nested.values()].flatMap(x => x.lines.map(l => ({ ...l, who: x.name ?? l.who }))).sort((x, y) => x.at - y.at)
+    sortedNested = [...nested.values()].filter(x => !x.sibling).flatMap(x => x.lines.map(l => ({ ...l, who: x.name ?? l.who }))).sort((x, y) => x.at - y.at)
     sortedVer = nestedVer
   }
   return sortedNested
@@ -3519,7 +3545,7 @@ let touchByPath = new Map<string, NestedTouch[]>()
 const nestedTouched = () => {
   if (touchVer !== nestedVer) {
     touchByPath = new Map()
-    for (const [id, x] of nested)
+    for (const [id, x] of [...nested].filter(([, v]) => !v.sibling))
       for (const f of x.touched ?? []) touchByPath.set(f.path, [...(touchByPath.get(f.path) ?? []), { ...f, chat: id, name: x.name ?? 'a chat' }])
     for (const list of touchByPath.values()) list.sort((a, b) => b.at - a.at)
     touchVer = nestedVer
@@ -3557,7 +3583,8 @@ const readNested = async ($: EngineInterface) => {
   if (!c || !homeDir || readingNested) return
   readingNested = true
   try {
-    const chats = c.chats ?? []
+    const siblingIds = new Set((c.siblings ?? []).map(x => x.id))
+    const chats = [...(c.chats ?? []), ...(c.siblings ?? []).filter(x => !(c.chats ?? []).some(y => y.id === x.id))]
     let changed = false
     for (const k of [...nested.keys()])
       if (!chats.some(x => x.id === k)) {
@@ -3573,6 +3600,7 @@ const readNested = async ($: EngineInterface) => {
         if (cur.name !== name || cur.title !== ch.title) changed = true
         cur.title = ch.title
         cur.name = name
+        cur.sibling = siblingIds.has(ch.id)
         nested.set(ch.id, cur)
         const fm = files.find(f => f.name === `${ch.id}.json`)?.mtimeMs ?? 0
         if (fm && fm !== cur.fileM) {
@@ -3918,6 +3946,16 @@ export const register: Register = on => {
     const budget = await $.store.get('budget').catch(() => undefined)
     if (typeof budget === 'number' && budget > 0) await update($, crew, c => ({ ...c, budget }))
     sessionDir = norm(await $.session.cwd().catch(() => ''))
+    projectRoot = sessionDir
+    // This chat's app id, before the first read of the chat list (that read needs it to find this chat's nested and same-project chats).
+    hostId = String((await later$(() => $.env.get('CLAUDE_CODE_HOST_SESSION_ID')).catch(() => undefined)) ?? '')
+    if (!/^local_[\w-]+$/.test(hostId)) hostId = ''
+    void later$(() => $.process.run(['git', '-C', sessionDir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { timeoutMs: 5000 }))
+      .then(r => {
+        const git = norm(String(r?.stdout ?? '').trim())
+        if (r?.exitCode === 0 && /\/\.git$/i.test(git)) projectRoot = git.slice(0, -5)
+      })
+      .catch(() => undefined)
     // While a test runs, tick once a second so its timer counts up; give up on background runs nobody reads after 30 minutes.
     ticker?.cancel()
     ticker = $.clock.every(1000, () => {
@@ -3951,16 +3989,18 @@ export const register: Register = on => {
       pollingChats = true
       try {
         const may = await Promise.resolve()
-          .then(() => $.tool.check({ tool: LIST_TOOL, input: { linked: true } }))
+          .then(() => $.tool.check({ tool: LIST_TOOL, input: hostId ? {} : { linked: true } }))
           .catch(() => undefined)
         const live = may?.decision === 'allow'
         const r = live
           ? ((await Promise.resolve()
-              .then(() => $.tool.call({ tool: LIST_TOOL, linked: true, limit: 50 } as never))
+              .then(() => $.tool.call((hostId ? { tool: LIST_TOOL, limit: 100 } : { tool: LIST_TOOL, linked: true, limit: 50 }) as never))
               .catch(() => undefined)) as { text?: string; isError?: boolean } | undefined)
           : undefined
-        const chats = r && !r.isError && typeof r.text === 'string' ? chatsOf(r.text) : undefined
+        const chats = r && !r.isError && typeof r.text === 'string' ? chatsOf(r.text, hostId) : undefined
+        const siblings = chats && r?.text ? siblingsOf(r.text, hostId, new Set(chats.map(x => x.id))) : undefined
         if (chats) chatsReadAt = Date.now()
+        if (siblings) await write?.(d => (JSON.stringify((d.siblings ?? []).map(({ seen, ...x }) => x)) === JSON.stringify(siblings.map(({ seen, ...x }) => x)) ? d : { ...d, siblings }))
         await write?.(d => {
           // Live: written only when a chat changed (its `seen` matters only once the reads stop).
           const bare = (x: Chat[]) => JSON.stringify(x.map(({ seen, ...rest }) => rest))
@@ -4296,9 +4336,10 @@ export const register: Register = on => {
   on('tool.call', { tool: LIST_TOOL }, async ($, e, next) => {
     const r = await next(e)
     const a = e as unknown as Record<string, unknown>
-    if (!pollingChats && a.linked === true && !a.group && 'text' in r && typeof r.text === 'string' && !r.isError) {
-      const chats = chatsOf(r.text)
-      if (chats) await write?.(d => ({ ...d, chats }))
+    if (!pollingChats && !a.group && 'text' in r && typeof r.text === 'string' && !r.isError && (a.linked === true || hostId)) {
+      const chats = chatsOf(r.text, a.linked === true ? '' : hostId)
+      const siblings = a.linked === true || !chats ? undefined : siblingsOf(r.text, hostId, new Set(chats.map(x => x.id)))
+      if (chats) await write?.(d => ({ ...d, chats, ...(siblings ? { siblings } : {}) }))
     }
     return r
   })
