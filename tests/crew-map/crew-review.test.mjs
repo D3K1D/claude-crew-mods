@@ -13,6 +13,7 @@ let now = Date.parse('2031-01-01T12:00:00Z')
 Date.now = () => now
 const P = 'C:/work/game'
 const disk = new Map()
+const mtime = new Map()
 const commands = []
 const prompts = []
 const timers = []
@@ -25,7 +26,7 @@ const $ = {
     read: async p => (disk.has(p) ? disk.get(p) : Promise.reject(new Error('none'))),
     exists: async p => disk.has(p),
     write: async (p, t) => void disk.set(p, t),
-    list: async p => [...disk.keys()].filter(k => k.startsWith(`${p}/`) && !k.slice(p.length + 1).includes('/')).map(k => ({ name: k.slice(p.length + 1), kind: 'file', mtimeMs: 1 })),
+    list: async p => [...disk.keys()].filter(k => k.startsWith(`${p}/`) && !k.slice(p.length + 1).includes('/')).map(k => ({ name: k.slice(p.length + 1), kind: 'file', mtimeMs: mtime.get(k) ?? now })),
   },
   store: { get: async () => undefined, set: async () => {} },
   session: { cwd: async () => P, id: async () => 'cli-me' },
@@ -54,8 +55,17 @@ const review = async args => {
 }
 
 try {
-  // A nested chat with its own journal, so the brief names it.
-  disk.set('C:/home/.claude/crew-map/chats/local_kid.json', JSON.stringify({ id: 'local_kid', journal: 'kid-sid', total: 0, done: 0, doing: '', at: now }))
+  // A nested chat with its own journal, so the brief names it (an older file: no project recorded, but the
+  // app's list knows it here).
+  const C = 'C:/home/.claude/crew-map/chats'
+  disk.set(`${C}/local_kid.json`, JSON.stringify({ id: 'local_kid', journal: 'kid-sid', total: 0, done: 0, doing: '', at: now }))
+  // Others' files: an archived chat of this project (no longer listed), another project's chat, an older file
+  // nobody lists, and a chat of this project quiet since before the review's start.
+  disk.set(`${C}/local_gone.json`, JSON.stringify({ id: 'local_gone', journal: 'gone-sid', cwd: `${P}/.claude/worktrees/x`, root: P, goal: 'Tidy the loader', total: 0, done: 0, doing: '', at: now }))
+  disk.set(`${C}/local_else.json`, JSON.stringify({ id: 'local_else', journal: 'else-sid', cwd: 'C:/work/gamer', root: 'C:/work/gamer', total: 0, done: 0, doing: '', at: now }))
+  disk.set(`${C}/local_legacy.json`, JSON.stringify({ id: 'local_legacy', journal: 'legacy-sid', total: 0, done: 0, doing: '', at: now }))
+  disk.set(`${C}/local_quiet.json`, JSON.stringify({ id: 'local_quiet', journal: 'quiet-sid', cwd: P, root: P, total: 0, done: 0, doing: '', at: now }))
+  mtime.set(`${C}/local_quiet.json`, now - 5 * 3_600_000)
   disk.set('C:/home/.claude/crew-map/journals/kid-sid/000001.json', '[]')
   await fire('session.start', {}, async () => ({}))
   await tick()
@@ -63,6 +73,11 @@ try {
   // (The nested chat's file is read on the 4-second timer: once here.)
   for (const t of timers.filter(t => t.ms === 4000)) await t.fn()
   await tick()
+  // This chat's own file records its project (its folder and git root), for other chats' readers.
+  for (const t of timers.filter(t => t.ms === 3000)) await t.fn()
+  await tick()
+  const self = JSON.parse(disk.get(`${C}/local_me.json`) ?? '{}')
+  check("this chat's file records its folder and project root", self.cwd === P && self.root === P, JSON.stringify({ cwd: self.cwd, root: self.root }))
   check('the command is offered, with what it does', commands.some(c => c.name === 'crew-review' && /Crew Review/.test(c.description)), JSON.stringify(commands.map(c => c.name)))
 
   // ── No argument: since this chat began ──
@@ -71,6 +86,8 @@ try {
   check('...and asks Claude, as the person, to start the nested chat', r.asUser === true && r.ask.startsWith('Start a Crew Review of this project: start a nested chat with mcp__ccd_session__start_session, initiation "user_asked", title "Crew Review", context "fresh"'), r.ask.slice(0, 200))
   check("...its brief names this chat's journal folder", r.ask.includes('C:/home/.claude/crew-map/journals/cli-me/ (this chat)'), r.ask)
   check("...and its nested chats' journal folders", r.ask.includes('C:/home/.claude/crew-map/journals/kid-sid/ (nested chat "docs-build")'))
+  check("...a chat of this project no longer listed (archived), by the project its file records", r.ask.includes('journals/gone-sid/ (a chat in this project: no longer listed, it was asked: Tidy the loader)'), r.ask.slice(r.ask.indexOf('Sources'), r.ask.indexOf('Sources') + 900))
+  check("...never another project's chat, an unlisted older file, or one quiet since before the start", !/else-sid|legacy-sid|quiet-sid/.test(r.ask))
   check('...git since this chat began', r.ask.includes(`git log --since="${new Date(now - 3 * 3_600_000).toISOString()}" --stat`))
   check('...only the log lines since then', r.ask.includes(`at least ${now - 3 * 3_600_000}`))
   check('...the summary headings, read only, then ask what to do with it', /What changed .*How .*Why .*Problems and fixes .*What is open/s.test(r.ask) && /Read only: don't edit code/.test(r.ask) && r.ask.includes('.claude/crew-logs/reviews/<date>-review.md') && /release notes/.test(r.ask) && /pull request/.test(r.ask))

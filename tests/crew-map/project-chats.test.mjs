@@ -27,10 +27,11 @@ const all = [
 ]
 const calls = []
 const disk = new Map()
+const timers = []
 const $ = {
   command: { register: async () => {} },
   ui: { open: async () => {}, resolve: () => elements, toast: async () => {}, invalidate: () => {} },
-  clock: { every: () => ({ cancel() {} }), after: () => ({ cancel() {} }) },
+  clock: { every: (ms, fn) => (timers.push({ ms, fn }), { cancel() {} }), after: () => ({ cancel() {} }) },
   fs: {
     read: async p => (disk.has(p) ? disk.get(p) : Promise.reject(new Error('none'))),
     exists: async p => disk.has(p),
@@ -83,6 +84,12 @@ try {
   check("a project chat's Details say it is a chat in this project", said.includes('a chat in this project') && said.includes('local_same'), said.slice(0, 300))
   check('...and say where it works without its title again', said.includes('"C:/work/game"') && !said.includes('local_same · C:/work/game'), said.match(/.{80}C:\/work\/game.{20}/)?.[0])
   check('...and the project chats are not counted in the header', !/\d+ working/.test(said.match(/Claude Crew[^\]]{0,200}/)?.[0] ?? ''))
+  // A chat listed in this folder whose own file names another project stays out.
+  disk.set('C:/home/.claude/crew-map/chats/local_same.json', JSON.stringify({ id: 'local_same', journal: 'same-sid', cwd: 'D:/elsewhere', root: 'D:/elsewhere', total: 0, done: 0, doing: '', at: now }))
+  for (const t of timers.filter(t => t.ms === 4000)) await t.fn()
+  await tick()
+  const t2 = JSON.stringify(await fire('ui.render', { component: 'Pane', requestId: 'crew-map', surface: 'terminal', props: { bodyColumns: 120, scroll: { bodyRows: 40 } }, viewport: { columns: 120 } }, async () => ({})))
+  check("a listed chat whose file names another project is not one of this project's", !t2.includes('a chat in this project'), t2.slice(0, 200))
 } catch (err) {
   check(`no crash: ${String(err?.stack ?? err).slice(0, 400)}`, false)
 }

@@ -608,6 +608,32 @@ const inProject = (cwd: string) => {
   const at = norm(cwd).toLowerCase()
   return !!root && !!at && (at === root || at.startsWith(`${root}/`))
 }
+/** A chat's file is this project's: by the root it recorded, else its folder, else (an older file) the app's list. */
+const fileInProject = (f: Pick<ChatFile, 'root' | 'cwd'> | undefined, listed?: Pick<Chat, 'cwd'>) =>
+  f?.root ? !!projectRoot && norm(f.root).toLowerCase() === projectRoot.toLowerCase() : f?.cwd ? inProject(f.cwd) : listed ? inProject(listed.cwd) : false
+/**
+ * The chats that worked in this project, from the files each one writes about itself (so archived and
+ * deleted chats too, never another project's): written since `after` (ms), the newest 30 at most.
+ */
+const projectChatFiles = async (c: Crew, after = 0) => {
+  if (!homeDir) return []
+  const dir = `${homeDir}/.claude/crew-map/chats`
+  const listed = new Map([...(c.chats ?? []), ...(c.siblings ?? [])].map(x => [x.id, x]))
+  const entries = (await listDir(dir))
+    .filter(e => /^local_[\w-]+\.json$/.test(e.name) && e.name !== `${hostId}.json` && (!after || (e.mtimeMs ?? 0) >= after))
+    .sort((x, y) => (y.mtimeMs ?? 0) - (x.mtimeMs ?? 0))
+    .slice(0, 300)
+  const out: { id: string; journal: string; nested: boolean; label: string }[] = []
+  for (const e of entries) {
+    if (out.length >= 30) break
+    const id = e.name.slice(0, -5)
+    const f = (await readJson(`${dir}/${e.name}`)) as ChatFile | undefined
+    if (!f || typeof f.journal !== 'string' || !/^[\w-]+$/.test(f.journal) || !fileInProject(f, listed.get(id))) continue
+    const ch = listed.get(id)
+    out.push({ id, journal: f.journal, nested: !!(c.chats ?? []).some(x => x.id === id), label: trunc(ch ? ch.name || ch.title : typeof f.goal === 'string' && f.goal ? `no longer listed, it was asked: ${f.goal}` : 'no longer listed', 100) })
+  }
+  return out
+}
 /** The other chats in this project, from the app's whole list: not archived, not this chat, not one nested under it. */
 const siblingsOf = (text: string, selfId: string, nestedIds: Set<string>): Chat[] | undefined => {
   const rows = listRows(text)
@@ -646,12 +672,13 @@ const reviewSince = (args: string, startedAt: number, now = Date.now()): ReviewS
   return { error: `Couldn't read "${trunc(a, 40)}" as a time or a git ref. ${REVIEW_USAGE}` }
 }
 /** The request /crew-review sends Claude: start the "Crew Review" chat, with its whole brief. */
-const reviewAsk = (since: Exclude<ReviewSince, { error: string }>, c: Crew) => {
+const reviewAsk = async (since: Exclude<ReviewSince, { error: string }>, c: Crew) => {
   const base = homeDir ? `${homeDir}/.claude/crew-map` : '~/.claude/crew-map'
-  const journalOf = (id: string) => nested.get(id)?.file?.journal
+  // Only chats whose own file says they worked in this project (by its git root or folder), active since the start.
+  const files = await projectChatFiles(c, since.at)
   const mine = journalSid ? [`${base}/journals/${journalSid}/ (this chat)`] : []
-  const kids = (c.chats ?? []).map(ch => (journalOf(ch.id) ? `${base}/journals/${journalOf(ch.id)}/ (nested chat "${trunc(ch.name || ch.title, 40)}")` : '')).filter(Boolean)
-  const project = (c.siblings ?? []).map(ch => (journalOf(ch.id) ? `${base}/journals/${journalOf(ch.id)}/ (project chat "${trunc(ch.title, 60)}")` : '')).filter(Boolean)
+  const kids = files.filter(f => f.nested).map(f => `${base}/journals/${f.journal}/ (nested chat "${f.label}")`)
+  const project = files.filter(f => !f.nested).map(f => `${base}/journals/${f.journal}/ (a chat in this project: ${f.label})`)
   const from = since.at ? `Only lines whose "at" (milliseconds since 1970) is at least ${since.at} (${new Date(since.at).toISOString()}).` : `All lines (the review starts at a git ref; match them up by time with the git history).`
   const brief = [
     `You are the Crew Review for the project in ${sessionDir || 'this folder'}. Review the changes ${since.label} and summarise them for the person. Read only: don't edit code, run builds or change git unless they ask you to.`,
@@ -660,7 +687,8 @@ const reviewAsk = (since: Exclude<ReviewSince, { error: string }>, c: Crew) => {
     `- Claude Crew's logs (each folder holds numbered chunks, 000001.json and on: JSON arrays of lines {at, who, kind, text, more?, path?, took?, bad?}; "more" holds an edit's diff or a command's last output; touched.json lists the files touched). ${from}`,
     ...[...mine, ...kids].map(p => `  - ${p}`),
     ...(project.length ? ['- Optional, if they relate: the other chats in this project.', ...project.map(p => `  - ${p}`)] : []),
-    `- Each chat's own summary of its cards and steps: ${base}/chats/<app id>.json.`,
+    `- Each chat's own summary of its cards and steps: ${base}/chats/<app id>.json (its "root" names its project: read only those whose root is ${projectRoot || sessionDir}).`,
+    "- No other chat's logs: the folders above are this project's only.",
     `- Git: ${since.git}, then git diff for the files that matter (and git status for work not committed yet).`,
     `- Saved logs and summaries, if any: .claude/crew-logs/ in the project.`,
     '',
@@ -2744,7 +2772,8 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     // The other chats in this project: each its main card, no indent (its helpers only in its Details); its
     // title for a name; "branch · folder" when it has no steps; needing you, it says to answer there. In
     // order: needing you, working, waiting, then idle by last active (6 idle at most). Not counted above.
-    const siblingList = src.siblings ?? []
+    // (A chat listed in this folder whose own file names another project stays out.)
+    const siblingList = (src.siblings ?? []).filter(ch => { const f = nested.get(ch.id)?.file; return !f || (!f.root && !f.cwd) || fileInProject(f, ch) })
     const RANK: Record<GlanceRow['state'], number> = { you: 0, work: 1, wait: 2, idle: 3, done: 3 }
     const projAll = siblingList
       .map(ch => {
@@ -3566,7 +3595,7 @@ type NestedRow = Pick<GlanceRow, 'id' | 'name' | 'hue' | 'state' | 'kind' | 'sta
   ask?: string
   info?: { cost: number; tokens: number; ctx?: { tokens: number; window: number }; compactions?: number; asked: string; steps: { mark: string; text: string; on: boolean }[] }
 }
-type ChatFile = { id: string; journal: string; total: number; done: number; doing: string; at: number; card?: { rows: NestedRow[]; cost: number; tokens: number } }
+type ChatFile = { id: string; journal: string; total: number; done: number; doing: string; at: number; card?: { rows: NestedRow[]; cost: number; tokens: number }; /** Its folder and its project's root (the git repository's top, else the folder), so a reader can tell projects apart; and what it was asked. */ cwd?: string; root?: string; goal?: string }
 /** This chat's id in the desktop app (local_…), and the home folder the files live under. */
 let hostId = ''
 let homeDir = ''
@@ -3610,7 +3639,8 @@ const writeSelf = async ($: EngineInterface, c: Crew) => {
       }
     })
   const card = { rows, cost: c.chatCost ?? c.spent?.cost ?? 0, tokens: c.spent?.tokens ?? 0 }
-  const s = JSON.stringify({ id: hostId, journal: journalSid, total, done, doing: trunc(oneLine(doing), 120), card })
+  const goal = a.goal && !systemNote(a.goal) ? trunc(oneLine(promptOf(a.goal)), 160) : ''
+  const s = JSON.stringify({ id: hostId, journal: journalSid, cwd: sessionDir, root: projectRoot, ...(goal ? { goal } : {}), total, done, doing: trunc(oneLine(doing), 120), card })
   // Written when it changed, and once a minute so a reader can tell it is still there.
   if (s === selfSent && Date.now() - selfAt < 60_000) return
   selfSent = s
@@ -3639,7 +3669,7 @@ let sortedProject: LogLine[] = []
 /** The project chats' lines in time order (under their titles), made again only when one changed. */
 const projectLines = () => {
   if (projVer !== nestedVer) {
-    sortedProject = [...nested.values()].filter(x => x.sibling).flatMap(x => x.lines.map(l => ({ ...l, who: x.title ?? l.who }))).sort((x, y) => x.at - y.at)
+    sortedProject = [...nested.values()].filter(x => x.sibling && (!x.file || (!x.file.root && !x.file.cwd) || fileInProject(x.file))).flatMap(x => x.lines.map(l => ({ ...l, who: x.title ?? l.who }))).sort((x, y) => x.at - y.at)
     projVer = nestedVer
   }
   return sortedProject
@@ -4198,7 +4228,7 @@ export const register: Register = on => {
     const c = await read($, crew)
     const since = reviewSince(typeof e.args === 'string' ? e.args : '', c.startedAt || Date.now())
     if ('error' in since) return { text: since.error }
-    const ask = reviewAsk(since, c)
+    const ask = await reviewAsk(since, c)
     $.clock.after(400, () => void $.prompt.submit({ text: ask, asUser: true }).catch(() => undefined))
     return { text: `Starting a Crew Review of the changes ${since.label}: Claude opens it as a nested chat.` }
   })

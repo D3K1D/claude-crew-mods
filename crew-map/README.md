@@ -74,7 +74,7 @@ Unlike **Save**'s summary (written by Claude Haiku, the same shape every time), 
 In `~/.claude/crew-map`, on your computer only:
 
 - `journals/<session>/`: each chat's log, its newest 5,000 lines, including the last lines of command output and edits' changed lines (a command that printed a secret leaves it here); `touched.json`, what Touched showed, so it comes back after a restart; and `colors.json`, who has which colour.
-- `chats/<app id>.json`: a small file each chat writes about itself (its cards, steps and cost) for the chat above it to read.
+- `chats/<app id>.json`: a small file each chat writes about itself (its cards, steps and cost, its folder and its project's root) for the chat above it, the project's other chats and `/crew-review` to read. A review reads only the chats whose file names this project (archived ones included), never another project's.
 
 Files nothing has written for 30 days are deleted, as are journals past the newest 300 (checked once a day, never one a chat still uses).
 
