@@ -60,7 +60,8 @@ const $ = {
   prompt: { submit: async () => {} },
 }
 register((ev, m, fn) => {
-  hooks[ev] = fn ?? m
+  // (A command's hook by its name: /crew stays hooks['command.run'], others are command.run:<name>.)
+  hooks[fn && m?.command && m.command !== 'crew' ? `${ev}:${m.command}` : ev] = fn ?? m
   return { catch() {} }
 }, {})
 let fails = 0

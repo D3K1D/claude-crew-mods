@@ -127,6 +127,7 @@ The script copies both mods to `~/.claude/mods` and points Claude Code at them i
 ## Using them
 
 - `/crew` opens the chat's crew. With nothing going on yet, **▶ Try a pretend session** shows a pretend crew at work for half a minute.
+- `/crew-review` starts a chat called **Crew Review** that reads Claude Crew's logs and the git history and summarises what changed, then asks what to do with the summary. See [Reviewing the work](crew-map/README.md#reviewing-the-work-crew-review).
 - `/codex` opens the Codex pane.
 - Then work as usual. To bring Codex in, ask for it: *"get Codex's opinion on this"*, *"have Codex write the tests on a thread called tests"*.
 

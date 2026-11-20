@@ -52,6 +52,19 @@ Without Node, `/crew` opens the mod's own pane instead, with the same view as te
 
 **Light and dark, wide and narrow.** It follows the app's theme (Settings can override it) and fits the browser pane down to about 450 px wide.
 
+## Reviewing the work (`/crew-review`)
+
+`/crew-review` asks Claude to start a nested chat called **Crew Review** in the same project. That chat reads this chat's Claude Crew logs (and its nested chats', and the other project chats' when they relate) and the git history, then writes a summary under five headings: what changed, how, why, problems and fixes, and what is open. Then it asks what you want done with it: save it to `.claude/crew-logs/reviews/<date>-review.md`, turn it into release notes or a pull request description, or anything else you steer it to. It only reads until you ask for more.
+
+Where it starts:
+
+- `/crew-review`: since this chat began.
+- `/crew-review 2h` (or `90m`, `3d`, `1w`): that far back.
+- `/crew-review since 2026-11-18`: since a date.
+- `/crew-review since v1.8.8`: since a git tag, branch or commit.
+
+Unlike **Save**'s summary (written by Claude Haiku, the same shape every time), this is an ordinary chat on your usual model: you can ask it to dig into a part, change the emphasis, or write it for a different reader.
+
 ## Saving the log
 
 **Save** writes the log into the project as `.claude/crew-logs/<date>-<what you asked>-<chat>.md`, with a summary beside it (`.summary.md`) by Claude Haiku: the goal, what was done, how and why, problems and fixes, and what is left open. Saving again updates the summary with what is new. Settings → Save log can do it after each task. New chats in a project with saved summaries get one line telling Claude where they are.

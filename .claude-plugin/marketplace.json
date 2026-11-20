@@ -12,7 +12,7 @@
       "name": "crew-map",
       "source": "./crew-map",
       "description": "Claude Crew: a live website beside the chat (type /crew) showing what Claude, its helpers and the chats it started are doing: each one's status, steps, cost and context, what needs you, the files touched, and a filterable log where every action opens to its diff, output or error. Logs are kept and can be saved with a summary.",
-      "version": "1.8.8"
+      "version": "1.8.9"
     },
     {
       "name": "codex-bridge",

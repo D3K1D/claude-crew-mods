@@ -7,9 +7,11 @@ import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapV
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.8'
+const VERSION = '1.8.9'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
+/** How /crew-review's request to Claude starts (that turn, too, is not the chat's goal). */
+const REVIEW_ASK = 'Start a Crew Review of this project'
 const MAX_AGENTS = 12
 const MAX_NODES = 60
 const MAX_GHOSTS = 14
@@ -619,6 +621,61 @@ const siblingsOf = (text: string, selfId: string, nestedIds: Set<string>): Chat[
     .filter((x, i, all) => x.running || all.filter(y => !y.running).indexOf(x) < SIBLINGS_MAX)
     .slice(0, 20)
 }
+/**
+ * Where a Crew Review starts: since this chat began (no argument), a span back ("2h", "90m", "3d", "1w"),
+ * a date ("2026-11-18"), or a git ref ("since v1.8.8", "main"). Anything else: what to type instead.
+ */
+type ReviewSince = { label: string; at: number; git: string } | { error: string }
+const REVIEW_USAGE = 'Usage: /crew-review, /crew-review 2h (or 90m, 3d, 1w), /crew-review since 2026-11-18, or /crew-review since v1.8.8 (a git tag, branch or commit).'
+const reviewSince = (args: string, startedAt: number, now = Date.now()): ReviewSince => {
+  const a = oneLine(args).replace(/^since\s+/i, '').trim()
+  const iso = (ms: number) => new Date(ms).toISOString()
+  if (!a) return { label: 'since this chat began', at: startedAt, git: `git log --since="${iso(startedAt)}" --stat` }
+  const span = a.match(/^(\d{1,4})\s*(m|min|mins|minutes?|h|hrs?|hours?|d|days?|w|weeks?)$/i)
+  if (span) {
+    const unit = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[span[2][0].toLowerCase() as 'm' | 'h' | 'd' | 'w']
+    const at = now - Number(span[1]) * unit
+    return { label: `in the last ${span[1]}${span[2][0].toLowerCase()}`, at, git: `git log --since="${iso(at)}" --stat` }
+  }
+  if (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2})?$/.test(a) && Number.isFinite(Date.parse(a))) {
+    const at = Date.parse(a)
+    return { label: `since ${a}`, at, git: `git log --since="${iso(at)}" --stat` }
+  }
+  // A git ref, as git names them (no spaces, no shell characters): the review starts at it.
+  if (/^[\w][\w./@^~-]{0,79}$/.test(a) && !a.includes('..')) return { label: `since ${a}`, at: 0, git: `git log ${a}..HEAD --stat` }
+  return { error: `Couldn't read "${trunc(a, 40)}" as a time or a git ref. ${REVIEW_USAGE}` }
+}
+/** The request /crew-review sends Claude: start the "Crew Review" chat, with its whole brief. */
+const reviewAsk = (since: Exclude<ReviewSince, { error: string }>, c: Crew) => {
+  const base = homeDir ? `${homeDir}/.claude/crew-map` : '~/.claude/crew-map'
+  const journalOf = (id: string) => nested.get(id)?.file?.journal
+  const mine = journalSid ? [`${base}/journals/${journalSid}/ (this chat)`] : []
+  const kids = (c.chats ?? []).map(ch => (journalOf(ch.id) ? `${base}/journals/${journalOf(ch.id)}/ (nested chat "${trunc(ch.name || ch.title, 40)}")` : '')).filter(Boolean)
+  const project = (c.siblings ?? []).map(ch => (journalOf(ch.id) ? `${base}/journals/${journalOf(ch.id)}/ (project chat "${trunc(ch.title, 60)}")` : '')).filter(Boolean)
+  const from = since.at ? `Only lines whose "at" (milliseconds since 1970) is at least ${since.at} (${new Date(since.at).toISOString()}).` : `All lines (the review starts at a git ref; match them up by time with the git history).`
+  const brief = [
+    `You are the Crew Review for the project in ${sessionDir || 'this folder'}. Review the changes ${since.label} and summarise them for the person. Read only: don't edit code, run builds or change git unless they ask you to.`,
+    '',
+    'Sources:',
+    `- Claude Crew's logs (each folder holds numbered chunks, 000001.json and on: JSON arrays of lines {at, who, kind, text, more?, path?, took?, bad?}; "more" holds an edit's diff or a command's last output; touched.json lists the files touched). ${from}`,
+    ...[...mine, ...kids].map(p => `  - ${p}`),
+    ...(project.length ? ['- Optional, if they relate: the other chats in this project.', ...project.map(p => `  - ${p}`)] : []),
+    `- Each chat's own summary of its cards and steps: ${base}/chats/<app id>.json.`,
+    `- Git: ${since.git}, then git diff for the files that matter (and git status for work not committed yet).`,
+    `- Saved logs and summaries, if any: .claude/crew-logs/ in the project.`,
+    '',
+    'Write the summary under these headings: What changed (by area, with the files), How (the approach), Why (the reasons given in the logs and commits), Problems and fixes (what failed and what fixed it), and What is open (unfinished steps, failing tests, follow-ups). Be concrete and short; name commits and files.',
+    '',
+    'Then ask the person what to do with it, for example: save it to .claude/crew-logs/reviews/<date>-review.md, turn it into release notes, or into a pull request description. Change nothing until they say.',
+  ].join('\n')
+  return [
+    `${REVIEW_ASK}: start a nested chat with mcp__ccd_session__start_session, initiation "user_asked", title "Crew Review", context "fresh", in this project's folder, with exactly this brief as its prompt:`,
+    '',
+    '"""',
+    brief,
+    '"""',
+  ].join('\n')
+}
 let readCrew: (() => Promise<Crew>) | undefined
 let after: ((ms: number, fn: () => void) => void) | undefined
 let every: ((ms: number, fn: () => void) => { cancel: () => void }) | undefined
@@ -1016,6 +1073,7 @@ const LOG_STEP = 3
 const SYSTEM_TAG = /^\s*<(task-notification|agent-message|system-reminder|ci-monitor-event|local-command-stdout|local-command-stderr|local-command-caveat|command-name|command-message|command-args|bash-notification|bash-input|bash-stdout|user-memory-input|[a-z][\w-]*-(?:notification|event|reminder))[\s>]/i
 const systemNote = (full: string) => {
   if (full.startsWith(OPEN_ASK)) return 'opening Claude Crew'
+  if (full.startsWith(REVIEW_ASK)) return 'starting a Crew Review'
   const text = full.length > 8000 ? full.slice(0, 8000) : full
   const tag = text.match(SYSTEM_TAG)?.[1]?.toLowerCase()
   if (!tag) return ''
@@ -3969,6 +4027,7 @@ export const register: Register = on => {
     demo = undefined
 
     await $.command.register({ name: 'crew', description: "Open this chat's Claude Crew website in the browser pane" })
+    await $.command.register({ name: 'crew-review', description: 'Start a "Crew Review" chat that summarises the recent changes from Claude Crew\'s logs and git (/crew-review 2h, /crew-review since v1.8.8)' })
     await update($, crew, c => {
       // A reload drops in-flight calls and the demo; migrate older state shapes too.
       const old: Partial<Crew> = Array.isArray(c?.agents) ? c : {}
@@ -4130,6 +4189,18 @@ export const register: Register = on => {
     }
     await $.ui.open({ id: PANE, title: 'Claude Crew' })
     return { text: 'Claude Crew pane opened.' }
+  })
+
+  // /crew-review: Claude starts a nested chat, "Crew Review", that reads this chat's (and its nested
+  // chats') Claude Crew logs and the git history since a starting point, summarises what changed, and
+  // asks what to do with the summary. (A mod can't start a chat itself: it asks Claude, as /crew does.)
+  on('command.run', { command: 'crew-review' }, async ($, e) => {
+    const c = await read($, crew)
+    const since = reviewSince(typeof e.args === 'string' ? e.args : '', c.startedAt || Date.now())
+    if ('error' in since) return { text: since.error }
+    const ask = reviewAsk(since, c)
+    $.clock.after(400, () => void $.prompt.submit({ text: ask, asUser: true }).catch(() => undefined))
+    return { text: `Starting a Crew Review of the changes ${since.label}: Claude opens it as a nested chat.` }
   })
 
   on('turn.start', async ($, e, next) => {
