@@ -185,7 +185,9 @@ export async function publishWeb($: EngineInterface) {
  * starts over when Claude restarts), so Save, Copy and Download have all of it. A folder per chat,
  * ~/.claude/crew-map/journals/<session id>/, of numbered chunks of 250 lines (000001.json …, each a
  * JSON array). A tick writes only the chunks that changed: the newest, and an older one whose line
- * finished late. (A chat's single <session id>.json from before is carried over once.)
+ * finished late. (A chat's single <session id>.json from before is carried over once.) $.fs.write has
+ * no rename, so a write is not atomic: a crash in the middle of one can lose that chunk (250 lines at
+ * most). A chunk that does not parse is skipped when the journal is read; the others are untouched.
  */
 export const journal = new Map<string, LogLine>()
 export const CHUNK = 250
@@ -780,24 +782,28 @@ export function startWeb($: EngineInterface, onlyIfKept = false) {
             try {
               msg = JSON.parse(line.slice(4))
             } catch {}
-            const act = typeof msg.id === 'string' ? actOf(msg.id) : undefined
-            if (act) await doAction($, act, undefined)
-            else if (typeof msg.search === 'string') await searchFor($, msg.search)
-            // The Who list picked the whole project or one chat in it (or let it go): its lines come with the view.
-            else if (typeof msg.project === 'string') webProject = msg.project === '*' || /^local_[\w-]+$/.test(msg.project) ? msg.project : ''
-            // The page's own asks (a line opened, older lines): answered with a reply, the view is unchanged.
-            else if (typeof msg.open === 'string') {
-              await openLine(msg.open)
-              continue
-            } else if (typeof msg.older === 'number') {
-              await olderLines($, msg.older)
-              continue
-            }
-            else if (msg.set && typeof msg.set === 'object') {
-              // Settings' budget box and editor list: only values the pane's own choices could set.
-              const { budget, editor } = msg.set
-              if (typeof budget === 'number' && Number.isFinite(budget) && budget >= 0 && budget <= 100_000) await doAction($, { k: 'set', budget: Math.round(budget * 100) / 100 }, undefined)
-              if (editor === 'code' || editor === 'cursor' || editor === 'system') await doAction($, { k: 'set', editor }, undefined)
+            // A press that fails is noted, and the website keeps running.
+            try {
+              const act = typeof msg.id === 'string' ? actOf(msg.id) : undefined
+              if (act) await doAction($, act, undefined)
+              else if (typeof msg.search === 'string') await searchFor($, msg.search)
+              // The Who list picked the whole project or one chat in it (or let it go): its lines come with the view.
+              else if (typeof msg.project === 'string') webProject = msg.project === '*' || /^local_[\w-]+$/.test(msg.project) ? msg.project : ''
+              // The page's own asks (a line opened, older lines): answered with a reply, the view is unchanged.
+              else if (typeof msg.open === 'string') {
+                await openLine(msg.open)
+                continue
+              } else if (typeof msg.older === 'number') {
+                await olderLines($, msg.older)
+                continue
+              } else if (msg.set && typeof msg.set === 'object') {
+                // Settings' budget box and editor list: only values the pane's own choices could set.
+                const { budget, editor } = msg.set
+                if (typeof budget === 'number' && Number.isFinite(budget) && budget >= 0 && budget <= 100_000) await doAction($, { k: 'set', budget: Math.round(budget * 100) / 100 }, undefined)
+                if (editor === 'code' || editor === 'cursor' || editor === 'system') await doAction($, { k: 'set', editor }, undefined)
+              }
+            } catch (err) {
+              note(`press: ${String(err).slice(0, 160)}`)
             }
             void publishWeb($)
           }

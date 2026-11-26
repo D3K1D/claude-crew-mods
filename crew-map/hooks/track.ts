@@ -1423,6 +1423,8 @@ export const note = (text: string) => {
   if (diag.length > 40) diag.shift()
   diagDirty = true
 }
+/** Work nobody waits for (a timer's, a press's): a failure is noted once, never left unhandled. */
+export const background = (what: string, work: Promise<unknown> | undefined) => void work?.catch(err => note(`${what}: ${String(err).slice(0, 160)}`))
 /** Keeps the notes in the store as 'diag' when there are new ones (the 1 s clock asks). */
 export async function flushDiag($: EngineInterface) {
   if (!diagDirty) return

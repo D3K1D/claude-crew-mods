@@ -1,5 +1,5 @@
 import type { CodexRun, Crew, Summary, TestRun } from '../types'
-import { actionLine, after, every, isTestCmd, log, reach, record, settleTest, think, upsert, write } from './track'
+import { actionLine, after, background, every, isTestCmd, log, reach, record, settleTest, think, upsert, write } from './track'
 
 // The pretend session: three Claudes and a Codex run at work on made-up files for half a minute, and
 // what keeps them out of the real record.
@@ -143,19 +143,19 @@ export const startDemo = () => {
   const step = () => {
     const now = Date.now()
     if (k === 0) {
-      void w(c => {
+      background('demo', w(c => {
         let d: Crew = c
         for (const cast of DEMO_CAST)
           d = upsert(d, cast.id, a => ({ ...a, name: cast.name, kind: cast.kind, hue: cast.hue, goal: cast.goal, state: 'thinking' }))
         return d
-      })
+      }))
     }
     const step = k
     k++
     if (step >= 7) {
       demo?.cancel()
       demo = undefined
-      void w(c => {
+      background('demo', w(c => {
         let d = c
         for (const cast of DEMO_CAST)
           d = log(upsert(d, cast.id, a => ({ ...a, state: 'done', doneAt: now, pending: [] })), cast.id, 'info', 'finished')
@@ -177,14 +177,14 @@ export const startDemo = () => {
           problems: 0,
         }
         return { ...d, summary }
-      })
+      }))
       after?.(20_000, () =>
         // A demo started since then owns the demo's files now.
-        void w(c => (run !== demoRun || demo ? c : withoutDemo(c))),
+        background('demo', w(c => (run !== demoRun || demo ? c : withoutDemo(c)))),
       )
       return
     }
-    void w(c => {
+    background('demo', w(c => {
       let d: Crew = { ...c, demoCodex: demoCodexAt(step, now, c.demoCodex ?? []) }
       // The Helper's test runs come back a step later: the first one fails, the rerun passes.
       for (const t of (d.tests ?? []).filter(x => x.status === 'running' && isDemoAgent(x.agentId))) {
@@ -250,7 +250,7 @@ export const startDemo = () => {
         d = think(d, cast.id, cast.thoughts[i])
       })
       return d
-    })
+    }))
   }
   step()
   demo = every(2600, step)

@@ -22,7 +22,7 @@
 // started it is gone (Claude closed or crashed), or when the mod has not been heard from (a push or
 // its ping every 15 seconds) for a minute. Its standard input is closed from the start, so that is no sign.
 import http from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
@@ -77,6 +77,8 @@ const bodyOf = (req, then) => {
   req.on('end', () => then(body))
 }
 const MOD_PATHS = new Set(['push', 'ping', 'export', 'reply', 'quit'])
+// The token and the key, compared in constant time (their length is no secret).
+const same = (got, want) => typeof got === 'string' && got.length === want.length && timingSafeEqual(Buffer.from(got), Buffer.from(want))
 const srv = http.createServer((req, res) => {
   const { port } = srv.address()
   const origin = req.headers.origin
@@ -86,7 +88,7 @@ const srv = http.createServer((req, res) => {
   }
   const [, tok, ...rest] = (req.url ?? '/').split('?')[0].split('/')
   const path = rest.join('/')
-  if (tok !== token || (MOD_PATHS.has(path) && req.headers['x-crew-key'] !== key)) {
+  if (!same(tok, token) || (MOD_PATHS.has(path) && !same(req.headers['x-crew-key'], key))) {
     res.writeHead(404)
     return res.end()
   }
@@ -148,7 +150,7 @@ const srv = http.createServer((req, res) => {
           typeof msg.id === 'string'
             ? { id: msg.id.slice(0, 40) }
             : typeof msg.search === 'string'
-              ? { search: msg.search.slice(0, 200), next: msg.next === true }
+              ? { search: msg.search.slice(0, 200) }
               : typeof msg.open === 'string'
                 ? { open: msg.open.slice(0, 60) }
                 : Number.isFinite(msg.older)

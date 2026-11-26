@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 import type { Agent, Chat, Crew, LogLine, Problem, ShellRun, Summary, TestRun } from '../types'
 import { EMPTY } from './empty'
-import { ASKS, COMPACT, LIST_TOOL, LOG_KEEP, MAIN, MORE_MAX, OPEN_ASK, PALETTE, PANE, PLAN_TOOL, SHELL_GIVE_UP_MS, TEST_SHOW_MS, WRAP_TOOL, actionLine, after, agentModel, agentOf, applyTaskCall, baseName, bindEngine, chatsOf, cleanSaid, cmdDir, cmdGist, codexCount, costOf, cutTo, detailOf, editDiff, elapsed, endShell, fin, flushDiag, fmtK, fmtUsd, freshName, isBuildCmd, isSpecial, isTestCmd, lastCtx, lineDiff, log, needsText, nodeOf, norm, note, noticeTurn, oneLine, parseProblems, planAfter, promptOf, reach, readChatCost, readCrew, readFile, record, recountCodex, relPath, relayedOf, resolvePath, resultText, reviewAsk, reviewSince, sessionDir, setFolder, setMainModel, setMainWindow, settleLater, settleTest, siblingsOf, stepStart, stuckReason, summarise, summarise1, systemNote, tailOf, testCounts, testLabel, testPurpose, testWords, textW, think, tidyCmd, tokensOf, took, trunc, upsert, windowOf, wrapRows, write } from './track'
+import { ASKS, COMPACT, LIST_TOOL, LOG_KEEP, MAIN, MORE_MAX, OPEN_ASK, PALETTE, PANE, PLAN_TOOL, SHELL_GIVE_UP_MS, TEST_SHOW_MS, WRAP_TOOL, actionLine, after, agentModel, agentOf, applyTaskCall, background, baseName, bindEngine, chatsOf, cleanSaid, cmdDir, cmdGist, codexCount, costOf, cutTo, detailOf, editDiff, elapsed, endShell, fin, flushDiag, fmtK, fmtUsd, freshName, isBuildCmd, isSpecial, isTestCmd, lastCtx, lineDiff, log, needsText, nodeOf, norm, note, noticeTurn, oneLine, parseProblems, planAfter, promptOf, reach, readChatCost, readCrew, readFile, record, recountCodex, relPath, relayedOf, resolvePath, resultText, reviewAsk, reviewSince, sessionDir, setFolder, setMainModel, setMainWindow, settleLater, settleTest, siblingsOf, stepStart, stuckReason, summarise, summarise1, systemNote, tailOf, testCounts, testLabel, testPurpose, testWords, textW, think, tidyCmd, tokensOf, took, trunc, upsert, windowOf, wrapRows, write } from './track'
 import type { Usage } from './track'
 import { isDemoAgent, stopDemo, withoutDemo } from './demo'
 import { CELL_W, KIND_GLYPH, doAction, hueRole, paintPane, paneModel, searchFor, stateRole } from './model'
@@ -120,22 +120,22 @@ export const register: Register = on => {
       }
     }
     chatPoller?.cancel()
-    chatPoller = $.clock.every(15_000, () => void refreshChats?.())
-    void refreshChats()
-    void readChatCost($)
+    chatPoller = $.clock.every(15_000, () => background('chat list', refreshChats?.()))
+    background('chat list', refreshChats())
+    background('cost', readChatCost($))
     const savedTheme = await $.store.get('theme').catch(() => undefined)
     if (savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'auto') await write?.(d => (d.theme === savedTheme ? d : { ...d, theme: savedTheme }))
     // This chat's website: back at once only if it had one before (else on its first /crew), and sent
     // the view while anyone has it open. The pane opens by itself only when the website can't start.
     if (!webUrl) startWeb($, true)
-    void openJournal($).then(() => pruneOld($))
+    background('journal', openJournal($).then(() => pruneOld($)))
     journalTimer?.cancel()
-    journalTimer = $.clock.every(3000, () => void syncJournal($))
+    journalTimer = $.clock.every(3000, () => background('journal', syncJournal($)))
     nestedTimer?.cancel()
-    nestedTimer = $.clock.every(4000, () => void readNested($))
+    nestedTimer = $.clock.every(4000, () => background('nested chats', readNested($)))
     if ((await $.store.get('autoSave').catch(() => undefined)) === true) await write?.(d => ({ ...d, autoSave: true }))
     if ((await $.store.get('testToasts').catch(() => undefined)) === true) await write?.(d => ({ ...d, testToasts: true }))
-    void findLogs($)
+    background('saved logs', findLogs($))
     webTimer?.cancel()
     webTimer = $.clock.every(800, () => void publishWeb($))
 
@@ -240,9 +240,9 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     const id = agentOf(e)
-    void readChatCost($)
+    background('cost', readChatCost($))
     if (id === 'main' && e.reason === 'answer')
-      $.clock.after(2000, () => void (async () => ((await readCrew?.())?.autoSave ? saveLog($, 'task') : undefined))())
+      $.clock.after(2000, () => background('save log', (async () => ((await readCrew?.())?.autoSave ? saveLog($, 'task') : undefined))()))
     if (id === 'main') await recountCodex($)
     let budgetNote = ''
     let summary: Summary | undefined
@@ -337,7 +337,7 @@ export const register: Register = on => {
       const window = windowOf(e.model)
       if (lastCtx.get(id) !== `${tokens}/${window}`) {
         lastCtx.set(id, `${tokens}/${window}`)
-        void write?.(c => upsert(c, id, a => ({ ...a, ctx: { tokens, window, at: Date.now() } })))
+        background('context', write?.(c => upsert(c, id, a => ({ ...a, ctx: { tokens, window, at: Date.now() } }))))
       }
     }
     return r
@@ -349,7 +349,7 @@ export const register: Register = on => {
     if (ok(e.context?.window) && typeof e.context.tokens === 'number' && Number.isFinite(e.context.tokens) && e.context.tokens >= 0) {
       const tokens = e.context.tokens
       const window = e.context.window
-      void write?.(c => upsert(c, 'main', a => ({ ...a, ctx: { tokens, window, at: Date.now() } })))
+      background('context', write?.(c => upsert(c, 'main', a => ({ ...a, ctx: { tokens, window, at: Date.now() } }))))
     }
     return next(e)
   })
@@ -454,7 +454,7 @@ export const register: Register = on => {
   on('tool.call', { tool: /^(SendMessage|mcp__ccd_session(_mgmt)?__\w+)$/ }, async ($, e, next) => {
     if (typeof e.tool !== 'string' || pollingChats || e.tool === LIST_TOOL) return next(e)
     const r = await next(e)
-    after?.(1500, () => void refreshChats?.())
+    after?.(1500, () => background('chat list', refreshChats?.()))
     const text = 'text' in r && typeof r.text === 'string' && !r.isError ? r.text : ''
     if (e.tool.endsWith('__get_session') && text) {
       let s: Record<string, unknown> = {}
@@ -769,7 +769,7 @@ export const register: Register = on => {
     const mode = c.theme ?? 'auto'
     const TONE: Record<string, string> = { text: '#E6EDF3', dim: '#8B949E', faint: '#8B949E', amber: '#E3B341', green: '#3FB950', red: '#F85149', brand: '#D97757', line: '#30363D', cx: '#8B949E', wait: '#8C8CFF' }
     const toneOf = (role: string) => TONE[role] ?? (/^h\d+$/.test(role) ? PALETTE[Number(role.slice(1))] : '#E6EDF3')
-    const press = (act: Act) => (p: { surface: unknown }) => void doAction($, act, p?.surface)
+    const press = (act: Act) => (p: { surface: unknown }) => background('press', doAction($, act, p?.surface))
     const segEl = (g: Seg, k: string) => {
       const lead = `${g.dot ? '● ' : ''}${g.icon ? `${KIND_GLYPH[g.icon[0]] ?? '•'} ` : ''}${g.bar !== undefined ? `${'▮'.repeat(Math.round(g.bar * 8))}${'▯'.repeat(8 - Math.round(g.bar * 8))} ` : ''}`
       const t = `${lead}${g.t ?? ''}`
