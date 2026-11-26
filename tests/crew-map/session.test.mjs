@@ -126,7 +126,7 @@ await call({ tool: 'Agent', description: 'Map chunk IO', prompt: 'Find every pla
   return { text: 'report' }
 })
 const sub = crew().agents.find(a => a.id === 'sub1')
-check('subagent done after its Agent call returns', sub.state === 'done' && sub.progress === 100, `${sub.state} ${sub.progress}`)
+check('subagent done after its Agent call returns', sub.state === 'done', sub.state)
 
 w = await windows()
 console.log('\n--- main window mid-turn ---\n' + w.wins[0])
@@ -134,7 +134,7 @@ console.log('\n--- main window mid-turn ---\n' + w.wins[0])
 tick(1500)
 await hooks['turn.complete']($, { reason: 'answer', answer: 'Fixed.', durationMs: 9000, isAborted: false, turnId: 'T1' }, async () => ({ text: 'Fixed.' }))
 check('main idle after its turn', main().state === 'idle')
-check('main progress 100 after answer', main().progress === 100)
+check('main idle after its answer', main().state === 'idle', main().state)
 check('no stale todo after the turn', main().doing === '')
 // Marked bad, its words (its key) unchanged: the line stays the same line from running to failed.
 check('failed edit and test marked in the log', crew().log.some(l => l.text === '✎ editing chunk.rs' && l.bad) && crew().log.some(l => l.text === '▸ ran cargo test' && l.bad))
@@ -152,7 +152,7 @@ check('every main action logged', ['chunk.rs', 'planning', 'editing', 'ran cargo
 
 tick(5000)
 await hooks['turn.start']($, { text: 'Now add a unit test', turnId: 'T2' }, async () => ({ turnId: 'T2' }))
-check('second prompt resets goal and progress', main().goal === 'Now add a unit test' && main().progress === -1 && main().todosTotal === 0)
+check('second prompt resets goal and steps', main().goal === 'Now add a unit test' && main().todosTotal === 0)
 check('second prompt clears old thoughts and actions', main().thoughts.length === 0 && main().actions.length === 0)
 w = await windows()
 console.log('\n--- main window at second prompt ---\n' + w.wins[0])

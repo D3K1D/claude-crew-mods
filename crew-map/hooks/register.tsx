@@ -17,14 +17,13 @@ const MAX_AGENTS = 12
 const MAX_REACHED = 60
 const LINGER_MS = 90_000
 
-const crew = atom({ plugin: 'crew-map', key: 'crew' } as const, {
+/** A chat's crew before anything happened. */
+const EMPTY: Crew = {
   agents: [],
   log: [],
   calls: 0,
   startedAt: 0,
   changes: {},
-  zoom: 1,
-  showFiles: false,
   demoCodex: [],
   editor: 'code',
   tests: [],
@@ -34,7 +33,8 @@ const crew = atom({ plugin: 'crew-map', key: 'crew' } as const, {
   turnBase: { at: 0, goal: '', changes: {}, tokens: 0, cost: 0, tests: 0, failed: 0, codex: 0 },
   summary: null,
   spent: { tokens: 0, cost: 0 },
-} as Crew)
+}
+const crew = atom({ plugin: 'crew-map', key: 'crew' } as const, EMPTY)
 const tick = atom({ plugin: 'crew-map', key: 'tick' } as const, 0)
 /** What the search box holds. */
 const search = atom({ plugin: 'crew-map', key: 'search' } as const, { q: '' })
@@ -765,56 +765,56 @@ const COMPACT = '__compact'
 /** A doc rather than code: what Claude writes for people to read. */
 const DOC_EXT = /\.(md|mdx|markdown|txt|rst|adoc|docx?|odt|rtf|html?)$/i
 
-/** What a Claude's bubble says it is doing, and the bubble's colour. */
-const activityOf = (a: Agent): [string, string] => {
-  if (a.needs) return ['Needs you', '#E3B341']
+/** What a Claude is doing, in a word or two (Coding, Viewing an image, Browsing): its row says it. */
+const activityOf = (a: Agent): string => {
+  if (a.needs) return 'Needs you'
   if (a.state !== 'busy')
     return /\b(maybe|could|alternativ|options?|ideas?|what if|perhaps|approach|consider|instead)\b/i.test(a.thoughts[0] ?? '')
-      ? ['Brainstorming', '#D2A8FF']
-      : ['Thinking', '#E5E7EB']
+      ? 'Brainstorming'
+      : 'Thinking'
   const cmd = a.detail
   switch (a.tool) {
     case 'Edit':
     case 'MultiEdit':
     case 'Write':
     case 'NotebookEdit':
-      return DOC_EXT.test(a.node) ? ['Writing docs', '#E3B341'] : ['Coding', '#7EE787']
+      return DOC_EXT.test(a.node) ? 'Writing docs' : 'Coding'
     case 'Read':
-      return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.node) ? ['Viewing an image', '#79C0FF'] : /\.pdf$/i.test(a.node) ? ['Reading a PDF', '#79C0FF'] : ['Reading', '#79C0FF']
+      return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.node) ? 'Viewing an image' : /\.pdf$/i.test(a.node) ? 'Reading a PDF' : 'Reading'
     case 'Grep':
     case 'Glob':
-      return ['Searching', '#E3B341']
+      return 'Searching'
     case 'Bash':
     case 'PowerShell':
-      if (isTestCmd(cmd)) return ['Waiting on tests', '#56D4DD']
-      if (isBuildCmd(cmd)) return ['Building', '#FFA657']
-      if (/\bgit\s+(commit|push|merge|rebase)\b/i.test(cmd)) return ['Committing', '#F778BA']
-      if (/\b(gdb|lldb|debug|RUST_BACKTRACE)\b/i.test(cmd)) return ['Debugging', '#FF7B72']
-      return ['Running', '#FFA657']
+      if (isTestCmd(cmd)) return 'Waiting on tests'
+      if (isBuildCmd(cmd)) return 'Building'
+      if (/\bgit\s+(commit|push|merge|rebase)\b/i.test(cmd)) return 'Committing'
+      if (/\b(gdb|lldb|debug|RUST_BACKTRACE)\b/i.test(cmd)) return 'Debugging'
+      return 'Running'
     case 'WebFetch':
     case 'WebSearch':
-      return ['Researching', '#56D4DD']
+      return 'Researching'
     case 'Agent':
     case 'Task':
-      return ['Delegating', '#D2A8FF']
+      return 'Delegating'
     case 'TodoWrite':
     case 'TaskCreate':
     case 'TaskUpdate':
-      return ['Planning', '#D2A8FF']
+      return 'Planning'
     case 'Skill':
-      return ['Using a skill', '#D2A8FF']
+      return 'Using a skill'
     case COMPACT:
-      return ['Compacting memory', '#8B949E']
+      return 'Compacting memory'
     default: {
-      if (/__codex$/.test(a.tool)) return ['Asking Codex', '#56D4DD']
+      if (/__codex$/.test(a.tool)) return 'Asking Codex'
       const st = stationOf(a.tool)
-      if (st === '@browser') return ['Browsing', '#56D4DD']
-      if (st === '@computer') return ['Using the PC', '#FFA657']
-      if (st === '@remote') return ['Using the remote PC', '#FFA657']
-      if (st === '@docs') return ['Writing a document', '#E3B341']
-      if (st === '@claude') return ['Using the app', '#8B949E']
-      if (st) return [`Using ${stationLabel(st)}`, '#D2A8FF']
-      return ['Working', '#E5E7EB']
+      if (st === '@browser') return 'Browsing'
+      if (st === '@computer') return 'Using the PC'
+      if (st === '@remote') return 'Using the remote PC'
+      if (st === '@docs') return 'Writing a document'
+      if (st === '@claude') return 'Using the app'
+      if (st) return `Using ${stationLabel(st)}`
+      return 'Working'
     }
   }
 }
@@ -845,7 +845,7 @@ let knownColors: NonNullable<Crew['colors']> = {}
 const chatHue = (id: string, helper = '') =>
   knownColors[helper ? `chat:${id}~${helper}` : `chat:${id}`]?.i ?? 1 + ([...`${id}${helper}`].reduce((n, x) => n + x.charCodeAt(0), 0) % (PALETTE.length - 1))
 const verbOf = (a: Agent) =>
-  a.state === 'busy' ? (VERB[a.tool] ?? activityOf(a)[0].toLowerCase()) : a.state === 'thinking' ? 'thinking' : a.state === 'done' ? 'done' : 'idle'
+  a.state === 'busy' ? (VERB[a.tool] ?? activityOf(a).toLowerCase()) : a.state === 'thinking' ? 'thinking' : a.state === 'done' ? 'done' : 'idle'
 const baseName = (p: string) => p.split('/').filter(Boolean).pop() ?? p
 /** The last three segments of a path: enough to tell files apart. */
 const shortPath = (p: string) => {
@@ -920,23 +920,17 @@ const wrapRows = (t: string, w: number, max: number): string[] => {
   if (row) rows.push(row)
   return rows.length > max ? [...rows.slice(0, max - 1), cutTo(rows.slice(max - 1).join(' '), w)] : rows
 }
-/** The most desks shown at once this session: the desks keep that much room, so the cards below never jump. */
-let deskMax = 0
-/** Since when fewer desks than that have been shown (0: not fewer). */
-let deskLowSince = 0
 /** The model each Claude runs on, by agent, as its model steps say. */
 const agentModel = new Map<string, string>()
 /** When each Claude's current model step began, by agent: how long it has been thinking (kept here, not written). */
 const stepStart = new Map<string, number>()
-/** How long the desk area keeps room for desks that have gone, before it gives it back. */
-const DESK_ROOM_MS = 60_000
 
 // ─── Light and dark ─────────────────────────────────────────────────────────
 // The pane is drawn with dark-tuned colours, then painted for the theme in one pass at the end:
 //  - auto (the default): each colour of a Text or a border becomes the engine's theme colour of the
 //    same meaning or hue ('claude', 'warning', 'autoAccept'…), which Claude Code itself tunes for a
 //    light or a dark theme; a colour with no such key is moved to a middle shade that reads on both.
-//  - light / dark: chosen in the toolbar when auto guesses wrong; light swaps every colour for its
+//  - light / dark: chosen in Settings when auto guesses wrong; light swaps every colour for its
 //    light-theme twin, dark draws as tuned.
 type ThemeMode = 'auto' | 'light' | 'dark'
 const THEMES: ThemeMode[] = ['auto', 'light', 'dark']
@@ -945,31 +939,16 @@ const hex6 = (h: string) => {
   const x = h.replace('#', '').toUpperCase()
   return x.length === 3 ? `#${x[0]}${x[0]}${x[1]}${x[1]}${x[2]}${x[2]}` : `#${x.slice(0, 6)}`
 }
-/** A theme colour of the same meaning, for a Text's or a border's colour (auto). */
+/** A theme colour of the same meaning, for a colour the text pane draws (auto). */
 const THEME_KEY: Record<string, string> = {
-  '#E6EDF3': 'text', '#E5E7EB': 'text', '#FFFFFF': 'text', '#E6E0D4': 'text', '#E6FFF6': 'text', '#BFF3E2': 'text',
-  '#8B949E': 'inactive', '#9CA3AF': 'inactive', '#6B7280': 'inactive', '#B8C1CC': 'inactive',
-  '#30363D': 'subtle', '#4B5563': 'subtle', '#161B22': 'subtle',
-  '#D97757': 'claude',
-  '#6CB6FF': 'suggestion', '#79C0FF': 'suggestion',
-  '#7EE787': 'success', '#3FB950': 'success', '#2EA043': 'success',
-  '#D2A8FF': 'autoAccept',
-  '#56D4DD': 'planMode', '#10A37F': 'planMode',
-  '#F778BA': 'bashBorder',
-  '#E3B341': 'warning', '#E3B95C': 'warning', '#F0BC55': 'warning', '#F0D58C': 'warning', '#E0AF68': 'warning',
-  '#F85149': 'error', '#FF7B72': 'error',
+  '#E6EDF3': 'text', '#8B949E': 'inactive', '#30363D': 'subtle', '#D97757': 'claude', '#6CB6FF': 'suggestion',
+  '#3FB950': 'success', '#56D4DD': 'planMode', '#F778BA': 'bashBorder', '#E3B341': 'warning', '#F85149': 'error',
 }
-/** Each dark-tuned colour's twin on a light background. */
+/** Each colour the text pane draws, as the website's light theme has it. */
 const LIGHT_OF: Record<string, string> = {
-  '#E6EDF3': '#1F2328', '#E5E7EB': '#1F2328', '#FFFFFF': '#1F2328', '#E6E0D4': '#2D2A24', '#E6FFF6': '#0B3D2E', '#BFF3E2': '#0B5A43',
-  '#8B949E': '#59636E', '#9CA3AF': '#59636E', '#B8C1CC': '#4B535C', '#6B7280': '#6E7781',
-  '#30363D': '#D0D7DE', '#4B5563': '#AFB8C1', '#161B22': '#F6F8FA', '#0D1117': '#FFFFFF', '#07080B': '#FFFFFF',
-  '#D97757': '#BC5A34', '#6CB6FF': '#0969DA', '#79C0FF': '#0969DA', '#7EE787': '#1A7F37', '#3FB950': '#1A7F37', '#2EA043': '#1A7F37',
-  '#D2A8FF': '#8250DF', '#56D4DD': '#0A7B83', '#10A37F': '#0B7A5F', '#F778BA': '#BF3989',
-  '#E3B341': '#9A6700', '#E3B95C': '#9A6700', '#F0BC55': '#9A6700', '#F0D58C': '#7D5A00', '#E0AF68': '#9A6700',
-  '#F85149': '#CF222E', '#FF7B72': '#CF222E', '#FFA657': '#BC4C00',
-  // The identity colours past the first five, and waiting's own colour (as the website's light theme has them).
-  '#C297FF': '#8250DF', '#C9A47E': '#8A6234', '#B6DCFF': '#0A3F8A', '#A8EEF2': '#05555B', '#E2CCFF': '#55279E', '#FFB8DA': '#7D1D56', '#E8D2B4': '#5A3E1C', '#F2B49B': '#7C3115', '#8C8CFF': '#4D4DD8',
+  '#E6EDF3': '#1F2328', '#8B949E': '#59636E', '#30363D': '#D0D7DE', '#D97757': '#BC5A34', '#3FB950': '#1A7F37', '#E3B341': '#9A6700', '#F85149': '#CF222E', '#8C8CFF': '#4D4DD8',
+  // The identity colours.
+  '#6CB6FF': '#0969DA', '#F778BA': '#BF3989', '#56D4DD': '#0A7B83', '#C297FF': '#8250DF', '#C9A47E': '#8A6234', '#B6DCFF': '#0A3F8A', '#A8EEF2': '#05555B', '#E2CCFF': '#55279E', '#FFB8DA': '#7D1D56', '#E8D2B4': '#5A3E1C', '#F2B49B': '#7C3115',
 }
 const rgbOf = (h: string) => { const x = hex6(h); return [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16) / 255) as [number, number, number] }
 const hexOf = (c: number[]) => `#${c.map(v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('').toUpperCase()}`
@@ -1031,7 +1010,7 @@ const paintNode = (x: FitNode, mode: ThemeMode): FitNode => {
   return withKids(y, kidsOf(y).map(k => paintNode(k, mode)))
 }
 
-/** How long a helper's window stays (marked done) after it finishes, so windows do not blink in and out. */
+/** How long a helper's row stays (marked done) after it finishes, so rows do not blink in and out. */
 const WINDOW_LINGER_MS = 20_000
 /** Lines the log keeps to scroll back through. */
 const LOG_KEEP = 120
@@ -1182,8 +1161,6 @@ const blank = (id: string, name: string, kind: string, hue: number): Agent => ({
   goal: '',
   thoughts: [],
   actions: [],
-  progress: -1,
-  progressSrc: 'est',
   todosDone: 0,
   todosTotal: 0,
   doing: '',
@@ -1625,7 +1602,7 @@ const startDemo = () => {
       void w(c => {
         let d: Crew = c
         for (const cast of DEMO_CAST)
-          d = upsert(d, cast.id, a => ({ ...a, name: cast.name, kind: cast.kind, hue: cast.hue, goal: cast.goal, state: 'thinking', progress: -1 }))
+          d = upsert(d, cast.id, a => ({ ...a, name: cast.name, kind: cast.kind, hue: cast.hue, goal: cast.goal, state: 'thinking' }))
         return d
       })
     }
@@ -1637,7 +1614,7 @@ const startDemo = () => {
       void w(c => {
         let d = c
         for (const cast of DEMO_CAST)
-          d = log(upsert(d, cast.id, a => ({ ...a, state: 'done', doneAt: now, pending: [], progressSrc: 'done', progress: 100 })), cast.id, 'info', 'finished')
+          d = log(upsert(d, cast.id, a => ({ ...a, state: 'done', doneAt: now, pending: [] })), cast.id, 'info', 'finished')
         // A pretend summary card for the pretend task.
         const files = Object.entries(d.changes)
           .filter(([p, ch]) => p.startsWith('demo/') && ch.edits)
@@ -1730,7 +1707,6 @@ const startDemo = () => {
           actions: [actionLine(tool, node, detail), ...a.actions].slice(0, 5),
           todosDone: i + 1,
           todosTotal: cast.path.length + 1,
-          progressSrc: 'todos',
           // The demo's context fills as it works, one helper close to compacting.
           ctx: { tokens: Math.round((0.18 + 0.12 * cast.hue) * 200_000 * Math.min(1, (i + 2) / cast.path.length)), window: 200_000, at: Date.now() },
         }))
@@ -1807,7 +1783,7 @@ const kindOf = (tool: string) => KINDS.find(([re]) => re.test(tool))?.[1] ?? 'to
  * more (Writing docs, Viewing an image, Building, Researching, Browsing, Using Blender, Using the PC).
  */
 const workWords = (a: Agent, kind: string) => {
-  const [w] = activityOf(a)
+  const w = activityOf(a)
   if (kind === 'edit') return w === 'Writing docs' ? w : KIND_WORDS.edit
   if (kind === 'read') return w === 'Reading' ? KIND_WORDS.read : w
   if (kind === 'shell') return ['Building', 'Committing', 'Debugging'].includes(w) ? w : KIND_WORDS.shell
@@ -1863,13 +1839,9 @@ type GlanceRow = {
   /** Needing you: the whole request, in one line (the pane wraps it). */
   ask?: string
   where: string
-  /** Opened: its model and cost, what it was asked (wrapped), its steps, its recent kinds of action. */
-  detail?: { model: string; info: string; asked: string[]; steps: { mark: 'done' | 'now' | 'todo'; lines: string[] }[]; lately: { k: string; n: number }[] }
 }
 /** A row's state colour: green working, indigo waiting on its helpers or chats, amber needing you, else grey (a chat not read live: grey). */
 const stateRole = (r: Pick<GlanceRow, 'state' | 'asOf' | 'helpers'>) => (r.asOf ? 'dim' : r.state === 'work' ? 'green' : r.state === 'you' ? 'amber' : r.state === 'wait' && r.helpers ? 'wait' : 'dim')
-/** Rows of text a row takes: done one; at work two; needing you, its request and who it helps; and its Details, opened. */
-const glanceBase = (r: GlanceRow) => (r.state === 'done' ? 1 : r.state === 'you' ? 1 + r.request.length + (r.where ? 1 : 0) : 2)
 /**
  * What a Claude is waiting on, when it is waiting at all:
  * - you: a permission, an answer or a plan it needs (urgent), or, for the main Claude whose turn is over
@@ -1975,10 +1947,9 @@ type Seg = {
   w?: number
   /** Takes the room the others leave, cut with … to it. */
   flex?: boolean
-  /** A coloured dot, an icon, a little Claude, or a bar this full (0-1), before or instead of the text. */
+  /** A coloured dot, an icon, or a bar this full (0-1), before or instead of the text. */
   dot?: string
   icon?: [string, string]
-  sprite?: string
   bar?: number
   /** Space after it (8 by default). */
   gap?: number
@@ -1998,7 +1969,7 @@ type PaneRow = GlanceRow & { ask: string; focused: boolean }
 /** The last task's card in the crew's place while nobody works: how long, what changed, tests, cost, who. */
 type Recap = { title: string; goal: string; ago: string; facts: [string, string, string][]; copy?: Act; demo?: Act }
 
-/** A file on a Touched line: its name, errors, lines added and removed, and the little Claude on it now. */
+/** A file on a Touched line: its name, errors, lines added and removed, and the dot of the Claude on it now. */
 type TouchFile = { name: string; errs: number; add: number; del: number; on: string; read?: boolean; run: Act; /** A nested chat touched it: its colour, filled while it edits the file now. */ chat?: { hue: string; fill: boolean }; title?: string }
 type TouchFolder = { name: string; files: TouchFile[] }
 /** The viewer's tab row: the tabs (the one shown bold and underlined), then ▲ ▼ and back to the latest. */
@@ -2120,18 +2091,11 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     editor = c.editor || 'code'
     knownColors = c.colors ?? {}
     const nameFor = (id: string) => c.agents.find(a => a.id === id)?.name ?? (id === 'main' ? 'Claude' : 'a subagent')
-    const live = c.agents.filter(a => a.state === 'busy' || a.state === 'thinking')
-    // A finished helper keeps its window a moment, then folds into the log's title row (a click opens it again).
-    const unfolded = c.unfolded ?? {}
+    // A finished helper keeps its row a moment after it is done, so rows don't blink in and out.
     const isOpen = (a: Agent) =>
-      a.id === 'main' || a.state === 'busy' || a.state === 'thinking' || !!a.needs || (unfolded[a.id] ?? (a.state === 'done' && Date.now() - (a.doneAt || 0) < WINDOW_LINGER_MS))
-    // In the order they started: a window or desk never moves (waiting on you shows in amber instead).
+      a.id === 'main' || a.state === 'busy' || a.state === 'thinking' || !!a.needs || (a.state === 'done' && Date.now() - (a.doneAt || 0) < WINDOW_LINGER_MS)
+    // In the order they started: a row never moves (waiting on you is pinned on top instead).
     const shown = c.agents.filter(isOpen)
-    const finished = c.agents.filter(a => a.id !== 'main' && (a.state === 'done' || a.state === 'idle'))
-    const folded = finished.filter(a => !isOpen(a))
-    const waitingOnYou = c.agents.filter(a => a.needs)
-    const secs = c.startedAt ? Math.floor((Date.now() - c.startedAt) / 1000) : 0
-    const uptime = `up ${String(Math.floor(secs / 3600)).padStart(2, '0')}:${String(Math.floor(secs / 60) % 60).padStart(2, '0')}`
 
     const worked = Object.entries(c.changes ?? {}).sort((x, y) => y[1].at - x[1].at)
     const totalAdded = worked.reduce((n, [, ch]) => n + ch.added, 0)
@@ -2186,11 +2150,10 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       if (at) at.rows.push(w)
       else workedGroups.push({ g, rows: [w] })
     }
-    // ── Desks, at a glance: one row per Claude at work (and each Codex run) ──
-    // Line one: its little Claude, name, and what it is doing in plain words (the biggest text), its time.
+    // ── At a glance: one row per Claude at work (and each Codex run) ──
+    // Line one: its dot, name, and what it is doing in plain words (the biggest text), its time.
     // Line two: how far along (a pip per step, "Step 2 of 3 · …") and its model. Colour says its state
     // only. One needing you is pinned on top, amber, with its whole request; one done is a dim line.
-    const deskAgents = shown
     const nowOf = (a: Agent): [string, string] => {
       const w = waitOf(a, c, Date.now())
       if (w) return [w.what, w.label]
@@ -2205,21 +2168,8 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       return ['—', a.id === 'main' ? 'waiting for a prompt' : 'idle']
     }
     // Codex in a row while it runs, and a little after (as a helper's lingers); the rest counted.
-    const codexAtDesks = codexRuns.filter(r => r.status === 'running' || Date.now() - (r.endedAt || 0) < WINDOW_LINGER_MS)
-    const CODEX_DESKS = 3
-    const deskCount = deskAgents.length + Math.min(CODEX_DESKS, codexAtDesks.length) + (codexAtDesks.length > CODEX_DESKS ? 1 : 0)
-    // It keeps room for the most there have been, so the cards below hold still as helpers come and go,
-    // and gives the room back once there have been fewer for a minute.
-    const anyAtWork = c.agents.some(a => a.state === 'busy' || a.state === 'thinking') || codexAtDesks.some(r => r.status === 'running')
-    if (deskCount >= deskMax || !anyAtWork) {
-      deskMax = deskCount
-      deskLowSince = 0
-    } else if (!deskLowSince) deskLowSince = Date.now()
-    else if (Date.now() - deskLowSince > DESK_ROOM_MS) {
-      deskMax = deskCount
-      deskLowSince = 0
-    }
-    const showModel = cols >= 70
+    const codexRows = codexRuns.filter(r => r.status === 'running' || Date.now() - (r.endedAt || 0) < WINDOW_LINGER_MS)
+    const CODEX_ROWS = 3
     // How deep a Claude sits: the main one 0, its helpers 1, theirs 2…
     const depthOf = (a: Agent) => {
       if (a.id === 'main') return 0
@@ -2324,14 +2274,14 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       }
     }
     // In tree order (each Claude, then the ones it started), the ones needing you pinned on top.
-    const byParent = (id: string) => deskAgents.filter(a => a.id !== 'main' && (a.parent ?? 'main') === id)
+    const byParent = (id: string) => shown.filter(a => a.id !== 'main' && (a.parent ?? 'main') === id)
     const ordered: Agent[] = []
     const walk = (a: Agent) => {
       if (ordered.includes(a)) return
       ordered.push(a)
       byParent(a.id).forEach(walk)
     }
-    deskAgents.filter(a => a.id === 'main' || !deskAgents.some(p => p.id === (a.parent ?? 'main'))).forEach(walk)
+    shown.filter(a => a.id === 'main' || !shown.some(p => p.id === (a.parent ?? 'main'))).forEach(walk)
     // A chat started from this one: its title, working or idle, and where it works; nested under this chat.
     const chatList = c.chats ?? []
     // Not read live (the list needs an approval to read): as of Claude's last look, its time at the right.
@@ -2407,7 +2357,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         })),
       ]
     }
-    const glance = [...ordered.map(rowOfAgent), ...chatList.flatMap(rowsOfChat), ...codexAtDesks.slice(0, CODEX_DESKS).map(rowOfCodex)]
+    const glance = [...ordered.map(rowOfAgent), ...chatList.flatMap(rowsOfChat), ...codexRows.slice(0, CODEX_ROWS).map(rowOfCodex)]
     const glanceList = [...glance.filter(r => r.state === 'you'), ...glance.filter(r => r.state !== 'you')]
     // The other chats in this project: each its main card, no indent (its helpers only in its Details); its
     // title for a name; "branch · folder" when it has no steps; needing you, it says to answer there. In
@@ -2433,15 +2383,10 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       .sort((x, y) => RANK[x.row.state] - RANK[y.row.state] || y.at - x.at)
     const projRows = [...projAll.filter(x => RANK[x.row.state] < 3), ...projAll.filter(x => RANK[x.row.state] === 3).slice(0, SIBLINGS_MAX)].map(x => x.row)
     const projHelpers = projAll.flatMap(x => x.helpers)
-    // Room: the rows shown, at least; while anyone works, two lines for each of the most Claudes lately.
-    const desksH = Math.max(glanceList.reduce((n, r) => n + glanceBase(r), 0), anyAtWork ? Math.max(1, deskMax) * 2 : 0)
     // ── Folder cards: each folder the work touched, its files as chips (green edited, red with errors) ──
     // Built from the session's record of touched files (it keeps edits, and the order files were first
     // reached): an edited file never drops off, a folder never moves.
-    const q = sq.q.trim().toLowerCase()
     type CardFile = { id: string; label: string; touchedAt: number }
-    const cardRel = (id: string) => (id.startsWith('demo/') ? id.slice(5) : sessionDir && id.toLowerCase().startsWith(`${sessionDir.toLowerCase()}/`) ? id.slice(sessionDir.length + 1) : id)
-    const matchesQ = (f: CardFile) => !!q && (cardRel(f.id).toLowerCase().includes(q) || f.label.toLowerCase().includes(q))
     const cardFiles: CardFile[] = []
     const seenFile = new Set<string>()
     for (const [id, ch] of Object.entries(c.changes ?? {}))
@@ -2487,11 +2432,6 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     })
     const outsideCount = c.hideOutside ? cardFiles.filter(f => groupOf(f.id) === OUTSIDE).length : 0
     const folders = [...groups.entries()].sort((x, y) => x[1].first - y[1].first)
-    const perRow = cols >= 170 ? 3 : cols >= 100 ? 2 : 1
-    const cardW = perRow === 1 ? cols - 1 : Math.floor((cols - (perRow - 1)) / perRow)
-    const CHIPS = perRow === 1 ? 8 : 10
-    const visibleFiles = [...groups.values()].flatMap(g => g.files)
-    const matches = q ? visibleFiles.filter(matchesQ).length : 0
     const errsOf = (id: string) => (c.problems ?? []).filter(pr => pr.path === id).length + (nt.get(id) ?? []).reduce((n, x) => n + (x.errs ?? 0), 0)
     const natural = (x: CardFile, y: CardFile) => x.label.localeCompare(y.label, undefined, { numeric: true, sensitivity: 'base' }) || x.id.localeCompare(y.id)
     // ── The pane, as the design draws it: header, crew, Touched, and the viewer with its tabs ──
@@ -2824,7 +2764,6 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const listed = tab === 'activity' ? actLines : tab === 'claude' ? detailLines() : tab === 'files' ? fileLines() : tab === 'search' ? searchLines() : settingLines()
     const fit = BODY_ROWS
     const top0 = tab === 'activity' ? 0 : Math.max(0, Math.min(ps.top ?? 0, listed.length - fit))
-    const bodyLines = listed.slice(top0, top0 + fit)
     const scroll =
       tab === 'activity'
         ? {
@@ -3701,7 +3640,7 @@ export const register: Register = on => {
       // A reload drops in-flight calls and the demo; migrate older state shapes too.
       // (What older versions kept for the map, the desks and the replay is dropped.)
       const { nodes: _n, trails: _t, timeline: _f, zoom: _z, showFiles: _s, folds: _o, track: _k, deskOpen: _d, view: _v, cardsOpen: _c, unfolded: _u, ...old } = (Array.isArray(c?.agents) ? c : {}) as Partial<Crew> & Record<string, unknown>
-      const base: Crew = { agents: [], log: [], calls: 0, startedAt: 0, changes: {}, zoom: 1, showFiles: false, demoCodex: [], editor: 'code', tests: [], problems: [], budget: 0, budgetWarned: 0, turnBase: { at: 0, goal: '', changes: {}, tokens: 0, cost: 0, tests: 0, failed: 0, codex: 0 }, summary: null, ...old, spent: old.spent ?? { tokens: 0, cost: 0 } }
+      const base: Crew = { ...EMPTY, ...old, spent: old.spent ?? { tokens: 0, cost: 0 } }
       const agents = base.agents
         .filter(a => !a.id.startsWith('demo-'))
         .map(({ from: _f, movedAt: _m, visited: _v, kinds: _k, ...a }: Agent & Record<string, unknown>) => ({ tokens: 0, cost: 0, stuck: '', recent: [], since: 0, ...a }))
@@ -3750,7 +3689,7 @@ export const register: Register = on => {
         const c = await read($, crew)
         const running = (c.tests ?? []).filter(t => t.status === 'running')
         const shellsOn = (c.shells ?? []).filter(x => x.status === 'running')
-        // A Claude at work or thinking has clocks on its desk, its window and the log that count each second.
+        // A Claude at work or thinking has clocks on its row and in the log that count each second.
         const atWork = c.agents.some(a => a.state === 'busy' || a.state === 'thinking')
         if (!running.length && !shellsOn.length && !atWork) return
         await update($, tick, n => n + 1)
@@ -3797,8 +3736,6 @@ export const register: Register = on => {
     chatPoller?.cancel()
     chatPoller = $.clock.every(15_000, () => void refreshChats?.())
     void refreshChats()
-    deskMax = 0
-    deskLowSince = 0
     void readChatCost($)
     const savedTheme = await $.store.get('theme').catch(() => undefined)
     if (savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'auto') await write?.(d => (d.theme === savedTheme ? d : { ...d, theme: savedTheme }))
@@ -3886,7 +3823,7 @@ export const register: Register = on => {
         ...a,
         state: a.state === 'busy' ? 'busy' : 'thinking',
         ...(id === 'main' && e.text
-          ? { goal: trunc(oneLine(promptOf(e.text)), 500), progress: -1, progressSrc: 'est' as const, todosDone: 0, todosTotal: 0, todosDoing: 0, doing: '', plan: undefined, todoList: undefined, calls: 0, since: Date.now(), thoughts: [], actions: [], stuck: '', recent: [] }
+          ? { goal: trunc(oneLine(promptOf(e.text)), 500), todosDone: 0, todosTotal: 0, doing: '', plan: undefined, todoList: undefined, calls: 0, since: Date.now(), thoughts: [], actions: [], stuck: '', recent: [] }
           : {}),
       }))
       if (id === 'main' && e.text) {
@@ -3936,7 +3873,6 @@ export const register: Register = on => {
         doing: '',
         tokens: (a.tokens ?? 0) + (u ? tokensOf(u) : 0),
         cost: (a.cost ?? 0) + (u ? costOf(u) : 0),
-        ...(e.reason === 'answer' ? { progress: 100, progressSrc: 'done' as const } : {}),
       }))
       let f = log(d, id, 'info', e.reason === 'answer' ? 'finished' : `stopped (${e.reason})`)
       if (u && !id.startsWith('demo-')) f = { ...f, spent: { tokens: (f.spent?.tokens ?? 0) + tokensOf(u), cost: (f.spent?.cost ?? 0) + costOf(u) } }
@@ -4102,7 +4038,7 @@ export const register: Register = on => {
         text?: string
         thinking?: string
       }[]
-      // Its gist for the desk and the log, and all of it for the log line opened.
+      // Its gist for its row and the log, and all of it for the log line opened.
       const lines = blocks
         .map(b => (b.type === 'thinking' ? b.thinking : b.type === 'text' ? b.text : '') ?? '')
         .map(t => ({ line: summarise(t), full: cleanSaid(t) }))
@@ -4253,7 +4189,6 @@ export const register: Register = on => {
               : { todoList: list.slice(0, 40).map(t => ({ content: trunc(oneLine(String(t.content ?? '')), 120), status: String(t.status ?? 'pending'), ...(t.activeForm ? { activeForm: trunc(oneLine(String(t.activeForm)), 120) } : {}) })) }),
             todosTotal: list.length,
             todosDone: list.filter(t => t.status === 'completed').length,
-            todosDoing: list.filter(t => t.status === 'in_progress').length,
             doing: doing?.activeForm ?? doing?.content ?? '',
           }
         }
@@ -4374,7 +4309,7 @@ export const register: Register = on => {
           if (stuckNote) d = log(d, id, 'info', stuckNote)
         }
         if (!ok) {
-          // Mark the call failed (or refused) in the window. Its log line keeps its words (they are its
+          // Mark the call failed (or refused) in its recent actions. Its log line keeps its words (they are its
           // key) and is marked `bad` above; a refusal is marked too, and the words are added where it shows.
           const refused = !!(ran as { deny?: string } | undefined)?.deny
           if (refused) d = { ...d, log: d.log.map(l => (l.call === callId ? { ...l, refused: true as const } : l)) }
@@ -4390,7 +4325,7 @@ export const register: Register = on => {
             ...d,
             agents: d.agents.map(x =>
               !!e.tool_use_id && x.spawnId === e.tool_use_id && x.state !== 'busy'
-                ? { ...x, state: 'done', doneAt: stamp, pending: [], progress: 100, progressSrc: 'done' }
+                ? { ...x, state: 'done', doneAt: stamp, pending: [] }
                 : x,
             ),
           }
@@ -4450,12 +4385,12 @@ export const register: Register = on => {
     const toneOf = (role: string) => TONE[role] ?? (/^h\d+$/.test(role) ? PALETTE[Number(role.slice(1))] : '#E6EDF3')
     const press = (act: Act) => (p: { surface: unknown }) => void doAction($, act, p?.surface)
     const segEl = (g: Seg, k: string) => {
-      const lead = `${g.dot ? '● ' : ''}${g.icon ? `${KIND_GLYPH[g.icon[0]] ?? '•'} ` : ''}${g.sprite ? '● ' : ''}${g.bar !== undefined ? `${'▮'.repeat(Math.round(g.bar * 8))}${'▯'.repeat(8 - Math.round(g.bar * 8))} ` : ''}`
+      const lead = `${g.dot ? '● ' : ''}${g.icon ? `${KIND_GLYPH[g.icon[0]] ?? '•'} ` : ''}${g.bar !== undefined ? `${'▮'.repeat(Math.round(g.bar * 8))}${'▯'.repeat(8 - Math.round(g.bar * 8))} ` : ''}`
       const t = `${lead}${g.t ?? ''}`
       if (!t && !g.parts) return null
       const cells = g.w ? Math.floor(g.w / CELL_W) : 0
       const body = cells ? cutTo(t, Math.max(1, cells)).padEnd(cells) : t
-      const tone = toneOf(g.dot ?? g.sprite ?? g.role ?? 'text')
+      const tone = toneOf(g.dot ?? g.role ?? 'text')
       if (g.run) {
         const act = g.run
         // A Button holds its words as Text, so a file keeps its colours: its name, its +/− and its errors.

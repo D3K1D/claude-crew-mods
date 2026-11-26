@@ -1,7 +1,7 @@
 export type AgentState = 'busy' | 'thinking' | 'idle' | 'done'
 
 export type Agent = {
-  /** 'main' for the main loop, a subagent's id, or 'demo-N'. */
+  /** 'main' for the main loop, a helper's agent id, or 'demo-N' (the pretend session). */
   id: string
   name: string
   /** 'main', or the subagent type (Explore, Plan, general-purpose, ...). */
@@ -21,13 +21,8 @@ export type Agent = {
   thoughts: string[]
   /** Short action lines, newest first. */
   actions: string[]
-  /** 0-100, or -1 while unknown. */
-  progress: number
-  progressSrc: 'todos' | 'model' | 'est' | 'done'
   todosDone: number
   todosTotal: number
-  /** To-dos (TodoWrite) in progress. */
-  todosDoing?: number
   /** The todo in progress, when it keeps a list. */
   doing: string
   /** Its steps on the desktop app's task list (update_plan), as the app holds them. */
@@ -111,10 +106,6 @@ export type Crew = {
   startedAt: number
   /** Per file path: lines added and removed, reads. */
   changes: Record<string, Change>
-  /** The map's size, a multiple of the width the pane's columns suggest. */
-  zoom: number
-  /** Whether the worked-files list is pinned open under the map. */
-  showFiles: boolean
   /** A pretend Codex run the demo shows; empty outside the demo. */
   demoCodex: CodexRun[]
   /** Where a clicked file opens: 'code' (VS Code), 'cursor' or 'system'. Kept in the store across sessions. */
@@ -138,28 +129,16 @@ export type Crew = {
   turnBase: { at: number; goal: string; changes: Record<string, { added: number; removed: number }>; tokens: number; cost: number; tests: number; failed: number; codex: number }
   /** The last finished task's summary, until dismissed. */
   summary: Summary | null
-  /** Folders the person folded or unfolded on the map, by folder (relative to the project, '.', or '~outside'). */
-  folds?: Record<string, 'open' | 'closed'>
-  /** Whether files outside the project are hidden from the map. */
+  /** Whether files outside the project are hidden from Touched and Files. */
   hideOutside?: boolean
   /** Save the log to the project after each task, not only on the Save button. */
   autoSave?: boolean
   /** A toast when a test run ends ("✓ Tests passed …"); off unless the person turns it on. Kept in the store. */
   testToasts?: boolean
-  /** Finished helpers whose windows the person opened again (true) or folded at once (false). */
-  unfolded?: Record<string, boolean>
   /** Where the person scrolled the log to (absent: it follows the newest line), and the lines they opened. */
   logView?: { anchor?: number; open?: string[] }
   /** The theme the pane paints for: auto (follows the app), or light or dark as the person chose. */
   theme?: 'auto' | 'light' | 'dark'
-  /** The Claude the tree map's camera follows, and the camera's state when following began (moving the map by hand stops it). */
-  track?: { id: string; rev: string }
-  /** Desks the person opened to read every line whole, by agent. */
-  deskOpen?: Record<string, boolean>
-  /** Which picture of the work the pane shows: desks and folder cards (absent: desks), or the tree map. */
-  view?: 'desks' | 'map'
-  /** Folder cards the person opened to show every file (by folder). */
-  cardsOpen?: Record<string, boolean>
   /** The viewer: which tab shows (a Claude's details: 'claude' with its id), and how far its list is scrolled. */
   pane?: { tab?: 'activity' | 'files' | 'search' | 'settings' | 'claude'; focus?: string; top?: number }
   /** The chats started from this one (and theirs), as the desktop app lists them: nested under it, by depth. */
