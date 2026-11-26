@@ -109,7 +109,7 @@ Restart the app after either. Claude Crew keeps its own files in `~/.claude/crew
 
 - **Everything stays on your computer.** Neither mod sends anything anywhere itself. Codex Bridge runs your own Codex CLI.
 - **The website** listens on `127.0.0.1` only, with a random token in its address. It refuses other hosts and other sites, and the mod's own requests carry a second key that the page never sees.
-- **Claude Crew keeps** each chat's log in `~/.claude/crew-map`. That is the newest 5,000 lines, and it includes the last lines of command output, so a command that printed a secret leaves it there. Files that haven't been written for 30 days are deleted.
+- **Claude Crew keeps** each chat's log in `~/.claude/crew-map`. That is the newest 5,000 lines, and it includes the last lines of command output, so a command that printed a secret leaves it there. Files that haven't been written for 30 days are deleted, as are journals past the newest 300 (checked once a day, never one a chat still uses).
 - **Saved logs** go to the project's `.claude/crew-logs` only when you press Save, or after each task if you turn that on.
 - **Costs** are estimates at Anthropic's API list prices, a yardstick only: Pro and Max plans aren't billed per token. Saving a log asks Claude Haiku for a summary, about $0.01 for a typical chat. `/crew` runs one ordinary turn of the chat's model to open the pane.
 
@@ -138,7 +138,9 @@ claude plugin validate .
 
 `npm test` builds both mods for Node and runs the suites in `tests/`. When Claude Code is installed, it also draws both panes through Claude Code's own engine with `claude plugin test`. `claude plugin validate .` checks the marketplace and both manifests.
 
-Each mod is one hooks module (`<mod>/hooks/register.tsx`) plus a type contract (`<mod>/types/index.d.ts`). Claude Crew's website is in `crew-map/web/`. To try a change live, start `claude --plugin-dir ./crew-map`: edits reload when Claude's turn ends.
+Each mod has a hooks module, `<mod>/hooks/register.tsx`, and a type contract, `<mod>/types/index.d.ts`. Claude Crew's hooks module imports the rest of its code from the same folder: `track.ts` (the record of the chat), `model.ts` (what the pane shows), `web.ts` (the website, journal and nested chats) and `demo.ts` (the pretend session). Its website is in `crew-map/web/`. To try a change live, start `claude --plugin-dir ./crew-map`: edits reload when Claude's turn ends.
+
+Releases follow [RELEASING.md](RELEASING.md). What changed in each one is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Credits
 

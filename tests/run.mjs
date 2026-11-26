@@ -31,7 +31,8 @@ for (const mod of ['crew-map', 'codex-bridge'])
   })
 
 const filter = process.argv[2] ?? ''
-const files = ['crew-map', 'codex-bridge']
+// Each mod's suites, then the repository's own (tests/*.test.mjs: the release checks).
+const files = ['crew-map', 'codex-bridge', '.']
   .flatMap(dir => readdirSync(join(here, dir)).filter(f => f.endsWith('.test.mjs')).map(f => join(here, dir, f)))
   .filter(f => f.includes(filter))
 

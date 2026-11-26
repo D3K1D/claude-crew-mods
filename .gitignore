@@ -7,10 +7,13 @@ tests/.build/
 .DS_Store
 Thumbs.db
 
-# Editors, logs, local secrets, Codex Bridge notes and settings backups.
+# Editors, logs, scratch files, local secrets, Claude Code's own project files (settings, saved Crew
+# logs), Codex Bridge notes and settings backups.
 .vscode/
 .idea/
 *.log
+*.tmp
+.claude/
 .env
 .env.*
 .codex-bridge/
