@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Agent, Change, Chat, CodexRun, Crew, Frame, LogLine, MapNode, MapView, PlanTask, Problem, Replay, ShellRun, Summary, TestRun } from '../types'
+import type { Agent, Change, Chat, CodexRun, Crew, LogLine, MapNode, PlanTask, Problem, ShellRun, Summary, TestRun } from '../types'
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -31,19 +31,15 @@ const crew = atom({ plugin: 'crew-map', key: 'crew' } as const, {
   editor: 'code',
   tests: [],
   problems: [],
-  timeline: [],
   budget: 0,
   budgetWarned: 0,
   turnBase: { at: 0, goal: '', changes: {}, tokens: 0, cost: 0, tests: 0, failed: 0, codex: 0 },
   summary: null,
   spent: { tokens: 0, cost: 0 },
 } as Crew)
-const replay = atom({ plugin: 'crew-map', key: 'replay' } as const, { on: false, at: 0, playing: false } as Replay)
 const tick = atom({ plugin: 'crew-map', key: 'tick' } as const, 0)
-/** The map's window: where it sits over the map, how far zoomed, whether it follows the fit. */
-const mapView = atom({ plugin: 'crew-map', key: 'view' } as const, { x: 0, y: 0, k: 1, auto: true, rev: 'fit', sel: false, follow: 0 } as MapView)
-/** The search box: what is typed, which hit is shown, and a stamp per change. */
-const search = atom({ plugin: 'crew-map', key: 'search' } as const, { q: '', i: 0, rev: 0 })
+/** What the search box holds. */
+const search = atom({ plugin: 'crew-map', key: 'search' } as const, { q: '' })
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 /**
@@ -444,7 +440,6 @@ const summarise1 = (c: Crew, now: number, codexRuns: number): Summary => {
     .sort((x, y) => y.added + y.removed - (x.added + x.removed))
   const read = Object.entries(c.changes).filter(([p, ch]) => !p.startsWith('demo/') && ch.at >= base.at && ch.edits === 0).length
   const lastTest = [...c.tests].reverse().find(t => t.startedAt >= base.at && t.status !== 'running' && !t.agentId.startsWith('demo-'))
-  const worked = new Set(c.timeline.filter(f => f.at >= base.at).map(f => f.agentId))
   return {
     at: now,
     goal: base.goal,
@@ -454,51 +449,11 @@ const summarise1 = (c: Crew, now: number, codexRuns: number): Summary => {
     tests: { runs: base.tests ?? 0, failed: base.failed ?? 0, last: lastTest ? `${lastTest.status} (${testWords(lastTest)})` : 'a run still going' },
     tokens: Math.max(0, (c.spent?.tokens ?? 0) - base.tokens),
     cost: Math.max(0, (c.spent?.cost ?? 0) - base.cost),
-    claudes: c.agents.filter(a => a.id === 'main' || worked.has(a.id)).map(a => a.name),
+    // Who worked on it: the main Claude, and each helper that acted since it began.
+    claudes: c.agents.filter(a => a.id === 'main' || (a.calls > 0 && a.doneAt >= base.at)).map(a => a.name),
     codex: Math.max(0, codexRuns - base.codex),
     problems: c.problems.length,
   }
-}
-
-// ─── Replay: the map as it stood at a step of the timeline ──────────────────
-
-const MAX_FRAMES = 300
-/** The crew as it was at frame `i`: each Claude where its last step put it, edits summed so far. */
-const crewAt = (c: Crew, i: number, now: number): Crew => {
-  const frames = c.timeline.slice(0, i + 1)
-  const cur = frames[frames.length - 1]
-  const lastOf = new Map<string, { f: Frame; k: number }>()
-  frames.forEach((f, k) => lastOf.set(f.agentId, { f, k }))
-  const agents: Agent[] = []
-  for (const [id, { f, k }] of lastOf) {
-    // A Claude drops off the map a dozen steps after its last one.
-    if (i - k > 12) continue
-    const known = c.agents.find(a => a.id === id)
-    const prev = frames.slice(0, k).reverse().find(x => x.agentId === id)
-    agents.push({
-      ...(known ?? blank(id, f.name, 'agent', f.hue)),
-      name: f.name,
-      hue: f.hue,
-      node: f.node,
-      from: prev?.node ?? '',
-      movedAt: f === cur && prev && prev.node !== f.node ? now : 0,
-      tool: f.tool,
-      detail: f.detail,
-      state: f === cur ? 'busy' : 'thinking',
-      thoughts: [],
-      stuck: '',
-      doing: '',
-    })
-  }
-  const changes: Crew['changes'] = {}
-  for (const f of frames) {
-    if (!f.node || isSpecial(f.node)) continue
-    const ch = changes[f.node] ?? { added: 0, removed: 0, edits: 0, reads: 0, by: f.name, hue: f.hue, at: f.at }
-    changes[f.node] = f.added || f.removed ? { ...ch, added: ch.added + f.added, removed: ch.removed + f.removed, edits: ch.edits + 1, by: f.name, hue: f.hue, at: f.at } : { ...ch, reads: ch.reads + 1 }
-  }
-  const seen = new Set(frames.map(f => f.node))
-  const nodes = Object.fromEntries(Object.entries(c.nodes).filter(([id, n]) => seen.has(id) || n.kind === 'ghost'))
-  return { ...c, agents, changes, nodes, tests: [], problems: [] }
 }
 
 /** Where code and text files open: 'code' (VS Code), 'cursor' or 'system', chosen in the pane. Other files open in their own app. */
@@ -1080,13 +1035,6 @@ const paintNode = (x: FitNode, mode: ThemeMode): FitNode => {
   return withKids(y, kidsOf(y).map(k => paintNode(k, mode)))
 }
 
-/** A text in two lines of `w` characters, broken between words; the second line cut short if need be. */
-const twoLines = (s: string, w: number): [string, string] => {
-  if (s.length <= w) return [s, '']
-  let at = s.lastIndexOf(' ', w)
-  if (at < w * 0.5) at = w
-  return [s.slice(0, at).trimEnd(), trunc(s.slice(at).trimStart(), w)]
-}
 /** How long a helper's window stays (marked done) after it finishes, so windows do not blink in and out. */
 const WINDOW_LINGER_MS = 20_000
 /** Lines the log keeps to scroll back through. */
@@ -1936,6 +1884,7 @@ const startDemo = () => {
   if (!every || !write || demo) return
   const w = write
   const run = ++demoRun
+  const started = Date.now()
   let k = 0
   const step = () => {
     const now = Date.now()
@@ -1980,7 +1929,7 @@ const startDemo = () => {
         const summary: Summary = {
           at: now,
           goal: 'Demo: fix the token refresh race and keep the auth tests green',
-          ms: now - (d.timeline.find(f => f.agentId.startsWith('demo-'))?.at ?? now),
+          ms: now - started,
           files,
           read: Object.entries(d.changes).filter(([p, ch]) => p.startsWith('demo/') && !ch.edits).length,
           tests: { runs: 2, failed: 1, last: 'passed (42 passed)' },
@@ -2003,7 +1952,6 @@ const startDemo = () => {
           demoCodex: [],
           tests: (c.tests ?? []).filter(t => !t.agentId.startsWith('demo-')),
           problems: (c.problems ?? []).filter(p => !p.path.startsWith('demo/')),
-          timeline: (c.timeline ?? []).filter(f => !f.agentId.startsWith('demo-')),
         })),
       )
       return
@@ -2046,13 +1994,6 @@ const startDemo = () => {
         const from = d.agents.find(a => a.id === cast.id)?.node ?? ''
         d = touch(d, node, from)
         const edit = tool !== 'Read' && tool !== 'Grep' && !node.startsWith('$')
-        d = {
-          ...d,
-          timeline: [
-            ...(d.timeline ?? []),
-            { at: now, agentId: cast.id, name: cast.name, hue: cast.hue, node, tool, detail, added: edit ? 4 + ((step * 7 + cast.hue * 5) % 23) : 0, removed: edit ? (step * 3 + cast.hue) % 9 : 0 },
-          ].slice(-MAX_FRAMES),
-        }
         if (tool === 'Bash' && isTestCmd(detail)) {
           const run: TestRun = { id: `test-demo-${cast.id}-${step}`, agentId: cast.id, who: cast.name, hue: cast.hue, command: detail, purpose: step < 3 ? "Run the auth tests to see the real failure" : "Rerun the whole suite after the fix", startedAt: now, endedAt: 0, status: 'running', passed: 0, failed: 0, background: false }
           d = log({ ...d, tests: [...(d.tests ?? []), run] }, cast.id, 'info', `⚗ tests started · ${run.purpose}`)
@@ -2179,7 +2120,6 @@ const agoText = (ms: number) => {
 }
 /** How full a context window is, 0-100; -1 when unknown. */
 const ctxPct = (x?: { tokens: number; window: number }) => (x && x.window > 0 && Number.isFinite(x.tokens) ? Math.min(100, Math.max(0, Math.round((x.tokens / x.window) * 100))) : -1)
-const xmlEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /** One Claude's row as the pane draws it. */
 type GlanceRow = {
@@ -2256,14 +2196,8 @@ const waitOf = (a: Agent, c: Crew, now: number): Wait | undefined => {
   return undefined
 }
 
-let searchRev = 0
-/** Searches the map: a new text shows its first hit, the same text again (Enter) the next one. */
-const searchFor = async ($: EngineInterface, typed: string, next = false) => {
-  const q = typed.slice(0, 80)
-  const rev = ++searchRev
-  await update($, search, cur => (next && cur.q === q ? { q, i: cur.i + 1, rev } : { q, i: 0, rev }))
-  await update($, mapView, v => ({ ...v, follow: q.trim() ? rev : 0 }))
-}
+/** What the search box holds now. */
+const searchFor = ($: EngineInterface, typed: string) => update($, search, () => ({ q: typed.slice(0, 80) }))
 
 /** The unit the pane's line model measures widths and indents in: one text column (the page and the text pane count columns). */
 const CELL_W = 7.9
@@ -2418,8 +2352,6 @@ const noticeTurn = new Set<string>()
 const codexRunCount = async ($: EngineInterface) =>
   (((await $.state.get({ plugin: 'codex-bridge', key: 'runs' } as never).catch(() => ({}))) as { value?: unknown[] }).value ?? []).length
 
-let replayShown = { at: -1, stamp: 0 }
-
 const agentOf = (e: unknown) => (e as { agentId?: string }).agentId ?? 'main'
 
 /** What the whole chat has cost so far, as /cost totals it (none where Claude Code keeps no ledger). */
@@ -2494,8 +2426,6 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const totalAdded = worked.reduce((n, [, ch]) => n + ch.added, 0)
     const totalRemoved = worked.reduce((n, [, ch]) => n + ch.removed, 0)
     const vwCols = Math.max(40, Math.min(300, cols - 1))
-    const replaying = false
-    const rpAt = 0
     // Codex speaks in the log too: what it was asked, what it ran and changed, and what it sent back.
     const codexLog: LogLine[] = codexRuns.flatMap(r => [
       { at: r.startedAt, who: 'Codex', hue: -1, kind: 'info' as const, text: `← ${nameFor(r.caller)}${r.thread ? ` [${r.thread}]` : ''}: ${trunc(oneLine(r.task), 90)}` },
@@ -2549,13 +2479,12 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     // Line one: its little Claude, name, and what it is doing in plain words (the biggest text), its time.
     // Line two: how far along (a pip per step, "Step 2 of 3 · …") and its model. Colour says its state
     // only. One needing you is pinned on top, amber, with its whole request; one done is a dim line.
-    const src = replaying ? crewAt(c, rpAt, replayShown.stamp) : c
-    const deskAgents = replaying ? src.agents.filter(a => a.id === 'main' || a.state === 'busy' || a.state === 'thinking') : shown
+    const deskAgents = shown
     const nowOf = (a: Agent): [string, string] => {
-      const w = waitOf(a, src, Date.now())
+      const w = waitOf(a, c, Date.now())
       if (w) return [w.what, w.label]
       if (a.tool === COMPACT && a.state === 'busy') return ['compacting', 'freeing up room']
-      if (a.state === 'busy' && a.node && src.nodes[a.node] && !isSpecial(a.node)) return [baseName(a.node), verbOf(a)]
+      if (a.state === 'busy' && a.node && c.nodes[a.node] && !isSpecial(a.node)) return [baseName(a.node), verbOf(a)]
       // A command: Claude's own words for it, as it runs (not "ran …").
       if (a.state === 'busy' && (a.tool === 'Bash' || a.tool === 'PowerShell'))
         return [(a.actions[0]?.startsWith(SHELL_MARK) ? a.actions[0].slice(SHELL_MARK.length) : cmdGist(a.detail)).replace(/^ran /, ''), 'running']
@@ -2565,12 +2494,12 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       return ['—', a.id === 'main' ? 'waiting for a prompt' : 'idle']
     }
     // Codex in a row while it runs, and a little after (as a helper's lingers); the rest counted.
-    const codexAtDesks = replaying ? [] : codexRuns.filter(r => r.status === 'running' || Date.now() - (r.endedAt || 0) < WINDOW_LINGER_MS)
+    const codexAtDesks = codexRuns.filter(r => r.status === 'running' || Date.now() - (r.endedAt || 0) < WINDOW_LINGER_MS)
     const CODEX_DESKS = 3
     const deskCount = deskAgents.length + Math.min(CODEX_DESKS, codexAtDesks.length) + (codexAtDesks.length > CODEX_DESKS ? 1 : 0)
     // It keeps room for the most there have been, so the cards below hold still as helpers come and go,
     // and gives the room back once there have been fewer for a minute.
-    const anyAtWork = src.agents.some(a => a.state === 'busy' || a.state === 'thinking') || codexAtDesks.some(r => r.status === 'running')
+    const anyAtWork = c.agents.some(a => a.state === 'busy' || a.state === 'thinking') || codexAtDesks.some(r => r.status === 'running')
     if (deskCount >= deskMax || !anyAtWork) {
       deskMax = deskCount
       deskLowSince = 0
@@ -2584,14 +2513,14 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const depthOf = (a: Agent) => {
       if (a.id === 'main') return 0
       let d = 1
-      for (let p = a.parent; p && p !== 'main' && d < 4; p = src.agents.find(x => x.id === p)?.parent) d++
+      for (let p = a.parent; p && p !== 'main' && d < 4; p = c.agents.find(x => x.id === p)?.parent) d++
       return d
     }
     const rowOfAgent = (a: Agent): GlanceRow => {
       const now = Date.now()
-      const wait0 = waitOf(a, src, now)
+      const wait0 = waitOf(a, c, now)
       const wait = wait0?.kind === 'command' && a.state === 'busy' ? undefined : wait0
-      const runFrom = wait0 && !wait ? Math.min(...[...(src.shells ?? []), ...(src.tests ?? [])].filter(x => x.agentId === a.id && x.status === 'running').map(x => x.startedAt), now) : 0
+      const runFrom = wait0 && !wait ? Math.min(...[...(c.shells ?? []), ...(c.tests ?? [])].filter(x => x.agentId === a.id && x.status === 'running').map(x => x.startedAt), now) : 0
       const at = a.state === 'busy' || a.state === 'thinking'
       const state: GlanceRow['state'] = a.needs ? 'you' : a.state === 'done' ? 'done' : wait ? (wait.kind === 'you' ? 'idle' : 'wait') : at ? 'work' : 'idle'
       const [what] = nowOf(a)
@@ -2621,12 +2550,12 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
                     [stepStart.has(a.id) ? since(stepStart.get(a.id) ?? 0, 'e') : '', a.thoughts[0] ? oneLine(a.thoughts[0]) : ''].filter(Boolean).join(' · ')
                   : runFrom && now - runFrom >= 1000
                     ? // A test run by what it is for (JS tests (jest): auth), else the command in Claude's words; and how long.
-                      `${(t => (t ? t.purpose || testPurpose(t.command, '') : ''))((src.tests ?? []).find(x => x.agentId === a.id && x.status === 'running')) || wait0?.what || what} · ${since(runFrom, 'e')}`
+                      `${(t => (t ? t.purpose || testPurpose(t.command, '') : ''))((c.tests ?? []).find(x => x.agentId === a.id && x.status === 'running')) || wait0?.what || what} · ${since(runFrom, 'e')}`
                     : what
-      const tasks = tasksOf(a, src)
+      const tasks = tasksOf(a, c)
       const total = tasks.length || a.todosTotal
       const done = tasks.length ? tasks.filter(t => t.status === 'completed').length : a.todosDone
-      const step = doingOf(a, src) || tasks.find(t => t.status !== 'completed')?.subject || ''
+      const step = doingOf(a, c) || tasks.find(t => t.status !== 'completed')?.subject || ''
       const progress = total
         ? `Step ${fmtK(Math.min(total, done + 1))} of ${fmtK(total)}${step ? ` · ${step}` : ''}`
         : state === 'idle' && a.id === 'main'
@@ -2634,7 +2563,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           : state === 'idle'
             ? 'idle'
             : `${fmtK(a.calls)} action${a.calls === 1 ? '' : 's'} so far`
-      const parent = src.agents.find(x => x.id === (a.parent ?? 'main'))
+      const parent = c.agents.find(x => x.id === (a.parent ?? 'main'))
       const ask = a.needs ? `${a.needs.what.charAt(0).toUpperCase()}${a.needs.what.slice(1)}? Answer in the chat.` : ''
       return {
         id: a.id,
@@ -2663,7 +2592,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       const last = [...r.events].reverse().find(ev => ev.kind === 'cmd' || ev.kind === 'file')
       const running = r.status === 'running'
       const kind = !running ? 'done' : last?.kind === 'cmd' ? 'shell' : last?.kind === 'file' ? 'edit' : 'think'
-      const caller = src.agents.find(a => a.id === r.caller)
+      const caller = c.agents.find(a => a.id === r.caller)
       return {
         id: `cx-${r.id}`,
         name: 'Codex',
@@ -2693,9 +2622,9 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     }
     deskAgents.filter(a => a.id === 'main' || !deskAgents.some(p => p.id === (a.parent ?? 'main'))).forEach(walk)
     // A chat started from this one: its title, working or idle, and where it works; nested under this chat.
-    const chatList = src.chats ?? []
+    const chatList = c.chats ?? []
     // Not read live (the list needs an approval to read): as of Claude's last look, its time at the right.
-    const asOfChat = (ch: Chat) => (src.chatsLive === false && ch.seen ? clock(ch.seen).slice(0, 5) : '')
+    const asOfChat = (ch: Chat) => (c.chatsLive === false && ch.seen ? clock(ch.seen).slice(0, 5) : '')
     // Its steps, from the file it writes about itself: as a Claude's card shows them (its branch and folder
     // are then in Details only); without steps, where it works.
     // A nested chat reads as a helper Claude does: its card as its own pane draws it (from the file it
@@ -2773,7 +2702,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     // title for a name; "branch · folder" when it has no steps; needing you, it says to answer there. In
     // order: needing you, working, waiting, then idle by last active (6 idle at most). Not counted above.
     // (A chat listed in this folder whose own file names another project stays out.)
-    const siblingList = (src.siblings ?? []).filter(ch => { const f = nested.get(ch.id)?.file; return !f || (!f.root && !f.cwd) || fileInProject(f, ch) })
+    const siblingList = (c.siblings ?? []).filter(ch => { const f = nested.get(ch.id)?.file; return !f || (!f.root && !f.cwd) || fileInProject(f, ch) })
     const RANK: Record<GlanceRow['state'], number> = { you: 0, work: 1, wait: 2, idle: 3, done: 3 }
     const projAll = siblingList
       .map(ch => {
@@ -2804,12 +2733,12 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const matchesQ = (f: CardFile) => !!q && (cardRel(f.id).toLowerCase().includes(q) || f.label.toLowerCase().includes(q))
     const cardFiles: CardFile[] = []
     const seenFile = new Set<string>()
-    for (const [id, ch] of Object.entries(src.changes ?? {}))
+    for (const [id, ch] of Object.entries(c.changes ?? {}))
       if (!isSpecial(id) && !seenFile.has(id)) {
         seenFile.add(id)
-        cardFiles.push({ id, label: src.nodes[id]?.label || baseName(id), touchedAt: src.nodes[id]?.touchedAt || ch.at || 0 })
+        cardFiles.push({ id, label: c.nodes[id]?.label || baseName(id), touchedAt: c.nodes[id]?.touchedAt || ch.at || 0 })
       }
-    for (const n of Object.values(src.nodes))
+    for (const n of Object.values(c.nodes))
       if (n.kind === 'file' && !isSpecial(n.id) && !seenFile.has(n.id)) {
         seenFile.add(n.id)
         cardFiles.push({ id: n.id, label: n.label || baseName(n.id), touchedAt: n.touchedAt || 0 })
@@ -2823,7 +2752,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       }
     // A file's edits by every chat, and who: this chat (its Claude who changed it last) and the nested ones.
     const editsOf = (id: string) => {
-      const ch = src.changes[id]
+      const ch = c.changes[id]
       const others = nt.get(id) ?? []
       const theirs = others.filter(x => x.edits)
       return {
@@ -2835,24 +2764,24 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       }
     }
     const onFile = new Map<string, Agent[]>()
-    for (const a of src.agents) if ((a.state === 'busy' || a.needs) && a.node) onFile.set(a.node, [...(onFile.get(a.node) ?? []), a])
+    for (const a of c.agents) if ((a.state === 'busy' || a.needs) && a.node) onFile.set(a.node, [...(onFile.get(a.node) ?? []), a])
     const groups = new Map<string, { files: CardFile[]; first: number }>()
     // A folder's place is its first file's: new folders join at the end, none ever moves.
     cardFiles.forEach((f, i) => {
       const g = groupOf(f.id)
-      if (g === OUTSIDE && src.hideOutside) return
+      if (g === OUTSIDE && c.hideOutside) return
       const cur = groups.get(g) ?? { files: [], first: i }
       cur.files.push(f)
       groups.set(g, cur)
     })
-    const outsideCount = src.hideOutside ? cardFiles.filter(f => groupOf(f.id) === OUTSIDE).length : 0
+    const outsideCount = c.hideOutside ? cardFiles.filter(f => groupOf(f.id) === OUTSIDE).length : 0
     const folders = [...groups.entries()].sort((x, y) => x[1].first - y[1].first)
     const perRow = cols >= 170 ? 3 : cols >= 100 ? 2 : 1
     const cardW = perRow === 1 ? cols - 1 : Math.floor((cols - (perRow - 1)) / perRow)
     const CHIPS = perRow === 1 ? 8 : 10
     const visibleFiles = [...groups.values()].flatMap(g => g.files)
     const matches = q ? visibleFiles.filter(matchesQ).length : 0
-    const errsOf = (id: string) => (src.problems ?? []).filter(pr => pr.path === id).length + (nt.get(id) ?? []).reduce((n, x) => n + (x.errs ?? 0), 0)
+    const errsOf = (id: string) => (c.problems ?? []).filter(pr => pr.path === id).length + (nt.get(id) ?? []).reduce((n, x) => n + (x.errs ?? 0), 0)
     const natural = (x: CardFile, y: CardFile) => x.label.localeCompare(y.label, undefined, { numeric: true, sensitivity: 'base' }) || x.id.localeCompare(y.id)
     // ── The pane, as the design draws it: header, crew, Touched, and the viewer with its tabs ──
     const now = Date.now()
@@ -2869,7 +2798,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const standby = !liveRows.some(r => r.state === 'work' || r.state === 'wait' || r.state === 'you')
     const openDetails = (id: string) => (tab === 'claude' && ps.focus === id ? paneAct({ tab: 'activity', focus: '', top: 0 }) : paneAct({ tab: 'claude', focus: id, top: 0 }))
     const openFile = (id: string, name: string): Act => {
-      const at = (src.problems ?? []).find(p => p.path === id)?.line
+      const at = (c.problems ?? []).find(p => p.path === id)?.line
       return { k: 'file', path: id, name, edits: (c.changes[id]?.edits ?? 0) > 0, ...(at ? { line: at } : {}) }
     }
     const openDir = (path: string, name: string): Act => ({ k: 'dir', path, name })
@@ -2911,7 +2840,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
           : undefined
 
     // Touched: the three folders worked in most lately (in the order first reached), their files as buttons.
-    const lastIn = (files: CardFile[]) => Math.max(0, ...files.map(f => Math.max(f.touchedAt, src.changes[f.id]?.at ?? 0, nt.get(f.id)?.[0]?.at ?? 0)))
+    const lastIn = (files: CardFile[]) => Math.max(0, ...files.map(f => Math.max(f.touchedAt, c.changes[f.id]?.at ?? 0, nt.get(f.id)?.[0]?.at ?? 0)))
     const touchFolders: TouchFolder[] = [...folders]
       .sort((x, y) => lastIn(y[1].files) - lastIn(x[1].files))
       .slice(0, 3)
@@ -2938,7 +2867,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
             }
           }),
       }))
-    const problemsN = (src.problems ?? []).length
+    const problemsN = (c.problems ?? []).length
     // One count of the files the work touched (edited, read, or named by an error), the same in Touched and Files.
     const filesN = cardFiles.length
     const byNested = cardFiles.filter(f => nt.has(f.id)).length
@@ -3010,7 +2939,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     // One Claude's details: model, who it helps, time; cost, tokens and context; what it was asked; its steps; its own lines.
     const detailLines = (): VLine[] => {
       if (!focusRow) return []
-      const a = src.agents.find(x => x.id === focusRow.id)
+      const a = c.agents.find(x => x.id === focusRow.id)
       const run = focusRow.id.startsWith('cx-') ? codexRuns.find(x => `cx-${x.id}` === focusRow.id) : undefined
       const textCols = Math.max(16, vwCols - 2)
       const out: VLine[] = []
@@ -3060,7 +2989,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         depth > 3
           ? []
           : glance
-              .filter(r => (r.id.startsWith('cx-') ? codexRuns.find(x => `cx-${x.id}` === r.id)?.caller === id : !r.id.startsWith('chat-') && r.id !== 'main' && r.id !== id && (src.agents.find(x => x.id === r.id)?.parent ?? 'main') === id))
+              .filter(r => (r.id.startsWith('cx-') ? codexRuns.find(x => `cx-${x.id}` === r.id)?.caller === id : !r.id.startsWith('chat-') && r.id !== 'main' && r.id !== id && (c.agents.find(x => x.id === r.id)?.parent ?? 'main') === id))
               .flatMap(r => [{ r, depth }, ...(r.id.startsWith('cx-') ? [] : helpersOf(r.id, depth + 1))])
       if (focusRow.id.startsWith('chat-')) {
         // A nested chat, or one of its helpers: the same Details as a Claude's here, from what that chat
@@ -3089,8 +3018,8 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         out.push(...lineSection((sib ? projectLines() : nestedLines()).filter(l => l.chat === cid && (hid ? l.by === nrow?.name : !l.by)).slice(-30).reverse()))
         return out
       }
-      const parent = a ? src.agents.find(x => x.id === (a.parent ?? 'main')) : undefined
-      const caller = run ? src.agents.find(x => x.id === run.caller) : undefined
+      const parent = a ? c.agents.find(x => x.id === (a.parent ?? 'main')) : undefined
+      const caller = run ? c.agents.find(x => x.id === run.caller) : undefined
       const model = focusRow.model || (run ? trunc(run.model, 14) : '')
       const role = a && a.id !== 'main' && parent ? `helping ${parent.name}` : caller ? `run by ${caller.name}` : ''
       const said: Seg = a?.id === 'main' ? (model ? { t: model, tail: ' · leads this chat' } : { t: 'leads this chat' }) : { t: [model, role].filter(Boolean).join(' · ') }
@@ -3109,7 +3038,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
             chatList.flatMap(ch => glance.filter(r => r.id === `chat-${ch.id}` || r.id.startsWith(`chat-${ch.id}~`)).map(r => ({ r, depth: Math.min(3, Math.max(0, r.id.includes('~') ? r.depth - 1 : ch.depth - 1)) }))),
           ),
         )
-      if (a) out.push(...stepSection(stepsOf(a, src).slice(0, 12).map(t => ({ mark: stepMark(t.status), text: t.text, on: t.status === 'in_progress' }))))
+      if (a) out.push(...stepSection(stepsOf(a, c).slice(0, 12).map(t => ({ mark: stepMark(t.status), text: t.text, on: t.status === 'in_progress' }))))
       out.push(...lineSection(allLog.filter(l => (run ? l.who === 'Codex' : l.who === focusRow.name && l.hue === (a?.hue ?? -2))).slice(-30).reverse()))
       return out
     }
@@ -3174,7 +3103,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
         ],
       },
       { segs: [{ t: 'Open files in', w: setW, role: 'dim', gap: 12 }, ...([['code', 'VS Code'], ['cursor', 'Cursor'], ['system', 'default app']] as const).map(([v, t]) => choice(t, (c.editor || 'code') === v, { k: 'set', editor: v }))] },
-      { segs: [{ t: 'Outside files', w: setW, role: 'dim', gap: 12 }, choice('shown', !src.hideOutside, { k: 'set', hideOutside: false }), choice('hidden', !!src.hideOutside, { k: 'set', hideOutside: true })] },
+      { segs: [{ t: 'Outside files', w: setW, role: 'dim', gap: 12 }, choice('shown', !c.hideOutside, { k: 'set', hideOutside: false }), choice('hidden', !!c.hideOutside, { k: 'set', hideOutside: true })] },
       { segs: [{ t: 'Save log', w: setW, role: 'dim', gap: 12 }, choice('when I press Save', !c.autoSave, { k: 'set', autoSave: false }), choice('after each task', !!c.autoSave, { k: 'set', autoSave: true })] },
       { segs: [{ t: 'Test toasts', w: setW, role: 'dim', gap: 12 }, choice('off', !c.testToasts, { k: 'set', testToasts: false }), choice('on', !!c.testToasts, { k: 'set', testToasts: true }), ...(wide ? [{ t: 'when a test run ends', role: 'faint', flex: true }] : [])] },
       { segs: [{ t: 'Demo', w: setW, role: 'dim', gap: 12 }, { t: demoOn ? 'a pretend session is playing' : '▶ try a pretend session', role: 'dim', u: !demoOn, run: { k: 'demo' } }] },
@@ -3987,13 +3916,13 @@ const startWeb = ($: EngineInterface, onlyIfKept = false) => {
             webSent = ''
             void publishWeb($)
           } else if (line.startsWith('ACT ')) {
-            let msg: { id?: unknown; search?: unknown; next?: unknown; open?: unknown; older?: unknown; project?: unknown; set?: { budget?: unknown; editor?: unknown } } = {}
+            let msg: { id?: unknown; search?: unknown; open?: unknown; older?: unknown; project?: unknown; set?: { budget?: unknown; editor?: unknown } } = {}
             try {
               msg = JSON.parse(line.slice(4))
             } catch {}
             const act = typeof msg.id === 'string' ? actOf(msg.id) : undefined
             if (act) await doAction($, act, undefined)
-            else if (typeof msg.search === 'string') await searchFor($, msg.search.slice(0, 200), msg.next === true)
+            else if (typeof msg.search === 'string') await searchFor($, msg.search)
             // The Who list picked the whole project or one chat in it (or let it go): its lines come with the view.
             else if (typeof msg.project === 'string') webProject = msg.project === '*' || /^local_[\w-]+$/.test(msg.project) ? msg.project : ''
             // The page's own asks (a line opened, older lines): answered with a reply, the view is unchanged.
@@ -4061,7 +3990,7 @@ export const register: Register = on => {
     await update($, crew, c => {
       // A reload drops in-flight calls and the demo; migrate older state shapes too.
       const old: Partial<Crew> = Array.isArray(c?.agents) ? c : {}
-      const base: Crew = { agents: [], nodes: {}, trails: [], log: [], calls: 0, startedAt: 0, changes: {}, zoom: 1, showFiles: false, demoCodex: [], editor: 'code', tests: [], problems: [], timeline: [], budget: 0, budgetWarned: 0, turnBase: { at: 0, goal: '', changes: {}, tokens: 0, cost: 0, tests: 0, failed: 0, codex: 0 }, summary: null, ...old, spent: old.spent ?? { tokens: 0, cost: 0 } }
+      const base: Crew = { agents: [], nodes: {}, trails: [], log: [], calls: 0, startedAt: 0, changes: {}, zoom: 1, showFiles: false, demoCodex: [], editor: 'code', tests: [], problems: [], budget: 0, budgetWarned: 0, turnBase: { at: 0, goal: '', changes: {}, tokens: 0, cost: 0, tests: 0, failed: 0, codex: 0 }, summary: null, ...old, spent: old.spent ?? { tokens: 0, cost: 0 } }
       const agents = base.agents
         .filter(a => !a.id.startsWith('demo-'))
         .map(a => ({ from: '', movedAt: 0, tokens: 0, cost: 0, stuck: '', recent: [], since: 0, ...a }))
@@ -4076,7 +4005,6 @@ export const register: Register = on => {
           .filter(t => !t.agentId.startsWith('demo-'))
           .map(t => (t.status === 'running' ? { ...t, status: 'unknown' as const, endedAt: Date.now() } : t)),
         shells: (base.shells ?? []).filter(x => !x.agentId.startsWith('demo-') && x.status === 'running' && x.background && x.shellId),
-        timeline: (base.timeline ?? []).filter(f => !f.agentId.startsWith('demo-')),
         problems: (base.problems ?? []).filter(p => !p.path.startsWith('demo/')),
         spent: base.spent ?? { tokens: agents.reduce((n, a) => n + (a.tokens ?? 0), 0), cost: agents.reduce((n, a) => n + (a.cost ?? 0), 0) },
         startedAt: base.startedAt || Date.now(),
@@ -4369,17 +4297,6 @@ export const register: Register = on => {
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => (await asking(e, () => next(e))) as Awaited<ReturnType<typeof next>>)
   on('tool.call', { tool: 'ExitPlanMode' }, async ($, e, next) => (await asking(e, () => next(e))) as Awaited<ReturnType<typeof next>>)
   // Each model request: how much of its context window the Claude is using now.
-  on('classic.PreToolUse', async ($, e, next) => {
-    const t0 = Date.now()
-    const decided = await next(e)
-    const r = decided as { deny?: unknown; ask?: unknown } | undefined
-    const kind = r?.deny !== undefined ? 'hookBlock' : r?.ask !== undefined || Date.now() - t0 >= 400 ? 'hook' : ''
-    if (kind) {
-      const id = agentOf(e)
-      void write?.(c => (c.agents.some(a => a.id === id) ? upsert(c, id, a => ({ ...a, kinds: [kind, ...(a.kinds ?? [])].slice(0, 8) })) : c))
-    }
-    return decided
-  })
   on('turn.step', async function* ($, e, next) {
     // When this model step began, kept here (no write per step): how long "thinking" has run.
     stepStart.set(e.agentId ?? 'main', Date.now())
@@ -4623,7 +4540,6 @@ export const register: Register = on => {
           state: 'busy',
           calls: x.calls + 1,
           actions: [line, ...x.actions].slice(0, 5),
-          kinds: [kindOf(e.tool), ...(x.kinds ?? [])].slice(0, 8),
         }
         // The app checks off the whole task list itself when Claude wraps up (no update_plan follows): every step done.
         const wrapped = e.tool === WRAP_TOOL && !!x.plan?.length && !x.todoList
@@ -4643,22 +4559,6 @@ export const register: Register = on => {
         }
         return upd
       })
-      // One step on the replay's timeline.
-      if (node || e.tool === 'Agent' || e.tool === 'Task') {
-        const who = d.agents.find(x => x.id === id)
-        const frame: Frame = {
-          at: Date.now(),
-          agentId: id,
-          name: who?.name ?? 'Claude',
-          hue: who?.hue ?? 0,
-          node: node || who?.node || '',
-          tool: e.tool,
-          detail: detail.slice(0, 80),
-          added: typeof delta === 'object' ? delta.added : 0,
-          removed: typeof delta === 'object' ? delta.removed : 0,
-        }
-        d = { ...d, timeline: [...(d.timeline ?? []), frame].slice(-MAX_FRAMES) }
-      }
       const logged = log({ ...d, calls: d.calls + 1 }, id, 'act', line)
       const last = logged.log[logged.log.length - 1]
       // An edit keeps its file (for Open diff); a command shows what it runs while it runs.
@@ -4805,17 +4705,6 @@ export const register: Register = on => {
         void $.ui.toast(`${t.status === 'failed' ? '✗ Tests failed' : '✓ Tests passed'} (${testWords(t)}) · ${trunc(t.purpose || testPurpose(t.command, ''), 48)}${t.agentId === 'main' ? '' : ` · ${t.who}`}`)
       settleLater(id, stamp)
     }
-  })
-
-  // The map's pointer and clicks, and the search field.
-  on('ui.message', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
-    if (e.element === 'search') {
-      // The search field drawn on the surface: each letter typed, and Enter for the next match.
-      const sd = (e.data ?? {}) as { q?: unknown; next?: unknown }
-      if (typeof sd.q === 'string') await searchFor($, sd.q, sd.next === true)
-      return {}
-    }
-    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -4974,7 +4863,7 @@ export const register: Register = on => {
       <Box key="search-row" flexDirection="row">
         <Text mono size="footnote" color="#8B949E">{'⌕ '}</Text>
         <Box flexGrow={1}>
-          <Input key="search-input" placeholder="Search files and the log..." value={sq.q} submitLabel="" onInput={(v: string) => void searchFor($, v)} onSubmit={(v: string) => void searchFor($, v, true)} />
+          <Input key="search-input" placeholder="Search files and the log..." value={sq.q} submitLabel="" onInput={(v: string) => void searchFor($, v)} onSubmit={(v: string) => void searchFor($, v)} />
         </Box>
       </Box>
     ) : null

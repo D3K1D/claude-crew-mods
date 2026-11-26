@@ -125,33 +125,20 @@ for (let step = 0; step < STEPS; step++) {
       if (codexRuns.length < 6) codexRuns.push({ id: `r${step}`, task: 'task & <stuff>', mode: 'write', root: P, cwd: P, model: 'm', effort: 'e', status: 'running', startedAt: now, endedAt: 0, thread: pick(['', 'auth', '<t>&']), resumed: false, caller: pick(agentIds), activity: 'Editing "x"', focus: path(), touched: Array.from({ length: 5 }, () => ({ path: path(), kind: pick(['look', 'edit']), at: now })), events: [{ at: now, kind: 'cmd', text: 'cargo test & <x>', ok: undefined }], files: [path()], commands: 1, failedCommands: 0, answer: '', notesUpdated: false })
       else Object.assign(pick(codexRuns), { status: pick(['done', 'failed', 'stopped']), endedAt: now })
     } else if (r < 0.28) {
-      // The person at the pane: clicks, hovers, the arrows, the search, folding, hiding, the two views.
+      // The person at the pane: the tabs, scrolling and Details, the search typed, outside files hidden or shown.
       const tree = await hooks['ui.render']($, { surface: 'terminal', props: { bodyColumns: 140, scroll: { bodyRows: 40 } }, viewport: { columns: 140 } })
-      const pan = find(tree, x => x.type === 'Client' && x.props.key === 'pan')[0]?.props.props
-      const junk = () => pick([NaN, Infinity, -1e9, 1e9, 'x', null, undefined, -0, 0.5])
-      const num = (a, b) => (rnd() < 0.08 ? junk() : a + rnd() * (b - a))
+      const words = x => (typeof x === 'string' || typeof x === 'number' ? String(x) : (x?.props?.children ?? []).map(words).join(''))
       const what = rnd()
-      if (what < 0.35)
-        await hooks['ui.message']($, { surface: 'terminal', component: 'Pane', requestId: 'crew-map', element: 'pan', module: './pan.tsx', data: { view: pan?.view, rev: pan?.rev, click: [num(-50, 1200), num(-50, 700)], ctrl: rnd() < 0.3, sel: rnd() < 0.5, hover: rnd() < 0.5 ? [num(0, 1100), num(0, 700)] : null } }, async () => ({}))
-      else if (what < 0.55)
-        await hooks['ui.message']($, { surface: 'terminal', component: 'Pane', requestId: 'crew-map', element: 'pan', module: './pan.tsx', data: { view: { x: num(-3000, 3000), y: num(-3000, 3000), k: num(-1, 5) }, rev: rnd() < 0.8 ? pan?.rev : 'stale', zoom: rnd() < 0.3 ? num(-1, 3) : undefined, fit: rnd() < 0.1 } }, async () => ({}))
-      else if (what < 0.7) {
-        // The arrows (and junk: a stale press after the window moved).
-        const arrow = find(tree, x => x.type === 'Button' && String(x.props.key).startsWith('move-'))
-        if (arrow.length) await pick(arrow).props.onPress()
-      }
-      else if (what < 0.82) {
-        const input = find(tree, x => x.type === 'Input' && x.props.key === 'search')[0]
+      if (what < 0.6) {
+        const btns = find(tree, x => x.type === 'Button' && /^(Activity|Files \d+|⌕|⚙|▲ older|▼ newer|⤓ latest|Details|Hide|›|▾)$/.test(words(x)))
+        if (btns.length) await pick(btns).props.onPress({ surface: 'terminal' })
+      } else if (what < 0.85) {
+        const input = find(tree, x => x.type === 'Input')[0]
         const q = pick(['', 'a', '.ts', 'src/', '(', '[', '*', '\\', 'zzz', '<b>', 'x'.repeat(300), 'é'])
         if (input) await (rnd() < 0.5 ? input.props.onInput(q) : input.props.onSubmit(q))
       } else {
-        const keys = ['fit', 'bigger', 'smaller', 'show-outside', 'view-map', 'view-desks', 'hide-outside']
-        const btn = find(tree, x => x.type === 'Button' && x.props.key === pick(keys))[0]
-        if (btn) await btn.props.onPress()
-        else {
-          const c = globalThis.__store.get('crew')
-          globalThis.__store.set('crew', { ...c, folds: rnd() < 0.5 ? { [pick(['.', 'src', '~outside', 'x'])]: pick(['open', 'closed', 'junk']) } : c.folds, hideOutside: rnd() < 0.5 ? !c.hideOutside : c.hideOutside, view: rnd() < 0.5 ? pick(['map', 'desks', undefined, 'junk']) : c.view, cardsOpen: rnd() < 0.3 ? { [pick(['.', 'src', '~outside'])]: rnd() < 0.5 } : c.cardsOpen })
-        }
+        const c = globalThis.__store.get('crew')
+        globalThis.__store.set('crew', { ...c, hideOutside: !c.hideOutside })
       }
     } else {
       const tool = pick(tools)
@@ -186,13 +173,6 @@ for (let step = 0; step < STEPS; step++) {
       for (const b of find(tree, x => x.type === 'Box' && x.props.position === 'absolute'))
         check('overlay positions are whole, non-negative cells', [b.props.top, b.props.left].every(v => v === undefined || (Number.isInteger(v) && v >= -60)), JSON.stringify({ top: b.props.top, left: b.props.left }))
       check('the pane stays a sensible size', JSON.stringify(tree).length < 900_000, String(JSON.stringify(tree).length))
-      // The pan module's props: plain data, the window finite and within its zoom limits.
-      const panProps = find(tree, x => x.type === 'Client' && x.props.key === 'pan')[0]?.props.props
-      if (panProps) {
-        const v = panProps.view
-        check('the window is finite and within its zoom limits', [v.x, v.y, v.k].every(Number.isFinite) && v.k >= panProps.kMin - 1e-9 && v.k <= panProps.kMax + 1e-9, JSON.stringify(panProps))
-        check('the pan props are plain data', JSON.stringify(JSON.parse(JSON.stringify(panProps))) === JSON.stringify(panProps) && typeof panProps.rev === 'string')
-      }
     }
     try {
       await hooks['ui.render']($, { surface: 'terminal', props: { bodyColumns: 100 }, viewport: { columns: 100 } })
@@ -202,7 +182,6 @@ for (let step = 0; step < STEPS; step++) {
     const c = globalThis.__store.get('crew')
     check('agents stay capped', c.agents.length <= 12, String(c.agents.length))
     check('the log stays capped', c.log.length <= 120, String(c.log.length))
-    check('the timeline stays capped', c.timeline.length <= 600, String(c.timeline.length))
     check('test runs stay capped', c.tests.length <= 12, String(c.tests.length))
     check('problems stay capped', c.problems.length <= 30, String(c.problems.length))
     check('shell commands stay capped', (c.shells ?? []).length <= 20, String((c.shells ?? []).length))

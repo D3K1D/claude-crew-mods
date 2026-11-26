@@ -1,4 +1,4 @@
-// Problems on the map, stuck detection, budget, task summary, replay.
+// Problems, stuck detection, budget and the task summary.
 globalThis.h = (type, props, ...children) => {
   const kids = children.flat(Infinity).filter(c => c != null && c !== false)
   return typeof type === 'function' ? type({ ...(props || {}), children: kids }) : { type, props: { ...(props || {}), children: kids } }
@@ -107,6 +107,7 @@ await call({ tool: 'Bash', command: 'cargo test' }, { text: 'test result: ok. 12
 await hooks['turn.complete']($, { reason: 'answer', answer: 'Done', durationMs: 1, isAborted: false, turnId: 'T1', usage: { input_tokens: 1000, output_tokens: 2000, model: 'claude-opus-5-5' } }, async () => ({ text: 'Done' }))
 const s = crew().summary
 check('summary built at the end of the task', s && s.files.length === 1 && s.files[0].added === 3 && s.tests.runs >= 1 && s.tests.last.startsWith('passed'), JSON.stringify(s))
+check('the summary names who worked on it', s?.claudes?.[0] === 'Claude', JSON.stringify(s?.claudes))
 check('done toast', toasts.some(t => t.startsWith('✓ Done in')), toasts.at(-1))
 tree = await render()
 check("the last task's card shows in the crew's place", words(tree, 'top').some(w => /^Last task done in /.test(w)) && words(tree, 'top').some(w => /^1 file · \+3 −1$/.test(w)), said(tree))
@@ -130,10 +131,6 @@ await hooks['turn.complete']($, { reason: 'answer', answer: 'x', durationMs: 1, 
 check('over budget toasts', toasts.some(t => t.startsWith('💸 Over budget')), toasts.join(' | '))
 tree = await render()
 check('the header shows the cost of the budget, in red once over', glyphs(tree, 'top').find(g => /^\$\d.* of \$0\.05$/.test(g.t))?.role === 'red', said(tree).slice(0, 120))
-
-// ── No replay: the button was taken out ──
-check('timeline recorded steps (for the task summary)', crew().timeline.length >= 15, String(crew().timeline.length))
-check('no replay button', !btn(tree, 'replay'))
 
 // ── Demo shows problems and summary ──
 await press('Settings')

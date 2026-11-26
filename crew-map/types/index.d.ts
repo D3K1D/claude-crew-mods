@@ -52,8 +52,6 @@ export type Agent = {
   recent: { sig: string; ok: boolean; at: number }[]
   /** What it was started for, in its starter's words (a helper: the Agent call's description). */
   job?: string
-  /** Its recent kinds of action, newest first (read, edit, shell, search, web, agent, skill, plan, tool, hook, hookBlock). */
-  kinds?: string[]
   /** The Claude that started it (a helper's parent), when known. */
   parent?: string
   /** What it is waiting on the person for (a permission, an answer, a plan to approve), and for which tool. */
@@ -74,20 +72,6 @@ export type Problem = {
   by: string
   hue: number
   at: number
-}
-
-/** One step of the session, as the replay shows it. */
-export type Frame = {
-  at: number
-  agentId: string
-  name: string
-  hue: number
-  node: string
-  tool: string
-  detail: string
-  /** Lines this step added and removed in `node`, when it edited it. */
-  added: number
-  removed: number
 }
 
 /** What one finished task came to: the card the pane shows and copies as Markdown. */
@@ -167,8 +151,6 @@ export type Crew = {
   tests: TestRun[]
   /** Errors from the last failing build or test, by file and line. */
   problems: Problem[]
-  /** Every step, newest last, for the replay. */
-  timeline: Frame[]
   /** Tokens and dollars the whole session has used: kept here, since old helpers drop off the agent list. */
   spent: { tokens: number; cost: number }
   /** What the whole chat has cost, as Claude Code's own /cost totals it (every reply, helpers' too), when it says. */
@@ -231,16 +213,6 @@ export type Chat = {
   /** When this was read from the app (ms). */
   seen?: number
 }
-
-/**
- * The map's window on the desktop: its top-left in map units, its scale (screen
- * pixels per map unit), whether it follows the fit, a stamp that changes when
- * the hooks module moves it, and whether the map has the wheel (clicked).
- */
-export type MapView = { x: number; y: number; k: number; auto: boolean; rev: string; sel: boolean; /** The search stamp the window follows to its hit; 0 when it does not. */ follow?: number }
-
-/** The replay's position: off, or a step of the timeline, playing or paused. */
-export type Replay = { on: boolean; at: number; playing: boolean }
 
 /** One test command a Claude ran, and how it came out. */
 /** A shell command a Claude ran: shown while it runs, in words (Claude's description, else what it runs). */
@@ -313,16 +285,10 @@ declare module 'claude-code' {
   interface PluginState {
     'crew-map': {
       crew: Crew
-      /** Bumped once a second while a test runs, so its timer counts up. */
+      /** Bumped once a second while something runs, so its timer counts up. */
       tick: number
-      replay: Replay
-      view: MapView
-      /** The map search: the text, which hit is shown, and a stamp per change. */
-      search: { q: string; i: number; rev: number }
-      /** What the pointer rests on, on the map: a click target's id, or ''. */
-      hover: string
-      /** The map's pan module has had the mouse here (so the surface takes its input). */
-      mapLive: boolean
+      /** What the search box holds. */
+      search: { q: string }
     }
   }
 }
