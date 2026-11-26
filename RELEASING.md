@@ -14,7 +14,7 @@ The same steps for every release of either mod.
    npm test
    ```
    Every check must pass. The engine tests run when Claude Code is installed (set `CLAUDE_EXE` to pick one).
-4. **Validate:** `claude plugin validate .`, `claude plugin validate crew-map` and `claude plugin validate codex-bridge` must pass. The TypeScript warnings they list must not grow; there are 196 today, all older than 1.9.0.
+4. **Validate:** `claude plugin validate .`, `claude plugin validate crew-map` and `claude plugin validate codex-bridge` must pass. The TypeScript warnings they list must not grow; there are 130 today, all older than 1.9.0.
 5. **Try it in the app.** Install the mod locally (`sh scripts/install.sh crew-map`, or copy the folder to `~/.claude/mods/crew-map`), start a new chat, type `/crew`, and look at both themes.
 6. **Commit, tag and push:** `git tag v<version>`, `git push`, `git push --tags`.
 7. **Publish the release** on GitHub from the tag (`gh release create v<version> --notes-from-tag`, or paste the changelog section). Users update with `claude plugin marketplace update crew-mods`, then `claude plugin update crew-map`.

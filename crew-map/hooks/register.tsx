@@ -728,7 +728,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Input, Link } = $.ui.resolve(e) as unknown as Record<string, (props: unknown) => unknown>
+    const { Box, Text, Button, Input, Link } = $.ui.resolve(e)
     const cols = Math.max(40, e.props?.bodyColumns ?? e.viewport?.columns ?? 80)
 
     // The website runs: the pane on the desktop only says where, and how to open it beside the chat.
