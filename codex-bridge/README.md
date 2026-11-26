@@ -1,12 +1,12 @@
 # Codex Bridge (plugin `codex-bridge`)
 
-Gives Claude Code a `codex` tool, so Claude can hand work to OpenAI Codex the way it hands work to its own helper agents. Codex runs through the Codex CLI signed in to your ChatGPT/Codex subscription. There's no API key, and runs count against that subscription rather than Claude's.
+Gives Claude Code a `codex` tool, so Claude can hand work to OpenAI Codex the way it hands work to its own helpers. Codex runs through the Codex CLI signed in to your ChatGPT/Codex subscription: no API key, and runs count against that subscription, not Claude's.
 
 ```
-/plugin install codex-bridge --marketplace D3K1D/claude-crew-mods
+claude plugin install codex-bridge --marketplace D3K1D/claude-crew-mods
 ```
 
-You also need the Codex CLI: the [Codex desktop app](https://openai.com/codex) includes it, or install it with `npm i -g @openai/codex` and run `codex login`. Open the pane with `/codex`. The repository's [README](../README.md) covers other ways to install it and troubleshooting.
+You also need the Codex CLI: the [Codex desktop app](https://openai.com/codex) includes it, or install it with `npm i -g @openai/codex` and run `codex login`. Open the pane with `/codex`. The repository's [README](../README.md) covers the install script, updating and troubleshooting.
 
 ## How to use it
 
@@ -48,9 +48,9 @@ The top of the pane shows your Codex plan and each of its limits (the 5-hour win
 
 ## The pane
 
-Each run gets a card showing its thread, model and effort, mode, who asked, elapsed time, what Codex is doing right now, its commands (✓/✗), the files it changed, and a **stop** button while it runs. Finished runs show a summary and whether Codex updated its notes. Each changed file is a button that opens it in your editor as a diff against your last commit. The editor is the one picked in the crew map, or VS Code if that mod isn't installed.
+Each run gets a card showing its thread, model and effort, mode, who asked, elapsed time, what Codex is doing right now, its commands (✓/✗), the files it changed, and a **stop** button while it runs. Finished runs show a summary and whether Codex updated its notes. Each changed file is a button that opens it in your editor as a diff against your last commit: the editor picked in Claude Crew's settings, or VS Code without it.
 
-With the `crew-map` mod installed, a running Codex also gets its own desk and window in the crew pane, and its own tree on the optional tree map.
+With Claude Crew installed, a running Codex also gets its own row there, and its lines join the log.
 
 ## Limits
 

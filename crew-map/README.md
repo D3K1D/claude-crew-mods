@@ -7,13 +7,13 @@
   <a href="https://claude.com/claude-code"><img alt="Claude Code 2.1.275 or later" src="https://img.shields.io/badge/Claude%20Code-%E2%89%A52.1.275-D97757"></a>
 </p>
 
-A live website of what Claude, its helper Claudes and the chats it started are doing, for when you give Claude Code a task and want to *see* the work instead of scrolling through a transcript.
+A live website of what Claude, its helpers and the chats it started are doing: see the work instead of scrolling through a transcript.
 
 ```
-/plugin install crew-map --marketplace D3K1D/claude-crew-mods
+claude plugin install crew-map --marketplace D3K1D/claude-crew-mods
 ```
 
-It needs Node.js 18 or later. The repository's [README](../README.md) has the full install steps, updating, uninstalling and troubleshooting.
+It needs Node.js 18 or later. The repository's [README](../README.md) covers the install script, updating, uninstalling, privacy and troubleshooting.
 
 ![Claude Crew in a busy session: one Claude needing you pinned in amber, helpers and a nested chat under who started them, tests running, files touched by folder, and the log with an edit opened to its diff](../docs/crew-hero.png)
 
@@ -31,9 +31,9 @@ Without Node, `/crew` opens the mod's own pane instead, with the same view as te
 
 **This project.** The other chats working in the same project (the same git repository, its worktrees included, or folder), under a "This project" heading after this chat's crew: a card for each one at work, waiting or needing you (not pinned; answer it in its own chat), and a dim line for the idle ones (three, then "+N idle"). The heading folds; it starts folded when all are idle. Their lines join the log only when you pick "Whole project" or one of them in the log's Who filter, and they are not in the header's counts or cost, Touched or Files.
 
-**Nested chats.** A chat Claude started from this one (and the chats that one started) shows like a helper: its card under its short name and colour, its own helpers under it, its steps, model and cost. One that needs you is pinned on top too, with "answer in that chat" (Claude Crew can't answer another chat's prompt). Its files join Touched and Files, and its lines join the log, marked with a chat bubble in its colour.
+**Nested chats.** A chat Claude started from this one (and the chats that one started) shows like a helper: its card under its short name and colour, its own helpers under it, its steps, model and cost. One that needs you is pinned on top too, with "answer in that chat" (Claude Crew can't answer another chat's prompt). Its files join Touched and Files, and its lines join the log, marked with a chat bubble in its colour. Where reading the app's chat list needs an approval (auto mode, for example), nested cards update when Claude itself looks at the chats, and say **as of 13:09** until then.
 
-![Claude Crew in the light theme at the narrow width, with a nested chat's card, files and log lines](../docs/crew-light-narrow.png) Where reading the app's chat list needs an approval (auto mode, for example), nested cards update when Claude itself looks at the chats, and say **as of 13:09** until then.
+![Claude Crew in the light theme at the narrow width, with a nested chat's card, files and log lines](../docs/crew-light-narrow.png)
 
 **When it's done.** With nobody working, the last task's card shows how long it took, what changed, the tests, the cost and who worked on it.
 

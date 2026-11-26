@@ -1,7 +1,7 @@
 {
   "name": "crew-map",
   "version": "1.8.9",
-  "description": "Claude Crew: a live website beside the chat (type /crew) showing what Claude, its helpers and the chats it started are doing: each one's status, steps, cost and context, what needs you, the files touched, and a filterable log where every action opens to its diff, output or error. Logs are kept and can be saved with a summary.",
+  "description": "Claude Crew: a live website beside the chat (/crew) of what Claude, its helpers and the chats it started are doing, what needs you, the files touched and the cost, with a log that opens every action to its diff, output or error.",
   "author": {
     "name": "D3K1D",
     "url": "https://github.com/D3K1D"

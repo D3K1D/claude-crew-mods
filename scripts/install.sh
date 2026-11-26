@@ -98,4 +98,4 @@ edit "$dirs" write
 echo "updated $settings (a backup sits next to it)"
 echo
 echo "Done. Quit Claude Code completely (the desktop app, or every claude terminal), start it again,"
-echo "and open a new chat: /crew opens the crew map, /codex the Codex pane."
+echo "and open a new chat: /crew opens Claude Crew, /codex the Codex pane."

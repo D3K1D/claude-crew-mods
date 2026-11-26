@@ -49,4 +49,4 @@ $envBlock | Add-Member -Force -NotePropertyName CLAUDE_CODE_ENABLE_FUNCTION_HOOK
 Write-Host "updated $settingsPath (a backup sits next to it)"
 Write-Host ''
 Write-Host 'Done. Quit the Claude desktop app completely (or close every claude terminal), start it again,'
-Write-Host 'and open a new chat: /crew opens the crew map, /codex the Codex pane.'
+Write-Host 'and open a new chat: /crew opens Claude Crew, /codex the Codex pane.'
