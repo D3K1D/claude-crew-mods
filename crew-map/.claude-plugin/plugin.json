@@ -1,6 +1,6 @@
 {
   "name": "crew-map",
-  "version": "1.8.9",
+  "version": "1.9.0",
   "description": "Claude Crew: a live website beside the chat (/crew) of what Claude, its helpers and the chats it started are doing, what needs you, the files touched and the cost, with a log that opens every action to its diff, output or error.",
   "author": {
     "name": "D3K1D",

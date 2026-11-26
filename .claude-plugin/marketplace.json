@@ -12,13 +12,13 @@
       "name": "crew-map",
       "source": "./crew-map",
       "description": "Claude Crew: a live website beside the chat (/crew) of what Claude, its helpers and the chats it started are doing, what needs you, the files touched and the cost, with a log that opens every action to its diff, output or error.",
-      "version": "1.8.9"
+      "version": "1.9.0"
     },
     {
       "name": "codex-bridge",
       "source": "./codex-bridge",
       "description": "Gives Claude a codex tool: hand tasks to OpenAI Codex on your own ChatGPT/Codex subscription, with model and effort choice, per-project memory, named threads, your plan usage and a live pane (/codex).",
-      "version": "1.2.4"
+      "version": "1.2.5"
     }
   ]
 }

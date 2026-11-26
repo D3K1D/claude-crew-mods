@@ -1,6 +1,6 @@
 {
   "name": "codex-bridge",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "Gives Claude a codex tool: hand tasks to OpenAI Codex on your own ChatGPT/Codex subscription, with model and effort choice, per-project memory, named threads, your plan usage and a live pane (/codex).",
   "author": {
     "name": "D3K1D",

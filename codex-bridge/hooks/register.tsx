@@ -7,7 +7,7 @@ import type { Limit, PaneUi, Registry, Run, RunEvent, Touch, Usage } from '../ty
 
 const PANE = 'codex-bridge'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.2.4'
+const VERSION = '1.2.5'
 const TOOL = 'codex'
 const MAX_RUNS = 16
 const MAX_EVENTS = 60

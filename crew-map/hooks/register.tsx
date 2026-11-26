@@ -7,7 +7,7 @@ import type { Agent, Change, Chat, CodexRun, Crew, LogLine, PlanTask, Problem, S
 
 const PANE = 'crew-map'
 /** Shown in the pane's header, so it is plain which version a chat is running. Keep in step with plugin.json. */
-const VERSION = '1.8.9'
+const VERSION = '1.9.0'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 /** How /crew-review's request to Claude starts (that turn, too, is not the chat's goal). */
