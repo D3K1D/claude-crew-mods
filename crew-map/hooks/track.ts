@@ -17,11 +17,11 @@ export const VERSION = '1.9.0'
 /** How /crew's request to Claude starts: the log and the last task leave that turn out. */
 export const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 /** How /crew-review's request to Claude starts (that turn, too, is not the chat's goal). */
-export const REVIEW_ASK = 'Start a Crew Review of this project'
-export const MAX_AGENTS = 12
+const REVIEW_ASK = 'Start a Crew Review of this project'
+const MAX_AGENTS = 12
 /** Files reached but not edited or read whole (searched in, named by an error), kept at most. */
-export const MAX_REACHED = 60
-export const LINGER_MS = 90_000
+const MAX_REACHED = 60
+const LINGER_MS = 90_000
 
 // Each file that reads or writes a value declares its atom itself (the engine reads them per file): the
 // same plugin and key are the same value. The crew, here and in model.ts and register.tsx.
@@ -32,7 +32,7 @@ const crew = atom({ plugin: 'crew-map', key: 'crew' } as const, EMPTY)
  * A command tidied, with heredoc bodies taken out (the text it carries, not what it runs).
  * Only a real heredoc counts: `cat <<EOF`, not the shift in `$((1<<4))`.
  */
-export const cmdHead = (cmd: string) =>
+const cmdHead = (cmd: string) =>
   tidyCmd(
     cmd
       .replace(/\\\r?\n/g, ' ')
@@ -47,7 +47,7 @@ export const cmdHead = (cmd: string) =>
  * (`bash -c "…"`, `powershell -Command "…"`) is unwrapped, other quoted text blanked, and
  * wrappers skipped (npx, `python -m`, `uv run`, timeout, env…), so what is left is what runs.
  */
-export const cmdParts = (cmd: string): string[][] => {
+const cmdParts = (cmd: string): string[][] => {
   const unwrapped = cmdHead(cmd)
     // Combined flags count too: Codex runs everything as `bash -lc "…"`.
     .replace(/\b(?:bash|sh|zsh|pwsh|powershell)(?:\.exe)?\s+(?:-\w+\s+)*?(?:-[A-Za-z]*c|-Command)\s+(["'])(.*?)\1/gi, (_m, _q, inner: string) => ` ; ${inner} ; `)
@@ -84,9 +84,9 @@ export const cmdParts = (cmd: string): string[][] => {
 }
 
 /** Tools whose first word after the program says what ran (git status, npm install, claude plugin validate). */
-export const SUBCOMMANDS = /^(git|npm|pnpm|yarn|bun|cargo|go|docker|kubectl|gh|claude|dotnet|uv|pip|pip3|brew|terraform|make|deno|winget|choco|rustup|poetry)$/
+const SUBCOMMANDS = /^(git|npm|pnpm|yarn|bun|cargo|go|docker|kubectl|gh|claude|dotnet|uv|pip|pip3|brew|terraform|make|deno|winget|choco|rustup|poetry)$/
 /** Housekeeping that says nothing about the work: left out when a command does more. */
-export const CHORES = /^(cd|pushd|popd|echo|printf|true|false|set|export|sleep|test|\[|exit|wait|head|tail|grep|rg|wc|sort|uniq|cut|tr|tee|xargs|less|more|cat|jq)$/
+const CHORES = /^(cd|pushd|popd|echo|printf|true|false|set|export|sleep|test|\[|exit|wait|head|tail|grep|rg|wc|sort|uniq|cut|tr|tee|xargs|less|more|cat|jq)$/
 /**
  * What a command runs, in a few words and without its arguments, for when Claude gave no
  * description: "ran sed, cp, diff", "ran a Python script", "ran claude plugin validate".
@@ -114,10 +114,10 @@ export const cmdGist = (cmd: string) => {
 }
 
 /** A path that names tests: tests/…, test_x.py, x.test.ts, run_tests.sh, spec/… (not "latest"). */
-export const TESTY = /(^|[\\/_.-])(tests?|specs?)([\\/_.-]|$)/i
-export const TEST_PROGS = /^(pytest|py\.test|jest|vitest|mocha|ava|tap|nextest|ctest|rspec|phpunit|unittest|nose2|tox|karma)$/
+const TESTY = /(^|[\\/_.-])(tests?|specs?)([\\/_.-]|$)/i
+const TEST_PROGS = /^(pytest|py\.test|jest|vitest|mocha|ava|tap|nextest|ctest|rspec|phpunit|unittest|nose2|tox|karma)$/
 /** Whether one part of a command runs tests. */
-export const isTestPart = (w: string[]) => {
+const isTestPart = (w: string[]) => {
   const [p, a = '', b = ''] = w
   if (TEST_PROGS.test(p)) return !/^(--version|-v|-V|--help|init|install)$/.test(a)
   if (p === 'cargo') return /^(test|t|nextest)$/.test(a)
@@ -137,7 +137,7 @@ export const isTestPart = (w: string[]) => {
 export const isTestCmd = (cmd: string) => cmdParts(cmd).some(isTestPart) || TESTY.test(watchedFile(cmd) === 'a log file' ? '' : watchedFile(cmd))
 export const TEST_SHOW_MS = 10 * 60_000
 /** A command in the foreground shows as running once it has run this long (a quick `ls` never flashes up). */
-export const SHELL_SHOW_MS = 2000
+const SHELL_SHOW_MS = 2000
 /** A background command nobody hears about again is let go after this long. */
 export const SHELL_GIVE_UP_MS = 6 * 60 * 60_000
 /** The shell commands running now that are worth showing: background ones, and foreground ones past a moment. */
@@ -174,7 +174,7 @@ export const testLabel = (cmd: string) => {
  * The file a polling loop keeps reading (`until grep … log; do sleep 5; done`, `tail -f log`):
  * such a command waits on a test run rather than running one. '' when it is not one.
  */
-export const watchedFile = (cmd: string) => {
+const watchedFile = (cmd: string) => {
   const isLoop = (/\b(until|while)\b/.test(cmd) && /\bsleep\b/.test(cmd)) || /\btail\s+(-\w+\s+)*-[fF]\b/.test(cmd)
   if (!isLoop) return ''
   const paths = [...cmd.matchAll(/(?:^|[\s"'(=])((?:[A-Za-z]:)?[\w./\\-]*[\w-]\.(?:txt|log|out|json|xml|jsonl|md|csv))(?=$|[\s"');|])/g)].map(m => m[1])
@@ -186,7 +186,7 @@ export const watchedFile = (cmd: string) => {
  * (`cargo test chunk` → "chunk", `pytest tests/test_auth.py -k login` → "test_auth.py, login"),
  * or "all tests" when it names none.
  */
-export const testTargets = (cmd: string) => {
+const testTargets = (cmd: string) => {
   // From the command as shown: no redirects, pipes or timeout wrapper to mistake for targets.
   const s = testLabel(cmd).replace(/\s*[|;&].*$/, '')
   const at = s.search(/\b(test|tests|pytest|jest|vitest|mocha|nextest|ctest|rspec|phpunit|unittest)\b/i)
@@ -221,7 +221,7 @@ export const testPurpose = (cmd: string, description: string) => {
 }
 
 /** The kind of test run, in words, from the runner the command uses. */
-export const testKind = (cmd: string) =>
+const testKind = (cmd: string) =>
   /\bcargo\b/.test(cmd) ? 'Rust tests (cargo)'
   : /\bpytest\b/.test(cmd) ? 'Python tests (pytest)'
   : /\bunittest\b/.test(cmd) ? 'Python tests (unittest)'
@@ -292,7 +292,7 @@ export const settleTest = (c: Crew, testId: string, out: string, isError: boolea
 
 /** Builds, type checks and linters, named as a command runs them (so `rm -rf build` is not one). */
 /** Whether one part of a command builds, type-checks or lints (so `rm -rf build`, `npm i -D eslint` do not). */
-export const isBuildPart = (w: string[]) => {
+const isBuildPart = (w: string[]) => {
   const [p, a = '', b = ''] = w
   if (/^(tsc|webpack|esbuild|rollup|gcc|g\+\+|clang|clang\+\+|javac|mypy|ruff|eslint|msbuild|ninja|rustc|pyright|biome)$/.test(p)) return !/^(--version|-v|--help|--init|init)$/.test(a)
   if (p === 'make') return !/^(test|tests|check|install|clean)$/.test(a)
@@ -307,8 +307,8 @@ export const isBuildPart = (w: string[]) => {
   return false
 }
 export const isBuildCmd = (cmd: string) => cmdParts(cmd).some(isBuildPart)
-export const MAX_PROBLEMS = 30
-export const SRC = String.raw`((?:[A-Za-z]:)?[^\s:()"'<>|*?]*[\w-]\.[A-Za-z][\w]{0,5})`
+const MAX_PROBLEMS = 30
+const SRC = String.raw`((?:[A-Za-z]:)?[^\s:()"'<>|*?]*[\w-]\.[A-Za-z][\w]{0,5})`
 
 /**
  * Errors in a build's or test's output that name a file: rustc and cargo
@@ -370,7 +370,7 @@ export const resolvePath = (p: string, dir: string) => {
 
 // ─── Stuck: the same thing failing over and over ────────────────────────────
 
-export const STUCK_WINDOW_MS = 10 * 60_000
+const STUCK_WINDOW_MS = 10 * 60_000
 /** Why an agent looks stuck from its recent calls, or ''. */
 export const stuckReason = (recent: Agent['recent'], now: number): string => {
   const live = recent.filter(r => now - r.at < STUCK_WINDOW_MS)
@@ -446,7 +446,7 @@ export const summarise1 = (c: Crew, now: number, codexRuns: number): Summary => 
 export let editor = 'code'
 /** The session's folder, for paths in tool output; set at session start. */
 export let sessionDir = ''
-export let platform: 'win' | 'mac' | 'linux' | undefined
+let platform: 'win' | 'mac' | 'linux' | undefined
 /** Which OS this runs on: Windows says so in OS; elsewhere uname tells macOS from Linux. */
 export async function platformOf($: EngineInterface) {
   if (platform) return platform
@@ -454,13 +454,13 @@ export async function platformOf($: EngineInterface) {
   const u = await $.process.run(['uname', '-s'], { timeoutMs: 5000 }).catch(() => undefined)
   return (platform = /darwin/i.test(u?.stdout ?? '') ? 'mac' : 'linux')
 }
-export let tempDir = ''
+let tempDir = ''
 
 /**
  * Anthropic API list prices, dollars per million tokens (cached 2026-09):
  * input, output, cache read, cache write. Matched on the model id.
  */
-export const PRICES: [RegExp, [number, number, number, number]][] = [
+const PRICES: [RegExp, [number, number, number, number]][] = [
   [/fable|mythos/i, [10, 50, 0.25, 12.5]],
   [/opus-5-5/i, [4, 20, 0.2, 5]],
   [/opus/i, [5, 25, 0.5, 6.25]],
@@ -493,7 +493,7 @@ export const fmtUsd = (n: number) => (!(n > 0) ? '$0' : n < 0.01 ? '<$0.01' : n 
 // Set from session.start, so timers and handlers outlive the dispatch that made them.
 export let write: ((fn: (c: Crew) => Crew) => Promise<unknown>) | undefined
 /** Every write of the crew waits for the one before it: parallel tool calls never race (a race made each retry, N² writes). */
-export let writeQueue: Promise<unknown> = Promise.resolve()
+let writeQueue: Promise<unknown> = Promise.resolve()
 // ── Nested chats: the chats started from this one, read from the desktop app's own session list ──
 export const LIST_TOOL = 'mcp__ccd_session_mgmt__list_sessions'
 /**
@@ -501,7 +501,7 @@ export const LIST_TOOL = 'mcp__ccd_session_mgmt__list_sessions'
  * itself): this chat is the one that started those whose starter the list doesn't hold.
  */
 /** The app's list as rows: each chat's id, title, short name, who started it, folder, branch, running, last active. */
-export const listRows = (text: string) => {
+const listRows = (text: string) => {
   let rows: unknown
   try {
     rows = JSON.parse(text)
@@ -536,7 +536,7 @@ export const chatsOf = (text: string, selfId = ''): Chat[] | undefined => {
 export let projectRoot = ''
 /** How many same-project chats are shown at most (the most recently active). */
 export const SIBLINGS_MAX = 6
-export const inProject = (cwd: string) => {
+const inProject = (cwd: string) => {
   const root = projectRoot.toLowerCase()
   const at = norm(cwd).toLowerCase()
   return !!root && !!at && (at === root || at.startsWith(`${root}/`))
@@ -548,7 +548,7 @@ export const fileInProject = (f: Pick<ChatFile, 'root' | 'cwd'> | undefined, lis
  * The chats that worked in this project, from the files each one writes about itself (so archived and
  * deleted chats too, never another project's): written since `after` (ms), the newest 30 at most.
  */
-export const projectChatFiles = async (c: Crew, after = 0) => {
+const projectChatFiles = async (c: Crew, after = 0) => {
   if (!homeDir) return []
   const dir = `${homeDir}/.claude/crew-map/chats`
   const listed = new Map([...(c.chats ?? []), ...(c.siblings ?? [])].map(x => [x.id, x]))
@@ -584,8 +584,8 @@ export const siblingsOf = (text: string, selfId: string, nestedIds: Set<string>)
  * Where a Crew Review starts: since this chat began (no argument), a span back ("2h", "90m", "3d", "1w"),
  * a date ("2026-11-18"), or a git ref ("since v1.8.8", "main"). Anything else: what to type instead.
  */
-export type ReviewSince = { label: string; at: number; git: string } | { error: string }
-export const REVIEW_USAGE = 'Usage: /crew-review, /crew-review 2h (or 90m, 3d, 1w), /crew-review since 2026-11-18, or /crew-review since v1.8.8 (a git tag, branch or commit).'
+type ReviewSince = { label: string; at: number; git: string } | { error: string }
+const REVIEW_USAGE = 'Usage: /crew-review, /crew-review 2h (or 90m, 3d, 1w), /crew-review since 2026-11-18, or /crew-review since v1.8.8 (a git tag, branch or commit).'
 export const reviewSince = (args: string, startedAt: number, now = Date.now()): ReviewSince => {
   const a = oneLine(args).replace(/^since\s+/i, '').trim()
   const iso = (ms: number) => new Date(ms).toISOString()
@@ -676,8 +676,8 @@ export function setFolder($: EngineInterface, dir: string) {
 // paler ones (the pale clay last, as it reads close to the main Claude's). No green, yellow, red or grey: those mean working, waiting on you, an error, and Codex.
 // (The dark theme's; the website has each theme's own.)
 export const PALETTE = ['#D97757', '#6CB6FF', '#F778BA', '#56D4DD', '#C297FF', '#C9A47E', '#B6DCFF', '#A8EEF2', '#E2CCFF', '#FFB8DA', '#E8D2B4', '#F2B49B']
-export const NAMES: Record<string, string> = { Explore: 'Scout', Plan: 'Architect', 'general-purpose': 'Helper', fork: 'Twin' }
-export const VERB: Record<string, string> = {
+const NAMES: Record<string, string> = { Explore: 'Scout', Plan: 'Architect', 'general-purpose': 'Helper', fork: 'Twin' }
+const VERB: Record<string, string> = {
   Read: 'reading',
   Edit: 'editing',
   MultiEdit: 'editing',
@@ -696,9 +696,9 @@ export const VERB: Record<string, string> = {
   TaskUpdate: 'planning',
   Skill: 'learning',
 }
-export const ICON: Record<string, string> = { Read: '◇', Edit: '✎', MultiEdit: '✎', Write: '✎', Bash: '▸', PowerShell: '▸', Grep: '⌕', Glob: '⌕', WebFetch: '◎', WebSearch: '◎', Agent: '⇢', Task: '⇢', 'mcp__codex-bridge__codex': '◎' }
+const ICON: Record<string, string> = { Read: '◇', Edit: '✎', MultiEdit: '✎', Write: '✎', Bash: '▸', PowerShell: '▸', Grep: '⌕', Glob: '⌕', WebFetch: '◎', WebSearch: '◎', Agent: '⇢', Task: '⇢', 'mcp__codex-bridge__codex': '◎' }
 VERB['mcp__codex-bridge__codex'] = 'asking Codex'
-export const SPECIAL_LABEL: Record<string, string> = {
+const SPECIAL_LABEL: Record<string, string> = {
   $terminal: 'terminal',
   '@web': 'web',
   '?search': 'search',
@@ -713,7 +713,7 @@ export const isSpecial = (id: string) => id in SPECIAL_LABEL || id.startsWith('@
 
 // ─── Tools beyond the built-in ones: MCP servers, browsers, the computer ───
 
-export const KNOWN_APPS: Record<string, string> = {
+const KNOWN_APPS: Record<string, string> = {
   blender: 'Blender',
   Roblox_Studio: 'Roblox Studio',
   'DaVinci_Resolve': 'DaVinci Resolve',
@@ -728,7 +728,7 @@ export const KNOWN_APPS: Record<string, string> = {
   figma: 'Figma',
 }
 /** A server name as a person would say it: `Roblox_Studio` → "Roblox Studio"; an id-like name → "a connector". */
-export const appName = (raw: string) => {
+const appName = (raw: string) => {
   // A plugin's server is named plugin_<plugin>_<server>: the server's own name is the last part.
   const server = raw.replace(/^plugin_[^_]+_/, '')
   return (
@@ -742,7 +742,7 @@ export const appName = (raw: string) => {
   )
 }
 /** `mcp__server__tool` → its server and tool, else undefined. */
-export const mcpParts = (tool: string) => {
+const mcpParts = (tool: string) => {
   const m = tool.match(/^mcp__(.+?)__(.+)$/)
   return m ? { server: m[1], name: m[2] } : undefined
 }
@@ -752,7 +752,7 @@ export const mcpParts = (tool: string) => {
  * documents tools, the Claude app's own controls, or another MCP server (an app
  * such as Blender). '' for the built-in tools and Codex.
  */
-export const stationOf = (tool: string): string => {
+const stationOf = (tool: string): string => {
   if (tool === 'Artifact' || tool === 'ArtifactData' || tool === 'ArtifactComments') return '@docs'
   const mcp = mcpParts(tool)
   if (!mcp || /__codex$/.test(tool)) return ''
@@ -765,12 +765,12 @@ export const stationOf = (tool: string): string => {
   if (/^[0-9a-f]{8}-/i.test(server) && /^(batch|create|update|read|export|delete|query|guide)$/.test(name)) return '@docs'
   return `@app:${server}`
 }
-export const stationLabel = (id: string) => SPECIAL_LABEL[id] ?? (id.startsWith('@app:') ? appName(id.slice(5)) : '')
-export const STATION_ICON: Record<string, string> = { '@browser': '◍', '@computer': '▣', '@remote': '▣', '@docs': '▤', '@claude': '⧉' }
+const stationLabel = (id: string) => SPECIAL_LABEL[id] ?? (id.startsWith('@app:') ? appName(id.slice(5)) : '')
+const STATION_ICON: Record<string, string> = { '@browser': '◍', '@computer': '▣', '@remote': '▣', '@docs': '▤', '@claude': '⧉' }
 /** The pseudo-tool a Claude is "using" while the engine compacts its conversation. */
 export const COMPACT = '__compact'
 /** A doc rather than code: what Claude writes for people to read. */
-export const DOC_EXT = /\.(md|mdx|markdown|txt|rst|adoc|docx?|odt|rtf|html?)$/i
+const DOC_EXT = /\.(md|mdx|markdown|txt|rst|adoc|docx?|odt|rtf|html?)$/i
 
 /** What a Claude is doing, in a word or two (Coding, Viewing an image, Browsing): its row says it. */
 export const activityOf = (a: Agent): string => {
@@ -828,12 +828,12 @@ export const activityOf = (a: Agent): string => {
 
 export const colorOf = (a: { hue: number }) => PALETTE[a.hue % PALETTE.length]
 /** Later than any time: a holder at work now. */
-export const NOW_ON = 9e15
+const NOW_ON = 9e15
 /**
  * The next colour nobody holds (the main Claude keeps the first). Past 12: the one whose holders have
  * been done or idle the longest. Colours are never given back while the chat lasts: their lines stay.
  */
-export const pickColor = (c: Crew) => {
+const pickColor = (c: Crew) => {
   const lastAt = new Map<number, number>()
   for (const [k, v] of Object.entries(c.colors ?? {})) {
     const a = c.agents.find(x => x.id === k)
@@ -860,7 +860,7 @@ export const verbOf = (a: Agent) =>
   a.state === 'busy' ? (VERB[a.tool] ?? activityOf(a).toLowerCase()) : a.state === 'thinking' ? 'thinking' : a.state === 'done' ? 'done' : 'idle'
 export const baseName = (p: string) => p.split('/').filter(Boolean).pop() ?? p
 /** The last three segments of a path: enough to tell files apart. */
-export const shortPath = (p: string) => {
+const shortPath = (p: string) => {
   const parts = p.split('/').filter(Boolean)
   return parts.length > 3 ? `…/${parts.slice(-3).join('/')}` : parts.join('/')
 }
@@ -886,8 +886,8 @@ export const withKids = (x: Exclude<FitNode, string | number | null | undefined 
   if (x.props && Array.isArray(x.props.children)) return { ...x, props: { ...x.props, children: kids } }
   return { ...x, children: kids }
 }
-export const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{1F300}-\u{1FAFF}\u{20000}-\u{3FFFD}]/u
-export const glyphW = (ch: string) => (WIDE.test(ch) ? 2 : 1)
+const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{1F300}-\u{1FAFF}\u{20000}-\u{3FFFD}]/u
+const glyphW = (ch: string) => (WIDE.test(ch) ? 2 : 1)
 export const textW = (t: string) => {
   let n = 0
   for (const ch of t) n += glyphW(ch)
@@ -948,7 +948,7 @@ export const LOG_STEP = 3
  * reporting in, a CI event, a slash command's output. Returns a short line for
  * the log, or '' for a real prompt.
  */
-export const SYSTEM_TAG = /^\s*<(task-notification|agent-message|system-reminder|ci-monitor-event|local-command-stdout|local-command-stderr|local-command-caveat|command-name|command-message|command-args|bash-notification|bash-input|bash-stdout|user-memory-input|[a-z][\w-]*-(?:notification|event|reminder))[\s>]/i
+const SYSTEM_TAG = /^\s*<(task-notification|agent-message|system-reminder|ci-monitor-event|local-command-stdout|local-command-stderr|local-command-caveat|command-name|command-message|command-args|bash-notification|bash-input|bash-stdout|user-memory-input|[a-z][\w-]*-(?:notification|event|reminder))[\s>]/i
 export const systemNote = (full: string) => {
   if (full.startsWith(OPEN_ASK)) return 'opening Claude Crew'
   if (full.startsWith(REVIEW_ASK)) return 'starting a Crew Review'
@@ -1073,7 +1073,7 @@ export const summarise = (text: string): string => {
 
 // ─── Crew bookkeeping ───────────────────────────────────────────────────────
 
-export const blank = (id: string, name: string, kind: string, hue: number): Agent => ({
+const blank = (id: string, name: string, kind: string, hue: number): Agent => ({
   id,
   name,
   kind,
@@ -1099,12 +1099,12 @@ export const blank = (id: string, name: string, kind: string, hue: number): Agen
 })
 
 /** Files with an app of their own (pictures, sound, video, documents, archives, fonts, 3D): the system's app for the type opens them. */
-export const OWN_APP =
+const OWN_APP =
   /\.(png|jpe?g|jfif|gif|bmp|webp|tiff?|ico|heic|heif|avif|psd|cr2|nef|arw|dng|exr|hdr|dds|tga|xcf|kra|aseprite|mp3|wav|flac|ogg|oga|m4a|aac|wma|opus|aiff?|midi?|mp4|m4v|mov|mkv|avi|wmv|webm|flv|mpe?g|3gp|pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub|xps|zip|7z|rar|tar|gz|tgz|bz2|xz|iso|dmg|ttf|otf|woff2?|blend|fbx|glb|stl|3mf|rbxl|rbxm|unitypackage)$/i
 /** Programs, which the system would run rather than open: shown in their folder instead. */
-export const PROGRAM = /\.(exe|com|msi|msp|msix|appx|scr|pif|lnk|url|cpl|hta|jar|app|appimage|run|dll|sys|appref-ms)$/i
+const PROGRAM = /\.(exe|com|msi|msp|msix|appx|scr|pif|lnk|url|cpl|hta|jar|app|appimage|run|dll|sys|appref-ms)$/i
 /** Scripts the system would run if handed one: opened in an editor, else shown in their folder. */
-export const SCRIPT = /\.(bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|reg|sh|command|desktop)$/i
+const SCRIPT = /\.(bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|reg|sh|command|desktop)$/i
 /**
  * Where a click on a file sends it: the system's app for its type, the editor chosen in the pane (code and
  * text), or its folder with it picked out (a program, or a script with no editor to open it in).
@@ -1120,7 +1120,7 @@ export const routeOf = (path: string, os: string, choice = editor): 'app' | 'edi
 export const defaultApp = (os: string, path: string) => (os === 'win' ? ['explorer', path.replace(/\//g, '\\')] : os === 'mac' ? ['open', path] : ['xdg-open', path])
 // Explorer's /select wants the path in quotes of its own, which an argument list cannot pass when the path
 // has a space; PowerShell passes it as written (the path in a literal string, its quotes doubled).
-export const revealIn = (os: string, path: string) =>
+const revealIn = (os: string, path: string) =>
   os === 'win'
     ? ['powershell', '-NoProfile', '-NonInteractive', '-Command', `Start-Process explorer.exe -ArgumentList ('/select,"' + '${path.replace(/\//g, '\\').replace(/'/g, "''")}' + '"')`]
     : os === 'mac'
@@ -1203,7 +1203,7 @@ export const lineDiff = (before: string, after: string) => {
 
 /** What an action came to, kept on its log line for when it is opened: capped, so the log and the journal stay small. */
 export const MORE_MAX = 1400
-export const clipLines = (lines: string[]) => lines.map(l => trunc(l.replace(/\s+$/, ''), 200))
+const clipLines = (lines: string[]) => lines.map(l => trunc(l.replace(/\s+$/, ''), 200))
 /** The last lines of an output (at most n, and about 900 characters), saying how many came before. */
 export const tailOf = (s: string, n = 15) => {
   const all = s.replace(/\s+$/, '').split('\n')
@@ -1256,7 +1256,7 @@ export const record = (c: Crew, path: string, id: string, delta: { added: number
       delete changes[p]
   return { ...c, changes }
 }
-export const MAX_CHANGES = 300
+const MAX_CHANGES = 300
 /**
  * A Claude still "thinking" a while after its last call has gone quiet: idle (main) or done (helper).
  * Top-level, so the timer keeps only the id and the stamp (not the call and its result), and it
@@ -1278,7 +1278,7 @@ export const freshName = (list: Agent[], kind: string) => {
   return n ? `${base} ${n + 1}` : base
 }
 /** A new helper: the colour it had (it dropped off the list and came back), else the next one. */
-export const newSub = (c: Crew, id: string, kind: string) => blank(id, freshName(c.agents, kind), kind, c.colors?.[id]?.i ?? pickColor(c))
+const newSub = (c: Crew, id: string, kind: string) => blank(id, freshName(c.agents, kind), kind, c.colors?.[id]?.i ?? pickColor(c))
 
 export const upsert = (c: Crew, id: string, fn: (a: Agent) => Agent): Crew => {
   const found = c.agents.find(a => a.id === id)
@@ -1416,7 +1416,7 @@ export const doingOf = (a: Agent, c: Pick<Crew, 'tasks'>) => {
 
 export const CX = '#10A37F'
 /** The last 40 things worth knowing when something goes wrong (the website's errors), kept in the store as 'diag'. */
-export const diag: string[] = []
+const diag: string[] = []
 let diagDirty = false
 export const note = (text: string) => {
   diag.push(`${new Date().toISOString().slice(11, 19)} ${text}`)
@@ -1442,7 +1442,7 @@ export async function recountCodex($: EngineInterface) {
 }
 /** Claudes whose current turn the app started (a background task reporting in), not the user. */
 export const noticeTurn = new Set<string>()
-export async function codexRunCount($: EngineInterface) {
+async function codexRunCount($: EngineInterface) {
   return (((await $.state.get({ plugin: 'codex-bridge', key: 'runs' } as never).catch(() => ({}))) as { value?: unknown[] }).value ?? []).length
 }
 
@@ -1475,7 +1475,7 @@ export const needsText = (rawTool: string, input: unknown) => {
   return mcp ? `allow ${mcp[1]}: ${mcp[2].replace(/_/g, ' ')}` : `allow ${tool}`
 }
 /** The main model's context window, as the engine last measured it (0 until then). */
-export let mainWindow = 0
+let mainWindow = 0
 export const setMainWindow = (n: number) => {
   mainWindow = n
 }

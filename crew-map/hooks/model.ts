@@ -24,41 +24,41 @@ const search = atom({ plugin: 'crew-map', key: 'search' } as const, { q: '' })
 //    light or a dark theme; a colour with no such key is moved to a middle shade that reads on both.
 //  - light / dark: chosen in Settings when auto guesses wrong; light swaps every colour for its
 //    light-theme twin, dark draws as tuned.
-export type ThemeMode = 'auto' | 'light' | 'dark'
+type ThemeMode = 'auto' | 'light' | 'dark'
 export const THEMES: ThemeMode[] = ['auto', 'light', 'dark']
 export const THEME_LABEL: Record<ThemeMode, string> = { auto: '◐ auto', light: '☀ light', dark: '☾ dark' }
-export const hex6 = (h: string) => {
+const hex6 = (h: string) => {
   const x = h.replace('#', '').toUpperCase()
   return x.length === 3 ? `#${x[0]}${x[0]}${x[1]}${x[1]}${x[2]}${x[2]}` : `#${x.slice(0, 6)}`
 }
 /** A theme colour of the same meaning, for a colour the text pane draws (auto). */
-export const THEME_KEY: Record<string, string> = {
+const THEME_KEY: Record<string, string> = {
   '#E6EDF3': 'text', '#8B949E': 'inactive', '#30363D': 'subtle', '#D97757': 'claude', '#6CB6FF': 'suggestion',
   '#3FB950': 'success', '#56D4DD': 'planMode', '#F778BA': 'bashBorder', '#E3B341': 'warning', '#F85149': 'error',
 }
 /** Each colour the text pane draws, as the website's light theme has it. */
-export const LIGHT_OF: Record<string, string> = {
+const LIGHT_OF: Record<string, string> = {
   '#E6EDF3': '#1F2328', '#8B949E': '#59636E', '#30363D': '#D0D7DE', '#D97757': '#BC5A34', '#3FB950': '#1A7F37', '#E3B341': '#9A6700', '#F85149': '#CF222E', '#8C8CFF': '#4D4DD8',
   // The identity colours.
   '#6CB6FF': '#0969DA', '#F778BA': '#BF3989', '#56D4DD': '#0A7B83', '#C297FF': '#8250DF', '#C9A47E': '#8A6234', '#B6DCFF': '#0A3F8A', '#A8EEF2': '#05555B', '#E2CCFF': '#55279E', '#FFB8DA': '#7D1D56', '#E8D2B4': '#5A3E1C', '#F2B49B': '#7C3115',
 }
-export const rgbOf = (h: string) => { const x = hex6(h); return [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16) / 255) as [number, number, number] }
-export const hexOf = (c: number[]) => `#${c.map(v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('').toUpperCase()}`
-export const lum = (c: number[]) => { const [r, g, b] = c.map(v => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * r + 0.7152 * g + 0.0722 * b }
-export const toHsl = ([r, g, b]: number[]) => {
+const rgbOf = (h: string) => { const x = hex6(h); return [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16) / 255) as [number, number, number] }
+const hexOf = (c: number[]) => `#${c.map(v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('').toUpperCase()}`
+const lum = (c: number[]) => { const [r, g, b] = c.map(v => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * r + 0.7152 * g + 0.0722 * b }
+const toHsl = ([r, g, b]: number[]) => {
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn
   if (!d) return [0, 0, l]
   const s = d / (1 - Math.abs(2 * l - 1))
   const h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4
   return [h * 60, s, l]
 }
-export const fromHsl = ([h, s, l]: number[]) => {
+const fromHsl = ([h, s, l]: number[]) => {
   const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2
   const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
   return [r + m, g + m, b + m]
 }
 /** The shade of a colour whose light-relative luminance falls in [lo, hi], its hue kept. */
-export const shadeTo = (h: string, lo: number, hi: number) => {
+const shadeTo = (h: string, lo: number, hi: number) => {
   const [hu, s, l0] = toHsl(rgbOf(h))
   const at = (l: number) => lum(fromHsl([hu, s, l]))
   if (at(l0) >= lo && at(l0) <= hi) return hex6(h)
@@ -68,7 +68,7 @@ export const shadeTo = (h: string, lo: number, hi: number) => {
   return hexOf(fromHsl([hu, s, (a + b) / 2]))
 }
 /** A colour's twin on a light background: dark grounds turn light, bright marks turn deep. */
-export const lightOf = (h: string) => {
+const lightOf = (h: string) => {
   const k = hex6(h)
   if (LIGHT_OF[k]) return LIGHT_OF[k]
   const c = rgbOf(k), L = lum(c), [hu, s] = toHsl(c)
@@ -77,7 +77,7 @@ export const lightOf = (h: string) => {
   return shadeTo(k, 0.05, 0.16)
 }
 /** For a Text or a border in auto: the theme's colour of that meaning, else a shade that reads on both. */
-export const autoOf = (h: string) => {
+const autoOf = (h: string) => {
   const k = hex6(h)
   if (THEME_KEY[k]) return THEME_KEY[k]
   const c = rgbOf(k), [, s] = toHsl(c), L = lum(c)
@@ -86,7 +86,7 @@ export const autoOf = (h: string) => {
 }
 /** The pane painted for the theme: Text and border colours. */
 export const paintPane = <T,>(tree: T, mode: ThemeMode): T => (mode === 'dark' ? tree : (paintNode(tree as unknown as FitNode, mode) as unknown as T))
-export const paintNode = (x: FitNode, mode: ThemeMode): FitNode => {
+const paintNode = (x: FitNode, mode: ThemeMode): FitNode => {
   if (!x || typeof x !== 'object') return x
   const p = x.props ?? {}
   let np: Record<string, unknown> = p
@@ -130,7 +130,7 @@ export const KIND_ICON: Record<string, string> = {
   thought: 'M3 7.2C3 4.6 5.2 2.8 8 2.8s5 1.8 5 4.4-2.2 4.4-5 4.4c-.6 0-1.2-.1-1.7-.2L3.5 13l.6-2.6C3.4 9.6 3 8.5 3 7.2z',
 }
 /** Each kind as plain words: what a Claude doing it is doing. */
-export const KIND_WORDS: Record<string, string> = {
+const KIND_WORDS: Record<string, string> = {
   read: 'Reading', edit: 'Writing code', shell: 'Running a command', search: 'Searching the code', web: 'Reading online',
   agent: 'Starting a helper', skill: 'Using a skill', plan: 'Planning', tool: 'Working', think: 'Thinking',
   hook: 'Your hook ran', hookBlock: 'Your hook blocked it', mcp: 'Using a connector',
@@ -138,7 +138,7 @@ export const KIND_WORDS: Record<string, string> = {
 /** The text glyph for a kind, in the text pane. */
 export const KIND_GLYPH: Record<string, string> = { read: '◇', edit: '✎', shell: '▸', search: '⌕', web: '◎', agent: '⇢', skill: '✦', plan: '☐', mcp: '⧉', tool: '•', hook: '⚓', hookBlock: '⚓', think: '›', wait: '⏳', you: '!', done: '✓', idle: '○' }
 /** What kind of thing a tool call is. */
-export const KINDS: [RegExp, string][] = [
+const KINDS: [RegExp, string][] = [
   [/^(Read|NotebookRead|LS)$/, 'read'],
   [/^(Edit|MultiEdit|Write|NotebookEdit)$/, 'edit'],
   [/^(Bash|PowerShell|BashOutput|KillShell|KillBash|Monitor)$/, 'shell'],
@@ -148,12 +148,12 @@ export const KINDS: [RegExp, string][] = [
   [/^(Skill|SlashCommand)$/, 'skill'],
   [/^(TodoWrite|Task(Create|Update|List|Get)|EnterPlanMode|ExitPlanMode)$/, 'plan'],
 ]
-export const kindOf = (tool: string) => KINDS.find(([re]) => re.test(tool))?.[1] ?? 'tool'
+const kindOf = (tool: string) => KINDS.find(([re]) => re.test(tool))?.[1] ?? 'tool'
 /**
  * What a Claude at work is doing, in plain words: its kind's words, made specific where the work says
  * more (Writing docs, Viewing an image, Building, Researching, Browsing, Using Blender, Using the PC).
  */
-export const workWords = (a: Agent, kind: string) => {
+const workWords = (a: Agent, kind: string) => {
   const w = activityOf(a)
   if (kind === 'edit') return w === 'Writing docs' ? w : KIND_WORDS.edit
   if (kind === 'read') return w === 'Reading' ? KIND_WORDS.read : w
@@ -163,22 +163,22 @@ export const workWords = (a: Agent, kind: string) => {
   return KIND_WORDS[kind] ?? KIND_WORDS.tool
 }
 /** A model's id as people say it: claude-opus-5-5 → Opus 5.5. */
-export const shortModel = (m: string) => {
+const shortModel = (m: string) => {
   const x = m.replace(/^.*?claude-/, '').match(/^([a-z]+)-(\d+)(?:-(\d{1,2}))?/i)
   return x ? `${x[1][0].toUpperCase()}${x[1].slice(1)} ${x[2]}${x[3] ? `.${x[3]}` : ''}` : trunc(m, 14)
 }
 /** A short clock for a row: 48s, 14m, 1h05. */
-export const shortTime = (ms: number) => {
+const shortTime = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000))
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, '0')}`
 }
 /** How long ago, in one whole unit: 3m, 2h, 4d. */
-export const agoText = (ms: number) => {
+const agoText = (ms: number) => {
   const m = Math.max(1, Math.floor(ms / 60_000))
   return m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`
 }
 /** How full a context window is, 0-100; -1 when unknown. */
-export const ctxPct = (x?: { tokens: number; window: number }) => (x && x.window > 0 && Number.isFinite(x.tokens) ? Math.min(100, Math.max(0, Math.round((x.tokens / x.window) * 100))) : -1)
+const ctxPct = (x?: { tokens: number; window: number }) => (x && x.window > 0 && Number.isFinite(x.tokens) ? Math.min(100, Math.max(0, Math.round((x.tokens / x.window) * 100))) : -1)
 
 /** One Claude's row as the pane draws it. */
 export type GlanceRow = {
@@ -221,8 +221,8 @@ export const stateRole = (r: Pick<GlanceRow, 'state' | 'asOf' | 'helpers'>) => (
  *   while helpers it started in the background still work;
  * - command: a command it runs and waits for, or (main, turn over) a background command still running.
  */
-export type Wait = { kind: 'you' | 'helpers' | 'command'; urgent: boolean; label: string; what: string; short: string }
-export const waitOf = (a: Agent, c: Crew, now: number): Wait | undefined => {
+type Wait = { kind: 'you' | 'helpers' | 'command'; urgent: boolean; label: string; what: string; short: string }
+const waitOf = (a: Agent, c: Crew, now: number): Wait | undefined => {
   if (a.needs) return { kind: 'you', urgent: true, label: 'waiting on you', what: a.needs.what.replace(/^allow (running )?/, ''), short: 'you' }
   const kids = c.agents.filter(h => h.id !== a.id && (h.parent ?? 'main') === a.id && (h.state === 'busy' || h.state === 'thinking'))
   const names = (list: { name: string }[]) => (list.length > 2 ? `${list.slice(0, 2).map(h => h.name).join(', ')} +${list.length - 2}` : list.map(h => h.name).join(', '))
@@ -260,7 +260,7 @@ export function searchFor($: EngineInterface, typed: string) {
 export const CELL_W = 7.9
 
 /** Opens a folder in the system's file manager. */
-export async function openFolder($: EngineInterface, path: string): Promise<Opened> {
+async function openFolder($: EngineInterface, path: string): Promise<Opened> {
   const argv = defaultApp(await platformOf($), path)
   const r = await $.process.run(argv, { timeoutMs: 20_000 }).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: err instanceof Error ? err.message : String(err) }))
   // Explorer exits 1 even when it opened the folder: only a failure to start counts.
@@ -268,7 +268,7 @@ export async function openFolder($: EngineInterface, path: string): Promise<Open
 }
 
 /** Opens a file or folder from a click, and says so: "Opening …", or why it could not. */
-export async function openAndSay($: EngineInterface, what: 'file' | 'dir', path: string, name: string, hasEdits = false, line = 0) {
+async function openAndSay($: EngineInterface, what: 'file' | 'dir', path: string, name: string, hasEdits = false, line = 0) {
   if (isDemoPath(path)) return void $.ui.toast(`${name} is a pretend file from the demo.`)
   const route = what === 'file' ? routeOf(path, await platformOf($)) : 'dir'
   const where = { dir: ' in the file manager', app: ' in its app', editor: '', reveal: ' in its folder (a program or script: shown, not run)' }[route]
@@ -278,9 +278,9 @@ export async function openAndSay($: EngineInterface, what: 'file' | 'dir', path:
 }
 
 /** The folder group of files outside the session's project. */
-export const OUTSIDE = '~outside'
+const OUTSIDE = '~outside'
 /** A file's folder relative to the session's ('.' for its top), or OUTSIDE. */
-export const groupOf = (id: string) => {
+const groupOf = (id: string) => {
   if (isDemoPath(id)) return dirOf(id.slice(5)) || '.'
   if (sessionDir && id.toLowerCase().startsWith(`${sessionDir.toLowerCase()}/`)) {
     const d = dirOf(id)
@@ -304,7 +304,7 @@ export type Act =
   | { k: 'logout'; how: 'copy' | 'download' | 'save' }
   | { k: 'demo' }
   | { k: 'copy' }
-export const NONE: Act = { k: 'none' }
+const NONE: Act = { k: 'none' }
 
 /** A run of text on a line of the viewer: words, a fixed column, the rest cut to fit, a button. */
 export type Seg = {
@@ -334,19 +334,19 @@ export type Seg = {
   tip?: string
 }
 /** (Details) A Claude under the one shown, drawn on the website as one button: its colour (a bubble for a nested chat), name, state, what it is on, steps, time. */
-export type DRow = { hue: string; chat?: boolean; name: string; state: GlanceRow['state']; helpers?: boolean; status: string; object: string; done: number; total: number; time: string; depth: number; run: Act }
+type DRow = { hue: string; chat?: boolean; name: string; state: GlanceRow['state']; helpers?: boolean; status: string; object: string; done: number; total: number; time: string; depth: number; run: Act }
 export type VLine = { segs: Seg[]; right?: Seg[]; indent?: number; row?: DRow; /** A section's title (the website puts space above it). */ head?: boolean }
 /** One Claude's row as the pane draws it: the glance row, its whole request unwrapped, and whether its Details show. */
 export type PaneRow = GlanceRow & { ask: string; focused: boolean }
 
 /** The last task's card in the crew's place while nobody works: how long, what changed, tests, cost, who. */
-export type Recap = { title: string; goal: string; ago: string; facts: [string, string, string][]; copy?: Act; demo?: Act }
+type Recap = { title: string; goal: string; ago: string; facts: [string, string, string][]; copy?: Act; demo?: Act }
 
 /** A file on a Touched line: its name, errors, lines added and removed, and the dot of the Claude on it now. */
-export type TouchFile = { name: string; errs: number; add: number; del: number; on: string; read?: boolean; run: Act; /** A nested chat touched it: its colour, filled while it edits the file now. */ chat?: { hue: string; fill: boolean }; title?: string }
-export type TouchFolder = { name: string; files: TouchFile[] }
+type TouchFile = { name: string; errs: number; add: number; del: number; on: string; read?: boolean; run: Act; /** A nested chat touched it: its colour, filled while it edits the file now. */ chat?: { hue: string; fill: boolean }; title?: string }
+type TouchFolder = { name: string; files: TouchFile[] }
 /** The viewer's tab row: the tabs (the one shown bold and underlined), then ▲ ▼ and back to the latest. */
-export type Tab = { id: string; t: string; label: string; on: boolean; run: Act }
+type Tab = { id: string; t: string; label: string; on: boolean; run: Act }
 /** Does what a click on the pane asked for. */
 export async function doAction($: EngineInterface, a: Act, surface: unknown) {
   if (a.k === 'file') return openAndSay($, 'file', a.path, a.name, a.edits, a.line ?? 0)

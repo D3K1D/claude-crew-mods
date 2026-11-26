@@ -24,8 +24,8 @@ export const withoutDemo = (c: Crew): Crew => {
     demoCodex: [],
   }
 }
-export const D = (p: string) => `demo/${p}`
-export const DEMO_CAST = [
+const D = (p: string) => `demo/${p}`
+const DEMO_CAST = [
   {
     id: 'demo-1',
     kind: 'Explore',
@@ -82,43 +82,35 @@ export const DEMO_CAST = [
  * The demo's pretend Codex run: the Architect hands it a thread at step 1, it
  * reads, edits and tests over the next steps, and reports back at step 5.
  */
-export const demoCodexAt = (step: number, now: number, prev: CodexRun[]): CodexRun[] => {
+const demoCodexAt = (step: number, now: number, prev: CodexRun[]): CodexRun[] => {
   if (step < 1) return prev
   const cur = prev[0]
   const F = (p: string) => D(p)
   const base: CodexRun = cur ?? {
     id: 'demo-codex',
     task: 'Add a single-flight token refresh in src/api/token.ts and make client.ts await it; keep the auth tests green.',
-    mode: 'write',
-    root: 'demo',
     model: 'gpt-6.1-sol',
-    effort: 'high',
     status: 'running',
     startedAt: now,
     endedAt: 0,
     thread: 'auth-refresh',
-    resumed: false,
     caller: 'demo-2',
     activity: 'Reading its notes',
-    focus: '',
-    touched: [],
     events: [{ at: now, kind: 'info', text: 'reading .codex-bridge/NOTES.md' }],
     files: [],
     commands: 0,
-    failedCommands: 0,
-    answer: '',
     notesUpdated: false,
   }
   const ev = (kind: string, text: string, ok?: boolean) => ({ at: now, kind, text, ...(ok === undefined ? {} : { ok }) })
   switch (step) {
     case 2:
-      return [{ ...base, activity: 'Reading token.ts', focus: F('src/api/token.ts'), touched: [{ path: F('src/api/token.ts'), kind: 'look', at: now }], events: [...base.events, ev('cmd', 'rg -n "refreshToken" src', true)], commands: 1 }]
+      return [{ ...base, activity: 'Reading token.ts', events: [...base.events, ev('cmd', 'rg -n "refreshToken" src', true)], commands: 1 }]
     case 3:
-      return [{ ...base, activity: 'Editing token.ts', focus: F('src/api/token.ts'), touched: [...base.touched.filter(t => t.path !== F('src/api/token.ts')), { path: F('src/api/token.ts'), kind: 'edit', at: now }], files: [F('src/api/token.ts')], events: [...base.events, ev('file', 'update token.ts')] }]
+      return [{ ...base, activity: 'Editing token.ts', files: [F('src/api/token.ts')], events: [...base.events, ev('file', 'update token.ts')] }]
     case 4:
-      return [{ ...base, activity: 'Running npm test -- auth', focus: F('tests/auth.test.ts'), touched: [...base.touched, { path: F('tests/auth.test.ts'), kind: 'look', at: now }, { path: F('src/api/client.ts'), kind: 'edit', at: now }], files: [F('src/api/token.ts'), F('src/api/client.ts')], events: [...base.events, ev('file', 'update client.ts'), ev('cmd', 'npm test -- auth')], commands: 2 }]
+      return [{ ...base, activity: 'Running npm test -- auth', files: [F('src/api/token.ts'), F('src/api/client.ts')], events: [...base.events, ev('file', 'update client.ts'), ev('cmd', 'npm test -- auth')], commands: 2 }]
     case 5:
-      return [{ ...base, status: 'done', endedAt: now, activity: 'Done', answer: 'Added a single-flight refresh in token.ts; client.ts now awaits it. 42 auth tests pass.', events: [...base.events.map(e => (e.kind === 'cmd' && e.ok === undefined ? { ...e, ok: true } : e)), ev('say', 'Added a single-flight refresh in token.ts; client.ts now awaits it. 42 auth tests pass.')], notesUpdated: true }]
+      return [{ ...base, status: 'done', endedAt: now, activity: 'Done', events: [...base.events.map(e => (e.kind === 'cmd' && e.ok === undefined ? { ...e, ok: true } : e)), ev('say', 'Added a single-flight refresh in token.ts; client.ts now awaits it. 42 auth tests pass.')], notesUpdated: true }]
     case 1:
       return [base]
     default:
@@ -133,7 +125,7 @@ export const stopDemo = () => {
   demo?.cancel()
   demo = undefined
 }
-export let demoRun = 0
+let demoRun = 0
 export const startDemo = () => {
   if (!every || !write || demo) return
   const w = write

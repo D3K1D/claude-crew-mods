@@ -41,18 +41,18 @@ export const webLine = (l: LogLine) => {
 /** The chat's Claude Crew website: the server this mod runs for it, its address, and who has it open. */
 export let webUrl = ''
 /** Posts to the website: the view ('push'), or 'ping' so it knows the mod is still here (it stops after a quiet minute). */
-export let webPost: ((path: 'push' | 'ping' | 'export' | 'reply', body?: string) => Promise<unknown>) | undefined
-export let webPinged = 0
-export let webWatchers = 0
-export let webSent = ''
-export let webBusy = false
+let webPost: ((path: 'push' | 'ping' | 'export' | 'reply', body?: string) => Promise<unknown>) | undefined
+let webPinged = 0
+let webWatchers = 0
+let webSent = ''
+let webBusy = false
 /** What each press on the page does, by the id the page sends back (only ids the mod handed out). */
 // Two maps: the ids of this view and the last, so a big map makes room between views, never in the
 // middle of one (an id the page holds still works).
-export let webActs = new Map<string, Act>()
-export let webActsBefore = new Map<string, Act>()
-export const actOf = (id: string) => webActs.get(id) ?? webActsBefore.get(id)
-export const actId = (a: Act) => {
+let webActs = new Map<string, Act>()
+let webActsBefore = new Map<string, Act>()
+const actOf = (id: string) => webActs.get(id) ?? webActsBefore.get(id)
+const actId = (a: Act) => {
   const s = JSON.stringify(a)
   // Two hashes (about 64 bits); one that is taken by another press gets a suffix.
   let id = `${(hash(s) >>> 0).toString(36)}${(hash(`crew|${s}`) >>> 0).toString(36)}`
@@ -60,13 +60,13 @@ export const actId = (a: Act) => {
   webActs.set(id, a)
   return id
 }
-export const newActs = () => {
+const newActs = () => {
   if (webActs.size < 4000) return
   webActsBefore = webActs
   webActs = new Map()
 }
 /** The website's view: the pane's model as data, each press an id. */
-export async function webView($: EngineInterface) {
+async function webView($: EngineInterface) {
   newActs()
   const m = await paneModel($, 160, 700, true)
   const webRow = (r: PaneRow) => ({
@@ -190,21 +190,21 @@ export async function publishWeb($: EngineInterface) {
  * most). A chunk that does not parse is skipped when the journal is read; the others are untouched.
  */
 export const journal = new Map<string, LogLine>()
-export const CHUNK = 250
-export const JOURNAL_KEEP = 5000
-export let journalDir = ''
+const CHUNK = 250
+const JOURNAL_KEEP = 5000
+let journalDir = ''
 /** Read in (or there was nothing to read): lines can be added. */
-export let journalOpen = false
+let journalOpen = false
 /** Its oldest lines were left out (it keeps the newest 5,000): exports say so. */
-export let journalCut = false
+let journalCut = false
 export let journalSid = ''
 /** Which chunk each line is in, each chunk's lines in order, and the chunks to write. */
-export const chunkOf = new Map<string, number>()
-export const chunks = new Map<number, string[]>()
-export const dirtyChunks = new Set<number>()
-export let lastChunk = 1
-export const chunkName = (n: number) => `${String(n).padStart(6, '0')}.json`
-export const isLine = (l: unknown): l is LogLine => !!l && typeof (l as LogLine).at === 'number' && typeof (l as LogLine).text === 'string'
+const chunkOf = new Map<string, number>()
+const chunks = new Map<number, string[]>()
+const dirtyChunks = new Set<number>()
+let lastChunk = 1
+const chunkName = (n: number) => `${String(n).padStart(6, '0')}.json`
+const isLine = (l: unknown): l is LogLine => !!l && typeof (l as LogLine).at === 'number' && typeof (l as LogLine).text === 'string'
 /** A line into the journal: a new one at the end of the newest chunk, a changed one where it is. */
 export const addToJournal = (l: LogLine, chunk?: number) => {
   const k = logKey(l)
@@ -239,25 +239,25 @@ export const later$ = <T,>(fn: () => Promise<T> | T) => Promise.resolve().then(f
  * Sets one chat's entry in a store map every chat shares (webAddress, logFiles, summarised): read again
  * right before the write, so another chat's entry written meanwhile stays; the newest `keep` stay.
  */
-export async function storeEntry($: EngineInterface, key: string, id: string, value: unknown, keep: number) {
+async function storeEntry($: EngineInterface, key: string, id: string, value: unknown, keep: number) {
   const now = ((await $.store.get(key).catch(() => undefined)) ?? {}) as Record<string, unknown>
   const { [id]: _, ...rest } = now
   await $.store.set(key, Object.fromEntries([...Object.entries(rest), [id, value]].slice(-keep))).catch(() => undefined)
 }
-export const journalLines = () => [...journal.values()].sort((x, y) => x.at - y.at)
+const journalLines = () => [...journal.values()].sort((x, y) => x.at - y.at)
 /** This chat's whole log and its nested chats', in time order: what Copy, Download, Save and Load older have. */
-export const everyLine = () => [...journalLines(), ...nestedLines()].sort((x, y) => x.at - y.at)
+const everyLine = () => [...journalLines(), ...nestedLines()].sort((x, y) => x.at - y.at)
 export const listDir = (path: string) => later$(() => fsList?.(path) ?? []).catch(() => []) as Promise<{ name: string; mtimeMs?: number }[]>
 export const readJson = (path: string) => later$(async () => JSON.parse(String(await fsRead?.(path))) as unknown).catch(() => undefined)
 /** A journal folder's chunk numbers, oldest first. */
-export const chunkList = async (dir: string, entries?: { name: string; mtimeMs?: number }[]) =>
+const chunkList = async (dir: string, entries?: { name: string; mtimeMs?: number }[]) =>
   (entries ?? (await listDir(dir)))
     .filter(f => /^\d{6}\.json$/.test(f.name))
     .map(f => ({ n: Number(f.name.slice(0, 6)), at: f.mtimeMs ?? 0 }))
     .sort((x, y) => x.n - y.n)
 /** The engine's file reads, for the helpers above (set when the journal opens). */
-export let fsList: ((path: string) => Promise<unknown[]>) | undefined
-export let fsRead: ((path: string) => Promise<unknown>) | undefined
+let fsList: ((path: string) => Promise<unknown[]>) | undefined
+let fsRead: ((path: string) => Promise<unknown>) | undefined
 export async function openJournal($: EngineInterface) {
   // Written only once what was there is read in (the timer may tick before then). A new session in the
   // same process starts from nothing: the last one's lines, chunks and nested chats go.
@@ -350,11 +350,11 @@ export async function syncJournal($: EngineInterface) {
  * What Touched shows, kept beside the journal as touched.json (the newest 200 files, written when it
  * changes): read back when Claude restarts, and read by the chat above to show this chat's files.
  */
-export type TouchedFile = Change & { path: string; errs?: number; editing?: boolean }
-export let touchedSent = ''
+type TouchedFile = Change & { path: string; errs?: number; editing?: boolean }
+let touchedSent = ''
 /** colors.json as last written. */
-export let colorsSent = ''
-export async function writeTouched($: EngineInterface, c: Crew) {
+let colorsSent = ''
+async function writeTouched($: EngineInterface, c: Crew) {
   if (!journalDir) return
   const busy = new Set(c.agents.filter(a => a.state === 'busy' && a.node).map(a => a.node))
   const errs = new Map<string, number>()
@@ -390,9 +390,9 @@ export async function readHostId($: EngineInterface) {
   hostId = /^local_[\w-]+$/.test(id) ? id : ''
 }
 export let homeDir = ''
-export let selfSent = ''
-export let selfAt = 0
-export async function writeSelf($: EngineInterface, c: Crew) {
+let selfSent = ''
+let selfAt = 0
+async function writeSelf($: EngineInterface, c: Crew) {
   const a = c.agents.find(x => x.id === 'main')
   if (!hostId || !homeDir || !journalSid || !a) return
   const tasks = tasksOf(a, c)
@@ -439,7 +439,7 @@ export async function writeSelf($: EngineInterface, c: Crew) {
   await later$(() => $.fs.write(`${homeDir}/.claude/crew-map/chats/${hostId}.json`, `${s.slice(0, -1)},"at":${selfAt}}`)).catch(() => undefined)
 }
 /** What this chat knows of each nested chat: its file, and its journal's chunks (lines as this log shows them). */
-export type Nested = { file?: ChatFile; fileM: number; title?: string; name?: string; /** A same-project chat (not started from this one). */ sibling?: boolean; touched?: TouchedFile[]; touchedM?: number; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
+type Nested = { file?: ChatFile; fileM: number; title?: string; name?: string; /** A same-project chat (not started from this one). */ sibling?: boolean; touched?: TouchedFile[]; touchedM?: number; chunkM: Map<number, number>; chunkLines: Map<number, LogLine[]>; lines: LogLine[] }
 export const nested = new Map<string, Nested>()
 /**
  * A nested chat still at work (its Claude working, waiting on its own helpers or chats, or needing you):
@@ -452,11 +452,11 @@ export const chatWorking = (ch: Chat) => {
   return ch.running
 }
 /** All nested chats' lines in time order, made again only when one changed. */
-export let nestedVer = 0
+let nestedVer = 0
 /** Which project chats' lines the website's Who list asks for: '' none, '*' all of them, or one chat's app id. */
 export let webProject = ''
-export let projVer = -1
-export let sortedProject: LogLine[] = []
+let projVer = -1
+let sortedProject: LogLine[] = []
 /** The project chats' lines in time order (under their titles), made again only when one changed. */
 export const projectLines = () => {
   if (projVer !== nestedVer) {
@@ -465,8 +465,8 @@ export const projectLines = () => {
   }
   return sortedProject
 }
-export let sortedVer = -1
-export let sortedNested: LogLine[] = []
+let sortedVer = -1
+let sortedNested: LogLine[] = []
 export const nestedLines = () => {
   if (sortedVer !== nestedVer) {
     // Under the chat's name now (the app may rename it; the lines keep their keys, which use its id).
@@ -476,9 +476,9 @@ export const nestedLines = () => {
   return sortedNested
 }
 /** Nested chats' touched files by path: each chat that touched it, the latest first. Made again only on a change. */
-export type NestedTouch = TouchedFile & { chat: string; name: string }
-export let touchVer = -1
-export let touchByPath = new Map<string, NestedTouch[]>()
+type NestedTouch = TouchedFile & { chat: string; name: string }
+let touchVer = -1
+let touchByPath = new Map<string, NestedTouch[]>()
 export const nestedTouched = () => {
   if (touchVer !== nestedVer) {
     touchByPath = new Map()
@@ -490,7 +490,7 @@ export const nestedTouched = () => {
   return touchByPath
 }
 /** How many of those come before a time. */
-export const nestedBefore = (at: number) => {
+const nestedBefore = (at: number) => {
   const all = nestedLines()
   let lo = 0
   let hi = all.length
@@ -505,7 +505,7 @@ export const nestedBefore = (at: number) => {
 export const NESTED_VIEW = 200
 /** How many of the newest lines each view to the website carries. */
 export const WEB_WINDOW = 150
-export const savedBefore = (at: number) => {
+const savedBefore = (at: number) => {
   let left = nestedBefore(at)
   let first = nestedLines()[0]?.at ?? Infinity
   for (const l of journal.values()) {
@@ -514,7 +514,7 @@ export const savedBefore = (at: number) => {
   }
   return { left, first: Number.isFinite(first) ? clock(first).slice(0, 5) : '' }
 }
-export let readingNested = false
+let readingNested = false
 export async function readNested($: EngineInterface) {
   const c = await readCrew?.()
   if (!c || !homeDir || readingNested) return
@@ -597,13 +597,13 @@ export async function readNested($: EngineInterface) {
     readingNested = false
   }
 }
-export const pad2 = (n: number) => String(n).padStart(2, '0')
-export const localDay = (ms: number) => {
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const localDay = (ms: number) => {
   const d = new Date(ms)
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
 }
 /** The log as Markdown: who did what and when, and what each Claude was thinking. */
-export const logMarkdown = (lines: LogLine[], c: Crew) => {
+const logMarkdown = (lines: LogLine[], c: Crew) => {
   const goal = lines.find(l => l.kind === 'you' && !l.chat)?.text ?? ''
   const what = (l: LogLine) => (l.kind === 'think' ? 'thought' : l.kind === 'you' ? 'asked' : l.kind === 'msg' ? 'said' : l.kind === 'info' ? 'note' : 'did')
   const first = lines[0]
@@ -625,14 +625,14 @@ export const logMarkdown = (lines: LogLine[], c: Crew) => {
   ].join('\n')
 }
 /** Where the logs and their summaries go, in the project. */
-export const LOG_DIR = '.claude/crew-logs'
-export const SUMMARY_SYSTEM = 'You write notes that a future Claude, working in the same project, reads to understand an earlier chat. Be concrete: file names, commands, decisions and their reasons. No preamble.'
-export const SUMMARY_ASK = 'Below is the activity log of one chat in this project: who did what and when, and what they were thinking. Summarise it in Markdown under these headings: Goal; What was done (files and commands); How and why (the key decisions and the reasoning behind them); Problems hit and how they were solved; Left open. Keep it under 400 words.'
-export const UPDATE_ASK =
+const LOG_DIR = '.claude/crew-logs'
+const SUMMARY_SYSTEM = 'You write notes that a future Claude, working in the same project, reads to understand an earlier chat. Be concrete: file names, commands, decisions and their reasons. No preamble.'
+const SUMMARY_ASK = 'Below is the activity log of one chat in this project: who did what and when, and what they were thinking. Summarise it in Markdown under these headings: Goal; What was done (files and commands); How and why (the key decisions and the reasoning behind them); Problems hit and how they were solved; Left open. Keep it under 400 words.'
+const UPDATE_ASK =
   'Below is the summary of one chat in this project so far, then the lines of its activity log since that summary. Return the whole summary brought up to date with what the new lines add, in the same Markdown under the same headings: Goal; What was done (files and commands); How and why (the key decisions and the reasoning behind them); Problems hit and how they were solved; Left open. Keep it under 400 words.'
-export let saving = false
-export let lastSave:{ at: number; file: string; summary: boolean } | undefined
-export const slugOf = (s: string) => oneLine(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'chat'
+let saving = false
+let lastSave:{ at: number; file: string; summary: boolean } | undefined
+const slugOf = (s: string) => oneLine(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'chat'
 /** Saves this chat's log into the project, and a summary of it by a cheaper model (Haiku) beside it. */
 export async function saveLog($: EngineInterface, why: 'button' | 'task') {
   if (saving) return
@@ -697,7 +697,7 @@ export async function exportLog($: EngineInterface, how: 'copy' | 'download') {
   await webPost?.('export', JSON.stringify({ how, name: `claude-crew-log-${localDay(Date.now())}.md`, text }))
 }
 /** A log line opened on the page: all of it (a thought whole, an action and what came of it), from the log or the journal. */
-export const openLine = async (key: string) => {
+const openLine = async (key: string) => {
   const c = await readCrew?.()
   const l = c?.log.find(x => logKey(x) === key) ?? journal.get(key) ?? nestedLines().find(x => logKey(x) === key)
   // An action's line already says what it was: below it, what came of it (an edit with its Open diff).
@@ -705,8 +705,8 @@ export const openLine = async (key: string) => {
   await webPost?.('reply', JSON.stringify({ open: { key, text: l ? (l.kind !== 'think' && l.more) || fullOf(l) : '', act } }))
 }
 /** Load older on the page: the journal's lines before its oldest, a page at a time. */
-export const OLDER_PAGE = 200
-export async function olderLines($: EngineInterface, before: number) {
+const OLDER_PAGE = 200
+async function olderLines($: EngineInterface, before: number) {
   await syncJournal($)
   // This chat's journal and its nested chats', in time order.
   const all = everyLine().filter(l => l.at < before)
@@ -734,7 +734,7 @@ export async function findLogs($: EngineInterface) {
 export let webState: 'off' | 'checking' | 'starting' | 'on' = 'off'
 /** It could not start at all (no Node): the pane then draws the whole view itself. */
 export let webFailed = false
-export let restarts: number[] = []
+let restarts: number[] = []
 export function startWeb($: EngineInterface, onlyIfKept = false) {
   if (webState !== 'off') return
   // At session start it only looks for a saved address first; "Starting…" shows once it starts.

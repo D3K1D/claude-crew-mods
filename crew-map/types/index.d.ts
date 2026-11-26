@@ -209,30 +209,21 @@ export type TestRun = {
 
 /**
  * A Codex run as the codex-bridge mod publishes it (its state, read only here):
- * the fields the crew map draws. The bridge owns and writes it.
+ * the fields Claude Crew reads. The bridge owns and writes it (with more fields than these).
  */
 export type CodexRun = {
   id: string
   task: string
-  mode: 'read-only' | 'write'
-  root?: string
-  cwd?: string
   model: string
-  effort: string
   status: 'running' | 'done' | 'failed' | 'stopped'
   startedAt: number
   endedAt: number
   thread: string
-  resumed: boolean
   caller: string
   activity: string
-  focus: string
-  touched: { path: string; kind: 'look' | 'edit'; at: number }[]
   events: { at: number; kind: string; text: string; ok?: boolean }[]
   files: string[]
   commands: number
-  failedCommands: number
-  answer: string
   notesUpdated: boolean
 }
 
