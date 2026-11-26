@@ -186,7 +186,7 @@ for (let step = 0; step < STEPS; step++) {
     check('problems stay capped', c.problems.length <= 30, String(c.problems.length))
     check('shell commands stay capped', (c.shells ?? []).length <= 20, String((c.shells ?? []).length))
     check('worked files stay capped', Object.keys(c.changes).length <= 301, String(Object.keys(c.changes).length))
-    check('map nodes stay capped', Object.keys(c.nodes).length <= 60, String(Object.keys(c.nodes).length))
+    check('reached files stay capped', Object.keys(c.reached ?? {}).length <= 60, String(Object.keys(c.reached ?? {}).length))
     check('totals stay finite and non-negative', Number.isFinite(c.spent.cost) && c.spent.cost >= 0 && Number.isFinite(c.spent.tokens))
     check('every agent is a real agent', c.agents.every(a => typeof a.id === 'string' && typeof a.name === 'string' && Array.isArray(a.pending)))
     check('nothing typed into the computer is kept', !JSON.stringify(c).includes('SECRET-TYPED-TEXT'))

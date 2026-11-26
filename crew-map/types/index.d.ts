@@ -8,10 +8,8 @@ export type Agent = {
   kind: string
   /** Index into the palette; 0 is Claude orange. */
   hue: number
-  /** The map node it is at ('' before its first file). */
+  /** The file (or a tool's station, such as '$terminal') it works at now; '' before its first. */
   node: string
-  /** Nodes it visited, newest first. */
-  visited: string[]
   tool: string
   detail: string
   pending: string[]
@@ -38,9 +36,6 @@ export type Agent = {
   todoList?: { content: string; status: string; activeForm?: string }[]
   /** When it took on its current goal: the window's clock for a Claude without a to-do list. */
   since: number
-  /** The node it last moved from, and when: the map zips it across. */
-  from: string
-  movedAt: number
   /** Tokens its finished turns used (input, output and cache), from the engine's own count. */
   tokens: number
   /** What those tokens would cost at Anthropic's API list prices, in dollars. */
@@ -92,25 +87,6 @@ export type Summary = {
 /** What the crew did to one file this session. */
 export type Change = { added: number; removed: number; edits: number; reads: number; by: string; hue: number; at: number }
 
-export type MapNode = {
-  /** A normalised file path, or '$terminal', '@web', '?search'. */
-  id: string
-  label: string
-  dir: string
-  kind: 'file' | 'ghost' | 'special'
-  /** Layout position, 0-1 each way. */
-  x: number
-  y: number
-  heat: number
-  /** Node ids this file imports. */
-  imports: string[]
-  scanned: boolean
-  touchedAt: number
-  demo?: boolean
-}
-
-export type Trail = { a: string; b: string; w: number }
-
 /** One line of the log; 'you' is a message the person sent, 'msg' one another session sent (`who` names it). */
 export type LogLine = { at: number; who: string; hue: number; kind: 'act' | 'think' | 'info' | 'you' | 'msg'; text: string; /** All of what a Claude said, when the line is its gist. */ full?: string; /** The tool call it records, and how long that took once done (ms). */ call?: string; took?: number; /** What came of an action, shown when its line is opened: an edit's diff, a command's output tail, an error (capped). */ more?: string; /** The action failed (refused: by a permission rule or the person). */ bad?: true; refused?: true; /** The file an edit changed. */ path?: string; /** A nested chat's line (its app id; `who` is then the chat's name), and the helper there who did it. */ chat?: string; by?: string }
 
@@ -128,8 +104,8 @@ export type PlanTask = {
 
 export type Crew = {
   agents: Agent[]
-  nodes: Record<string, MapNode>
-  trails: Trail[]
+  /** Files the work reached without editing or reading them (searched in, named by an error), and when last. */
+  reached?: Record<string, number>
   log: LogLine[]
   calls: number
   startedAt: number

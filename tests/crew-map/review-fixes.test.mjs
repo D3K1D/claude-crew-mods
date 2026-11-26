@@ -71,18 +71,8 @@ await hooks['tool.call']($, { tool: 'mcp__remote-devices__Claude_Browser__comput
 check('a remote browser goes to the browser station', seen === '@browser', seen)
 check('its action reads cleanly', crew().log.at(-1).text === '◍ browser: computer left click', crew().log.at(-1).text)
 await run({ tool: 'mcp__plugin_github_github__create_issue', title: 'x' })
-check('a plugin\'s server is named by its own name', crew().nodes['@app:plugin_github_github']?.label === 'GitHub', crew().nodes['@app:plugin_github_github']?.label)
+check('a plugin\'s server is named by its own name', crew().log.at(-1).text.startsWith('⧉ GitHub'), crew().log.at(-1).text)
 
-// ── Import scanning stays fast on hostile files ──
-const hostile = `${'   \n'.repeat(80_000)}use crate::a;`
-for (const name of ['big.rs', 'big.py']) {
-  files[`${P}/src/${name}`] = hostile
-  const t0 = performance.now()
-  await run({ tool: 'Read', file_path: `${P}/src/${name}` })
-  for (let i = 0; i < 200 && !crew().nodes[`${P}/src/${name}`]?.scanned; i++) await new Promise(r => setTimeout(r, 5))
-  const ms = performance.now() - t0
-  check(`a 320 KB file of blank lines scans fast (${name})`, ms < 500, `${ms.toFixed(0)} ms`)
-}
 
 // ── Demo: its tests do not count for the real task; its files and folders are not opened ──
 const tree = await render()

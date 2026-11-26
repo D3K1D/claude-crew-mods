@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Agent, Change, Chat, CodexRun, Crew, LogLine, MapNode, PlanTask, Problem, ShellRun, Summary, TestRun } from '../types'
+import type { Agent, Change, Chat, CodexRun, Crew, LogLine, PlanTask, Problem, ShellRun, Summary, TestRun } from '../types'
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -13,14 +13,12 @@ const OPEN_ASK = 'Open my Claude Crew website in the browser pane'
 /** How /crew-review's request to Claude starts (that turn, too, is not the chat's goal). */
 const REVIEW_ASK = 'Start a Crew Review of this project'
 const MAX_AGENTS = 12
-const MAX_NODES = 60
-const MAX_GHOSTS = 14
+/** Files reached but not edited or read whole (searched in, named by an error), kept at most. */
+const MAX_REACHED = 60
 const LINGER_MS = 90_000
 
 const crew = atom({ plugin: 'crew-map', key: 'crew' } as const, {
   agents: [],
-  nodes: {},
-  trails: [],
   log: [],
   calls: 0,
   startedAt: 0,
@@ -663,7 +661,6 @@ let readCrew: (() => Promise<Crew>) | undefined
 let after: ((ms: number, fn: () => void) => void) | undefined
 let every: ((ms: number, fn: () => void) => { cancel: () => void }) | undefined
 let readFile: ((path: string) => Promise<string>) | undefined
-let exists: ((path: string) => Promise<boolean>) | undefined
 let demo: { cancel: () => void } | undefined
 
 // ─── Vocabulary ─────────────────────────────────────────────────────────────
@@ -704,7 +701,7 @@ const SPECIAL_LABEL: Record<string, string> = {
   '@docs': 'documents',
   '@claude': 'Claude app',
 }
-/** Map nodes that are tools rather than files: the stations down the right of the map. */
+/** Where a tool works when it is not a file: the terminal, the web, a browser, an app. */
 const isSpecial = (id: string) => id in SPECIAL_LABEL || id.startsWith('@app:')
 
 // ─── Tools beyond the built-in ones: MCP servers, browsers, the computer ───
@@ -767,7 +764,6 @@ const STATION_ICON: Record<string, string> = { '@browser': '◍', '@computer': '
 const COMPACT = '__compact'
 /** A doc rather than code: what Claude writes for people to read. */
 const DOC_EXT = /\.(md|mdx|markdown|txt|rst|adoc|docx?|odt|rtf|html?)$/i
-const CODE_EXT = /\.(m?[jt]sx?|cjs|py|rs|c|h|cc|cpp|hpp|css|scss|vue|svelte)$/i
 
 /** What a Claude's bubble says it is doing, and the bubble's colour. */
 const activityOf = (a: Agent): [string, string] => {
@@ -1177,7 +1173,6 @@ const blank = (id: string, name: string, kind: string, hue: number): Agent => ({
   kind,
   hue,
   node: '',
-  visited: [],
   tool: '',
   detail: '',
   pending: [],
@@ -1193,8 +1188,6 @@ const blank = (id: string, name: string, kind: string, hue: number): Agent => ({
   todosTotal: 0,
   doing: '',
   since: 0,
-  from: '',
-  movedAt: 0,
   tokens: 0,
   cost: 0,
   stuck: '',
@@ -1408,262 +1401,13 @@ const think = (c: Crew, id: string, line: string, full?: string): Crew => {
   return log(upsert(c, id, a => ({ ...a, thoughts: [line, ...a.thoughts].slice(0, 6) })), id, 'think', line, full)
 }
 
-// ─── The map's graph ────────────────────────────────────────────────────────
-
-/** Spring layout in a unit square, wider than tall like the cells it lands on. */
-const relayout = (nodes: Record<string, MapNode>, trails: Crew['trails']): Record<string, MapNode> => {
-  const list = Object.values(nodes).map(n => ({ ...n }))
-  const at = new Map(list.map((n, i) => [n.id, i]))
-  const springs: [number, number, number, number][] = []
-  for (const n of list)
-    for (const t of n.imports) {
-      const j = at.get(t)
-      if (j !== undefined) springs.push([at.get(n.id)!, j, 0.2, 0.09])
-    }
-  for (const t of trails) {
-    const i = at.get(t.a)
-    const j = at.get(t.b)
-    if (i !== undefined && j !== undefined) springs.push([i, j, 0.28, 0.035])
-  }
-  const AX = 2.4
-  for (let iter = 0; iter < 140; iter++) {
-    const fx = new Array(list.length).fill(0)
-    const fy = new Array(list.length).fill(0)
-    for (let i = 0; i < list.length; i++)
-      for (let j = i + 1; j < list.length; j++) {
-        const dx = (list[i].x - list[j].x) * AX
-        const dy = list[i].y - list[j].y
-        const d2 = dx * dx + dy * dy + 1e-4
-        const k = 0.0035 / d2
-        fx[i] += dx * k
-        fy[i] += dy * k
-        fx[j] -= dx * k
-        fy[j] -= dy * k
-      }
-    for (const [i, j, len, str] of springs) {
-      const dx = (list[j].x - list[i].x) * AX
-      const dy = list[j].y - list[i].y
-      const d = Math.sqrt(dx * dx + dy * dy) + 1e-6
-      const f = (d - len) * str
-      fx[i] += (dx / d) * f
-      fy[i] += (dy / d) * f
-      fx[j] -= (dx / d) * f
-      fy[j] -= (dy / d) * f
-    }
-    const dirs = new Map<string, { x: number; y: number; n: number }>()
-    for (const n of list) {
-      const d = dirs.get(n.dir) ?? { x: 0, y: 0, n: 0 }
-      dirs.set(n.dir, { x: d.x + n.x, y: d.y + n.y, n: d.n + 1 })
-    }
-    list.forEach((n, i) => {
-      const d = dirs.get(n.dir)!
-      if (d.n > 1) {
-        fx[i] += (d.x / d.n - n.x) * AX * 0.02
-        fy[i] += (d.y / d.n - n.y) * 0.02
-      }
-      fx[i] += (0.5 - n.x) * AX * 0.012
-      fy[i] += (0.5 - n.y) * 0.012
-      const step = 0.6 * (1 - iter / 160)
-      n.x = Math.min(0.97, Math.max(0.03, n.x + Math.max(-0.04, Math.min(0.04, (fx[i] / AX) * step))))
-      n.y = Math.min(0.95, Math.max(0.05, n.y + Math.max(-0.05, Math.min(0.05, fy[i] * step))))
-    })
-  }
-  return Object.fromEntries(list.map(n => [n.id, n]))
-}
-
-const placeNear = (c: Crew, id: string, near?: string): { x: number; y: number } => {
-  const r = hash(id)
-  const jx = ((r % 1000) / 1000 - 0.5) * 0.16
-  const jy = (((r >> 10) % 1000) / 1000 - 0.5) * 0.2
-  const anchor =
-    (near && c.nodes[near]) || Object.values(c.nodes).find(n => n.dir === dirOf(id)) || undefined
-  if (anchor) return { x: Math.min(0.95, Math.max(0.05, anchor.x + jx)), y: Math.min(0.92, Math.max(0.08, anchor.y + jy)) }
-  return { x: 0.2 + ((r % 997) / 997) * 0.6, y: 0.2 + (((r >> 8) % 991) / 991) * 0.6 }
-}
-
-const prune = (nodes: Record<string, MapNode>, agents: Agent[], keep = '', changes: Record<string, Change> = {}): Record<string, MapNode> => {
-  const list = Object.values(nodes)
-  const busy = new Set([...agents.map(a => a.node), keep])
-  const ghosts = list.filter(n => n.kind === 'ghost').sort((a, b) => a.touchedAt - b.touchedAt)
-  const drop = new Set(ghosts.slice(0, Math.max(0, ghosts.length - MAX_GHOSTS)).map(n => n.id))
-  const rest = list.filter(n => !drop.has(n.id))
-  if (rest.length > MAX_NODES) {
-    const victims = rest
-      .filter(n => !busy.has(n.id))
-      // Unopened files first, edited files last (the cards keep every file either way).
-      .sort((a, b) => (a.kind === 'ghost' ? -1 : 0) - (b.kind === 'ghost' ? -1 : 0) || Number(!!changes[a.id]?.edits) - Number(!!changes[b.id]?.edits) || a.touchedAt - b.touchedAt)
-    for (const v of victims.slice(0, rest.length - MAX_NODES)) drop.add(v.id)
-  }
-  return drop.size ? Object.fromEntries(list.filter(n => !drop.has(n.id)).map(n => [n.id, n])) : nodes
-}
-
-/** Puts the node on the map (or warms it up) and records the hop from `from`. */
-const touch = (c: Crew, id: string, from: string): Crew => {
-  if (!id) return c
-  const now = Date.now()
-  const had = c.nodes[id]
-  let nodes = { ...c.nodes }
-  let reflow = false
-  if (!had) {
-    nodes[id] = {
-      id,
-      label: stationLabel(id) || baseName(id),
-      dir: isSpecial(id) ? '' : dirOf(id),
-      kind: isSpecial(id) ? 'special' : 'file',
-      ...placeNear(c, id, from),
-      heat: 1,
-      imports: [],
-      scanned: false,
-      touchedAt: now,
-    }
-    reflow = true
-  } else {
-    nodes[id] = { ...had, kind: had.kind === 'ghost' ? 'file' : had.kind, heat: had.heat + 1, touchedAt: now }
-  }
-  let trails = c.trails
-  if (from && from !== id) {
-    const [a, b] = [from, id].sort()
-    const t = trails.find(x => x.a === a && x.b === b)
-    trails = t ? trails.map(x => (x === t ? { ...x, w: x.w + 1 } : x)) : [...trails, { a, b, w: 1 }].slice(-40)
-    if (!t) reflow = true
-  }
-  nodes = prune(nodes, c.agents, id, c.changes)
-  return { ...c, nodes: reflow ? relayout(nodes, trails) : nodes, trails }
-}
-
-/** Reads a code file's imports, resolved to paths that exist. */
-const importsOf = async (path: string): Promise<string[]> => {
-  if (!readFile || !exists || !CODE_EXT.test(path)) return []
-  let text: string
-  try {
-    // Imports sit at the top of a file: the first 256 KB is plenty, and a huge file costs nothing more.
-    text = (await readFile(path)).slice(0, 256_000)
-  } catch {
-    return []
-  }
-  const dir = dirOf(path)
-  const ext = (path.split('.').pop() ?? '').toLowerCase()
-  const candidates: string[][] = []
-  const add = (...c: string[]) => candidates.push(c.map(norm))
-  if (/^(m?[jt]sx?|cjs|vue|svelte)$/.test(ext)) {
-    const re = /(?:from\s*|import\s*\(?\s*|require\(\s*)['"](\.{1,2}\/[^'"]+)['"]/g
-    for (const m of text.matchAll(re)) {
-      const base = `${dir}/${m[1]}`
-      const stem = base.replace(/\.(m?js|jsx)$/, '')
-      // `../types` names a folder (its index file), so the bare path only counts when it has an extension.
-      add(
-        ...(/\.[A-Za-z]\w*$/.test(baseName(base)) ? [base] : []),
-        `${stem}.ts`,
-        `${stem}.tsx`,
-        `${stem}.d.ts`,
-        `${stem}.js`,
-        `${stem}.jsx`,
-        `${stem}.mjs`,
-        `${base}/index.ts`,
-        `${base}/index.tsx`,
-        `${base}/index.d.ts`,
-        `${base}/index.js`,
-      )
-    }
-  } else if (ext === 'py') {
-    for (const m of text.matchAll(/^[ \t]*from[ \t]+(\.+)([\w.]*)[ \t]+import[ \t]+([\w, ]+)/gm)) {
-      let base = dir
-      for (let i = 1; i < m[1].length; i++) base = dirOf(base)
-      const mod = m[2].replace(/\./g, '/')
-      if (mod) add(`${base}/${mod}.py`, `${base}/${mod}/__init__.py`)
-      else for (const name of m[3].split(',')) add(`${base}/${name.trim()}.py`)
-    }
-    for (const m of text.matchAll(/^[ \t]*(?:from|import)[ \t]+([\w.]+)/gm)) {
-      const mod = m[1].replace(/\./g, '/')
-      add(`${dir}/${mod}.py`, `${dirOf(dir)}/${mod}.py`, `${dir}/${mod}/__init__.py`)
-    }
-  } else if (ext === 'rs') {
-    // A file's own module folder: `src/world.rs` keeps its children in `src/world/`.
-    const file = baseName(path)
-    const isRootish = /^(mod|lib|main)\.rs$/.test(file)
-    const selfDir = isRootish ? dir : `${dir}/${file.replace(/\.rs$/, '')}`
-    const superDir = isRootish ? dirOf(dir) : dir
-    let crateSrc = dir
-    while (crateSrc && baseName(crateSrc) !== 'src') crateSrc = dirOf(crateSrc)
-    if (!crateSrc) crateSrc = dir
-    for (const m of text.matchAll(/^[ \t]*(?:pub(?:\([^)\n]*\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;/gm)) add(`${selfDir}/${m[1]}.rs`, `${selfDir}/${m[1]}/mod.rs`)
-    // `use crate::a::b::Item`, `use super::x`, `use self::y`, groups included.
-    const paths: string[] = []
-    for (const m of text.matchAll(/^[ \t]*(?:pub(?:\([^)\n]*\))?[ \t]+)?use[ \t]+(crate|super|self)::([^;]{1,2000});/gm)) {
-      const head = m[1]
-      const body = m[2].replace(/\s+/g, '')
-      const brace = body.indexOf('{')
-      if (brace < 0) paths.push(`${head}::${body}`)
-      else {
-        const prefix = body.slice(0, brace)
-        let depth = 0
-        let cur = ''
-        for (const ch of body.slice(brace + 1, body.lastIndexOf('}'))) {
-          if (ch === '{') depth++
-          if (ch === '}') depth--
-          if (ch === ',' && depth === 0) {
-            paths.push(`${head}::${prefix}${cur.split('{')[0]}`)
-            cur = ''
-          } else cur += ch
-        }
-        if (cur) paths.push(`${head}::${prefix}${cur.split('{')[0]}`)
-      }
-    }
-    for (const p of paths.slice(0, 24)) {
-      const [head, ...rest] = p.split('::')
-      const segs = rest.filter(x => x && x !== '*' && x !== 'self')
-      const base = head === 'crate' ? crateSrc : head === 'super' ? superDir : selfDir
-      // The longest prefix that is a module file wins; the rest is an item inside it.
-      const tries: string[] = []
-      for (let n = Math.min(segs.length, 4); n >= 1; n--) {
-        const mod = segs.slice(0, n).join('/')
-        tries.push(`${base}/${mod}.rs`, `${base}/${mod}/mod.rs`)
-      }
-      if (tries.length) add(...tries)
-    }
-  } else if (/^(c|h|cc|cpp|hpp)$/.test(ext)) {
-    for (const m of text.matchAll(/#include\s+"([^"]+)"/g)) add(`${dir}/${m[1]}`)
-  } else if (ext === 'css' || ext === 'scss') {
-    for (const m of text.matchAll(/@(?:import|use)\s+['"]([^'"]+)['"]/g)) add(`${dir}/${m[1]}`, `${dir}/_${m[1]}.scss`, `${dir}/${m[1]}.scss`)
-  }
-  const found: string[] = []
-  for (const list of candidates.slice(0, 30)) {
-    for (const p of list) {
-      if (p === path || found.includes(p)) break
-      if (await exists(p).catch(() => false)) {
-        found.push(p)
-        break
-      }
-    }
-  }
-  return found
-}
-
-const scan = (id: string) => {
-  after?.(0, () => {
-    void importsOf(id).then(found =>
-      write?.(c => {
-        const n = c.nodes[id]
-        if (!n) return c
-        const nodes = { ...c.nodes, [id]: { ...n, imports: found, scanned: true } }
-        const now = Date.now()
-        for (const f of found)
-          if (!nodes[f])
-            nodes[f] = {
-              id: f,
-              label: baseName(f),
-              dir: dirOf(f),
-              kind: 'ghost',
-              ...placeNear(c, f, id),
-              heat: 0,
-              imports: [],
-              scanned: false,
-              touchedAt: now,
-            }
-        return { ...c, nodes: relayout(prune(nodes, c.agents, id, c.changes), c.trails) }
-      }),
-    )
-  })
+/** Notes a file the work reached, so Touched and Files list it (a tool's station is no file). */
+const reach = (c: Crew, id: string): Crew => {
+  if (!id || isSpecial(id)) return c
+  const reached = { ...c.reached, [id]: Date.now() }
+  const keys = Object.keys(reached)
+  if (keys.length > MAX_REACHED) for (const k of keys.filter(k => k !== id).sort((x, y) => reached[x] - reached[y]).slice(0, keys.length - MAX_REACHED)) delete reached[k]
+  return { ...c, reached }
 }
 
 // ─── Progress ───────────────────────────────────────────────────────────────
@@ -1767,17 +1511,6 @@ const doingOf = (a: Agent, c: Pick<Crew, 'tasks'>) => {
 // ─── Demo ───────────────────────────────────────────────────────────────────
 
 const D = (p: string) => `demo/${p}`
-const DEMO_GRAPH: Record<string, string[]> = {
-  'src/main.tsx': ['src/App.tsx', 'src/styles.css'],
-  'src/App.tsx': ['src/api/client.ts', 'src/components/Header.tsx', 'src/hooks/useAuth.ts'],
-  'src/hooks/useAuth.ts': ['src/api/client.ts', 'src/api/token.ts'],
-  'src/api/client.ts': ['src/api/types.ts', 'src/api/token.ts'],
-  'src/components/Header.tsx': ['src/hooks/useAuth.ts'],
-  'tests/auth.test.ts': ['src/hooks/useAuth.ts', 'src/api/token.ts'],
-  'src/api/token.ts': ['src/api/types.ts'],
-  'src/api/types.ts': [],
-  'src/styles.css': [],
-}
 const DEMO_CAST = [
   {
     id: 'demo-1',
@@ -1890,24 +1623,7 @@ const startDemo = () => {
     const now = Date.now()
     if (k === 0) {
       void w(c => {
-        const nodes = { ...c.nodes }
-        Object.entries(DEMO_GRAPH).forEach(([p, imps], i) => {
-          const id = D(p)
-          nodes[id] = {
-            id,
-            label: baseName(p),
-            dir: D(dirOf(p)),
-            kind: 'ghost',
-            x: 0.15 + ((i * 37) % 70) / 100,
-            y: 0.15 + ((i * 53) % 70) / 100,
-            heat: 0,
-            imports: imps.map(D),
-            scanned: true,
-            touchedAt: now,
-            demo: true,
-          }
-        })
-        let d: Crew = { ...c, nodes: relayout(nodes, c.trails) }
+        let d: Crew = c
         for (const cast of DEMO_CAST)
           d = upsert(d, cast.id, a => ({ ...a, name: cast.name, kind: cast.kind, hue: cast.hue, goal: cast.goal, state: 'thinking', progress: -1 }))
         return d
@@ -1942,12 +1658,11 @@ const startDemo = () => {
         return { ...d, summary }
       })
       after?.(20_000, () =>
-        // A demo started since then owns the demo nodes now.
+        // A demo started since then owns the demo's files now.
         void w(c => (run !== demoRun || demo ? c : {
           ...c,
           agents: c.agents.filter(a => !a.id.startsWith('demo-')),
-          nodes: Object.fromEntries(Object.entries(c.nodes).filter(([, n]) => !n.demo)),
-          trails: c.trails.filter(t => !t.a.startsWith('demo/') && !t.b.startsWith('demo/')),
+          reached: Object.fromEntries(Object.entries(c.reached ?? {}).filter(([p]) => !p.startsWith('demo/'))),
           changes: Object.fromEntries(Object.entries(c.changes).filter(([p]) => !p.startsWith('demo/'))),
           demoCodex: [],
           tests: (c.tests ?? []).filter(t => !t.agentId.startsWith('demo-')),
@@ -1991,8 +1706,7 @@ const startDemo = () => {
         const node = raw.startsWith('$') ? raw : D(raw)
         const tool = cast.tools[i]
         const detail = ('detail' in cast ? cast.detail?.[i] : '') || (tool === 'Grep' ? 'refreshToken' : '')
-        const from = d.agents.find(a => a.id === cast.id)?.node ?? ''
-        d = touch(d, node, from)
+        d = reach(d, node)
         const edit = tool !== 'Read' && tool !== 'Grep' && !node.startsWith('$')
         if (tool === 'Bash' && isTestCmd(detail)) {
           const run: TestRun = { id: `test-demo-${cast.id}-${step}`, agentId: cast.id, who: cast.name, hue: cast.hue, command: detail, purpose: step < 3 ? "Run the auth tests to see the real failure" : "Rerun the whole suite after the fix", startedAt: now, endedAt: 0, status: 'running', passed: 0, failed: 0, background: false }
@@ -2007,9 +1721,7 @@ const startDemo = () => {
           )
         d = upsert(d, cast.id, a => ({
           ...a,
-          ...(node !== a.node ? { from: a.node, movedAt: Date.now() } : {}),
           node,
-          visited: [node, ...a.visited].slice(0, 8),
           tool,
           detail,
           state: 'busy',
@@ -2418,7 +2130,6 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const finished = c.agents.filter(a => a.id !== 'main' && (a.state === 'done' || a.state === 'idle'))
     const folded = finished.filter(a => !isOpen(a))
     const waitingOnYou = c.agents.filter(a => a.needs)
-    const files = Object.values(c.nodes).filter(n => n.kind === 'file').length
     const secs = c.startedAt ? Math.floor((Date.now() - c.startedAt) / 1000) : 0
     const uptime = `up ${String(Math.floor(secs / 3600)).padStart(2, '0')}:${String(Math.floor(secs / 60) % 60).padStart(2, '0')}`
 
@@ -2484,7 +2195,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
       const w = waitOf(a, c, Date.now())
       if (w) return [w.what, w.label]
       if (a.tool === COMPACT && a.state === 'busy') return ['compacting', 'freeing up room']
-      if (a.state === 'busy' && a.node && c.nodes[a.node] && !isSpecial(a.node)) return [baseName(a.node), verbOf(a)]
+      if (a.state === 'busy' && a.node && !isSpecial(a.node)) return [baseName(a.node), verbOf(a)]
       // A command: Claude's own words for it, as it runs (not "ran …").
       if (a.state === 'busy' && (a.tool === 'Bash' || a.tool === 'PowerShell'))
         return [(a.actions[0]?.startsWith(SHELL_MARK) ? a.actions[0].slice(SHELL_MARK.length) : cmdGist(a.detail)).replace(/^ran /, ''), 'running']
@@ -2726,7 +2437,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     const desksH = Math.max(glanceList.reduce((n, r) => n + glanceBase(r), 0), anyAtWork ? Math.max(1, deskMax) * 2 : 0)
     // ── Folder cards: each folder the work touched, its files as chips (green edited, red with errors) ──
     // Built from the session's record of touched files (it keeps edits, and the order files were first
-    // reached), not from the tree's capped nodes: an edited file never drops off, a folder never moves.
+    // reached): an edited file never drops off, a folder never moves.
     const q = sq.q.trim().toLowerCase()
     type CardFile = { id: string; label: string; touchedAt: number }
     const cardRel = (id: string) => (id.startsWith('demo/') ? id.slice(5) : sessionDir && id.toLowerCase().startsWith(`${sessionDir.toLowerCase()}/`) ? id.slice(sessionDir.length + 1) : id)
@@ -2736,12 +2447,12 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     for (const [id, ch] of Object.entries(c.changes ?? {}))
       if (!isSpecial(id) && !seenFile.has(id)) {
         seenFile.add(id)
-        cardFiles.push({ id, label: c.nodes[id]?.label || baseName(id), touchedAt: c.nodes[id]?.touchedAt || ch.at || 0 })
+        cardFiles.push({ id, label: baseName(id), touchedAt: c.reached?.[id] || ch.at || 0 })
       }
-    for (const n of Object.values(c.nodes))
-      if (n.kind === 'file' && !isSpecial(n.id) && !seenFile.has(n.id)) {
-        seenFile.add(n.id)
-        cardFiles.push({ id: n.id, label: n.label || baseName(n.id), touchedAt: n.touchedAt || 0 })
+    for (const [id, at] of Object.entries(c.reached ?? {}))
+      if (!isSpecial(id) && !seenFile.has(id)) {
+        seenFile.add(id)
+        cardFiles.push({ id, label: baseName(id), touchedAt: at })
       }
     // Files nested chats touched (any depth), joined to this chat's: one entry per path.
     const nt = nestedTouched()
@@ -3981,7 +3692,6 @@ export const register: Register = on => {
     }
     every = (ms, fn) => $.clock.every(ms, fn)
     readFile = p => $.fs.read(p) as Promise<string>
-    exists = p => $.fs.exists(p)
     demo?.cancel()
     demo = undefined
 
@@ -3989,11 +3699,12 @@ export const register: Register = on => {
     await $.command.register({ name: 'crew-review', description: 'Start a "Crew Review" chat that summarises the recent changes from Claude Crew\'s logs and git (/crew-review 2h, /crew-review since v1.8.8)' })
     await update($, crew, c => {
       // A reload drops in-flight calls and the demo; migrate older state shapes too.
-      const old: Partial<Crew> = Array.isArray(c?.agents) ? c : {}
-      const base: Crew = { agents: [], nodes: {}, trails: [], log: [], calls: 0, startedAt: 0, changes: {}, zoom: 1, showFiles: false, demoCodex: [], editor: 'code', tests: [], problems: [], budget: 0, budgetWarned: 0, turnBase: { at: 0, goal: '', changes: {}, tokens: 0, cost: 0, tests: 0, failed: 0, codex: 0 }, summary: null, ...old, spent: old.spent ?? { tokens: 0, cost: 0 } }
+      // (What older versions kept for the map, the desks and the replay is dropped.)
+      const { nodes: _n, trails: _t, timeline: _f, zoom: _z, showFiles: _s, folds: _o, track: _k, deskOpen: _d, view: _v, cardsOpen: _c, unfolded: _u, ...old } = (Array.isArray(c?.agents) ? c : {}) as Partial<Crew> & Record<string, unknown>
+      const base: Crew = { agents: [], log: [], calls: 0, startedAt: 0, changes: {}, zoom: 1, showFiles: false, demoCodex: [], editor: 'code', tests: [], problems: [], budget: 0, budgetWarned: 0, turnBase: { at: 0, goal: '', changes: {}, tokens: 0, cost: 0, tests: 0, failed: 0, codex: 0 }, summary: null, ...old, spent: old.spent ?? { tokens: 0, cost: 0 } }
       const agents = base.agents
         .filter(a => !a.id.startsWith('demo-'))
-        .map(a => ({ from: '', movedAt: 0, tokens: 0, cost: 0, stuck: '', recent: [], since: 0, ...a }))
+        .map(({ from: _f, movedAt: _m, visited: _v, kinds: _k, ...a }: Agent & Record<string, unknown>) => ({ tokens: 0, cost: 0, stuck: '', recent: [], since: 0, ...a }))
         .map(a => (a.state === 'busy' ? { ...a, state: 'thinking' as const, pending: [] } : a))
       return {
         ...base,
@@ -4009,13 +3720,7 @@ export const register: Register = on => {
         spent: base.spent ?? { tokens: agents.reduce((n, a) => n + (a.tokens ?? 0), 0), cost: agents.reduce((n, a) => n + (a.cost ?? 0), 0) },
         startedAt: base.startedAt || Date.now(),
         agents: agents.some(a => a.id === 'main') ? agents : [MAIN(), ...agents],
-        // Older versions took `import … from '../types'` for a file called `types`: drop those ghosts.
-        nodes: Object.fromEntries(
-          Object.entries(base.nodes)
-            .filter(([id, n]) => !n.demo && !(n.kind === 'ghost' && !/\.[A-Za-z]\w*$/.test(baseName(id))))
-            .map(([id, n]) => [id, { ...n, imports: n.imports.filter(t => /\.[A-Za-z]\w*$/.test(baseName(t))) }]),
-        ),
-        trails: base.trails.filter(t => !t.a.startsWith('demo/') && !t.b.startsWith('demo/')),
+        reached: Object.fromEntries(Object.entries(base.reached ?? {}).filter(([p]) => !p.startsWith('demo/'))),
       }
     })
     // The editor choice lives in the store, so it survives across sessions.
@@ -4492,11 +4197,8 @@ export const register: Register = on => {
     // Reading a background shell's output can settle the test it was running.
     const outputOf = /^(BashOutput|TaskOutput|KillShell|KillBash|TaskStop)$/.test(e.tool) ? String(a.bash_id ?? a.shell_id ?? a.task_id ?? a.id ?? '') : ''
 
-    let fresh = false
     await write?.(c => {
-      const prev = c.agents.find(x => x.id === id)?.node ?? ''
-      fresh = !!node && !c.nodes[node]?.scanned
-      let d = touch(c, node, prev)
+      let d = reach(c, node)
       if (testId) {
         const who = d.agents.find(x => x.id === id)
         const run: TestRun = {
@@ -4531,9 +4233,7 @@ export const register: Register = on => {
       d = upsert(d, id, x => {
         let upd: Agent = {
           ...x,
-          ...(node && node !== x.node ? { from: x.node, movedAt: Date.now() } : {}),
           node: node || x.node,
-          visited: node ? [node, ...x.visited.filter(v => v !== node)].slice(0, 8) : x.visited,
           tool: e.tool,
           detail,
           pending: [...x.pending, callId],
@@ -4565,7 +4265,6 @@ export const register: Register = on => {
       const extra = { call: callId, ...(typeof delta === 'object' && node ? { path: node } : {}), ...(shell ? { more: `$ ${trunc(oneLine(str('command')), 300)}` } : {}) }
       return last && last !== d.log[d.log.length - 1] ? { ...logged, log: [...logged.log.slice(0, -1), { ...last, ...extra }] } : logged
     })
-    if (fresh && CODE_EXT.test(node)) scan(node)
 
     let ran: unknown
     try {
@@ -4655,8 +4354,8 @@ export const register: Register = on => {
           if (found.length && (!ok || testFailed || /\berror\b/i.test(out))) {
             const problems: Problem[] = found.map(p => ({ ...p, source: testLabel(testCmd), by: who?.name ?? 'Claude', hue: who?.hue ?? 0, at: stamp }))
             d = { ...d, problems }
-            // A broken file not on the map yet joins it, so the red mark has somewhere to sit.
-            for (const p of problems.slice(0, 8)) if (!d.nodes[p.path] && Object.keys(d.nodes).length < MAX_NODES) d = touch(d, p.path, '')
+            // A broken file joins Touched, so its red mark has somewhere to sit.
+            for (const p of problems.slice(0, 8)) if (!d.reached?.[p.path]) d = reach(d, p.path)
             problemNote = `✗ ${problems.length} error${problems.length === 1 ? '' : 's'} in ${[...new Set(problems.map(p => baseName(p.path)))].slice(0, 3).join(', ')}`
             d = log(d, id, 'info', `${problemNote} (from ${trunc(testId ? testPurpose(str('command'), str('description')) : cmdGist(str('command')), 50)})`)
           } else if (ok && !testFailed && (testId || isBuildCmd(str('command'))) && (d.problems ?? []).length) {

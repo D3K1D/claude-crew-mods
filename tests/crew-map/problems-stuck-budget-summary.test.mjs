@@ -62,7 +62,7 @@ error: could not compile \`cw\` (bin "cw") due to 2 previous errors`
 await call({ tool: 'Bash', command: 'cd C:/proj && cargo build' }, { text: rust, isError: true })
 let pr = crew().problems
 check('rustc errors become problems with absolute paths', pr.length === 2 && pr[0].path === 'C:/proj/src/world/chunk.rs' && pr[0].line === 42 && pr[0].message === 'mismatched types', JSON.stringify(pr.map(p => [p.path, p.line, p.message])))
-check('broken files join the map', !!crew().nodes['C:/proj/src/world/chunk.rs'] && !!crew().nodes['C:/proj/src/world/gen.rs'])
+check('broken files join Touched', !!crew().reached?.['C:/proj/src/world/chunk.rs'] && !!crew().reached?.['C:/proj/src/world/gen.rs'])
 let tree = await render()
 check('Touched marks broken files red, with how many errors', glyphs(tree, 'top').find(g => g.t === 'chunk.rs')?.role === 'red' && glyphs(tree, 'top').some(g => g.t === '✕1' && g.role === 'red'), said(tree))
 check("Touched's summary counts the problems", words(tree, 'top').some(w => /2 problems/.test(w)), said(tree))
