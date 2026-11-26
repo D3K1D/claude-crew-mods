@@ -296,7 +296,7 @@ const settleTest = (c: Crew, testId: string, out: string, isError: boolean, now:
   const failed = isError || (counts ? counts.failed > 0 : /\b(FAIL|FAILED|failures?:\s*[1-9])\b/.test(out))
   const done: typeof t = { ...t, endedAt: now, status: failed ? 'failed' : 'passed', passed: counts?.passed ?? 0, failed: counts?.failed ?? 0 }
   const secs = Math.max(1, Math.round((now - t.startedAt) / 1000))
-  const d = { ...c, tests: c.tests.map(x => (x.id === testId ? done : x)), turnBase: failed && t.startedAt >= c.turnBase.at && !t.agentId.startsWith('demo-') ? { ...c.turnBase, failed: (c.turnBase.failed ?? 0) + 1 } : c.turnBase }
+  const d = { ...c, tests: c.tests.map(x => (x.id === testId ? done : x)), turnBase: failed && t.startedAt >= c.turnBase.at && !isDemoAgent(t.agentId) ? { ...c.turnBase, failed: (c.turnBase.failed ?? 0) + 1 } : c.turnBase }
   return log(d, t.agentId, 'info', `${failed ? '✗ tests failed' : '✓ tests passed'} (${testWords(done)}) in ${secs}s · ${trunc(t.purpose || testPurpose(t.command, ''), 60)}`)
 }
 
@@ -411,7 +411,7 @@ const stuckReason = (recent: Agent['recent'], now: number): string => {
 
 /** A path relative to the session's folder when it is inside it; demo paths lose their prefix. */
 const relPath = (p: string) =>
-  p.startsWith('demo/') ? p.slice(5) : sessionDir && p.toLowerCase().startsWith(`${sessionDir.toLowerCase()}/`) ? p.slice(sessionDir.length + 1) : shortPath(p)
+  isDemoPath(p) ? p.slice(5) : sessionDir && p.toLowerCase().startsWith(`${sessionDir.toLowerCase()}/`) ? p.slice(sessionDir.length + 1) : shortPath(p)
 
 const summaryMarkdown = (s: Summary) => {
   const lines = [
@@ -432,12 +432,12 @@ const summaryMarkdown = (s: Summary) => {
 const summarise1 = (c: Crew, now: number, codexRuns: number): Summary => {
   const base = c.turnBase
   const files = Object.entries(c.changes)
-    .filter(([p, ch]) => !p.startsWith('demo/') && ch.at >= base.at && ch.edits > 0)
+    .filter(([p, ch]) => !isDemoPath(p) && ch.at >= base.at && ch.edits > 0)
     .map(([path, ch]) => ({ path, added: ch.added - (base.changes[path]?.added ?? 0), removed: ch.removed - (base.changes[path]?.removed ?? 0) }))
     .filter(f => f.added || f.removed)
     .sort((x, y) => y.added + y.removed - (x.added + x.removed))
-  const read = Object.entries(c.changes).filter(([p, ch]) => !p.startsWith('demo/') && ch.at >= base.at && ch.edits === 0).length
-  const lastTest = [...c.tests].reverse().find(t => t.startedAt >= base.at && t.status !== 'running' && !t.agentId.startsWith('demo-'))
+  const read = Object.entries(c.changes).filter(([p, ch]) => !isDemoPath(p) && ch.at >= base.at && ch.edits === 0).length
+  const lastTest = [...c.tests].reverse().find(t => t.startedAt >= base.at && t.status !== 'running' && !isDemoAgent(t.agentId))
   return {
     at: now,
     goal: base.goal,
@@ -1357,7 +1357,7 @@ const upsert = (c: Crew, id: string, fn: (a: Agent) => Agent): Crew => {
   const found = c.agents.find(a => a.id === id)
   const made = fn(found ?? (id === 'main' ? MAIN() : newSub(c, id, 'agent')))
   // A new helper keeps its colour for the whole chat (a pretend session's stay out).
-  if (!found && id !== 'main' && !id.startsWith('demo-') && c.colors?.[id]?.i !== made.hue) c = { ...c, colors: { ...c.colors, [id]: { i: made.hue, at: Date.now() } } }
+  if (!found && id !== 'main' && !isDemoAgent(id) && c.colors?.[id]?.i !== made.hue) c = { ...c, colors: { ...c.colors, [id]: { i: made.hue, at: Date.now() } } }
   const agents = found ? c.agents.map(a => (a.id === id ? made : a)) : [...c.agents, made]
   while (agents.length > MAX_AGENTS) {
     const i = agents.findIndex(a => a.id !== 'main' && (a.state === 'done' || a.state === 'idle'))
@@ -1487,6 +1487,24 @@ const doingOf = (a: Agent, c: Pick<Crew, 'tasks'>) => {
 
 // ─── Demo ───────────────────────────────────────────────────────────────────
 
+// The pretend session's Claudes have ids that start demo-, its files paths that start demo/: that is all
+// that keeps them out of the real record (the journal, the task's summary, costs, colours, touched.json).
+const isDemoAgent = (id: string) => id.startsWith('demo-')
+const isDemoPath = (path: string) => path.startsWith('demo/')
+/** The crew without the pretend session: its Claudes, files, tests, commands, problems and Codex run. */
+const withoutDemo = (c: Crew): Crew => {
+  const real = <T,>(o: Record<string, T> | undefined) => o && Object.fromEntries(Object.entries(o).filter(([p]) => !isDemoPath(p)))
+  return {
+    ...c,
+    agents: c.agents.filter(a => !isDemoAgent(a.id)),
+    changes: real(c.changes) ?? {},
+    reached: real(c.reached),
+    tests: (c.tests ?? []).filter(t => !isDemoAgent(t.agentId)),
+    shells: c.shells?.filter(x => !isDemoAgent(x.agentId)),
+    problems: (c.problems ?? []).filter(p => !isDemoPath(p.path)),
+    demoCodex: [],
+  }
+}
 const D = (p: string) => `demo/${p}`
 const DEMO_CAST = [
   {
@@ -1617,14 +1635,14 @@ const startDemo = () => {
           d = log(upsert(d, cast.id, a => ({ ...a, state: 'done', doneAt: now, pending: [] })), cast.id, 'info', 'finished')
         // A pretend summary card for the pretend task.
         const files = Object.entries(d.changes)
-          .filter(([p, ch]) => p.startsWith('demo/') && ch.edits)
+          .filter(([p, ch]) => isDemoPath(p) && ch.edits)
           .map(([path, ch]) => ({ path, added: ch.added, removed: ch.removed }))
         const summary: Summary = {
           at: now,
           goal: 'Demo: fix the token refresh race and keep the auth tests green',
           ms: now - started,
           files,
-          read: Object.entries(d.changes).filter(([p, ch]) => p.startsWith('demo/') && !ch.edits).length,
+          read: Object.entries(d.changes).filter(([p, ch]) => isDemoPath(p) && !ch.edits).length,
           tests: { runs: 2, failed: 1, last: 'passed (42 passed)' },
           tokens: 184_000,
           cost: 1.37,
@@ -1636,22 +1654,14 @@ const startDemo = () => {
       })
       after?.(20_000, () =>
         // A demo started since then owns the demo's files now.
-        void w(c => (run !== demoRun || demo ? c : {
-          ...c,
-          agents: c.agents.filter(a => !a.id.startsWith('demo-')),
-          reached: Object.fromEntries(Object.entries(c.reached ?? {}).filter(([p]) => !p.startsWith('demo/'))),
-          changes: Object.fromEntries(Object.entries(c.changes).filter(([p]) => !p.startsWith('demo/'))),
-          demoCodex: [],
-          tests: (c.tests ?? []).filter(t => !t.agentId.startsWith('demo-')),
-          problems: (c.problems ?? []).filter(p => !p.path.startsWith('demo/')),
-        })),
+        void w(c => (run !== demoRun || demo ? c : withoutDemo(c))),
       )
       return
     }
     void w(c => {
       let d: Crew = { ...c, demoCodex: demoCodexAt(step, now, c.demoCodex ?? []) }
       // The Helper's test runs come back a step later: the first one fails, the rerun passes.
-      for (const t of (d.tests ?? []).filter(x => x.status === 'running' && x.agentId.startsWith('demo-'))) {
+      for (const t of (d.tests ?? []).filter(x => x.status === 'running' && isDemoAgent(x.agentId))) {
         const first = t.command === 'npm test -- auth'
         d = settleTest(d, t.id, first ? 'Tests:       1 failed, 41 passed, 42 total' : 'Tests:       42 passed, 42 total', first, now)
         // The failing run names the line it failed on; the rerun clears it.
@@ -1663,7 +1673,7 @@ const startDemo = () => {
                 { path: D('src/hooks/useAuth.ts'), line: 18, message: 'TypeError: Cannot read properties of undefined (reading "token")', source: t.command, by: t.who, hue: t.hue, at: now },
               ],
             }
-          : { ...d, problems: (d.problems ?? []).filter(p => !p.path.startsWith('demo/')) }
+          : { ...d, problems: (d.problems ?? []).filter(p => !isDemoPath(p.path)) }
       }
       DEMO_CAST.forEach(cast => {
         // The Architect hands its work to Codex for a few steps and waits on it.
@@ -1896,7 +1906,7 @@ const openFolder = async ($: EngineInterface, path: string): Promise<Opened> => 
 
 /** Opens a file or folder from a click, and says so: "Opening …", or why it could not. */
 const openAndSay = async ($: EngineInterface, what: 'file' | 'dir', path: string, name: string, hasEdits = false, line = 0) => {
-  if (path.startsWith('demo/')) return void $.ui.toast(`${name} is a pretend file from the demo.`)
+  if (isDemoPath(path)) return void $.ui.toast(`${name} is a pretend file from the demo.`)
   const route = what === 'file' ? routeOf(path, await platformOf($)) : 'dir'
   const where = { dir: ' in the file manager', app: ' in its app', editor: '', reveal: ' in its folder (a program or script: shown, not run)' }[route]
   void $.ui.toast(`${route === 'reveal' ? 'Showing' : 'Opening'} ${name}${where}…`)
@@ -1908,7 +1918,7 @@ const openAndSay = async ($: EngineInterface, what: 'file' | 'dir', path: string
 const OUTSIDE = '~outside'
 /** A file's folder relative to the session's ('.' for its top), or OUTSIDE. */
 const groupOf = (id: string) => {
-  if (id.startsWith('demo/')) return dirOf(id.slice(5)) || '.'
+  if (isDemoPath(id)) return dirOf(id.slice(5)) || '.'
   if (sessionDir && id.toLowerCase().startsWith(`${sessionDir.toLowerCase()}/`)) {
     const d = dirOf(id)
     return d.length > sessionDir.length ? d.slice(sessionDir.length + 1) : '.'
@@ -2135,7 +2145,7 @@ const paneModel = async ($: EngineInterface, cols: number, bodyRows: number, web
     let upto = held ? allLog.filter(l => l.at <= (lv.anchor as number)) : allLog
     if (!upto.length) upto = allLog.slice(0, 1)
     const newerCount = allLog.length - upto.length
-    const demoOn = c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done')
+    const demoOn = c.agents.some(a => isDemoAgent(a.id) && a.state !== 'done')
     // The chat's cost as Claude Code totals it, else what the crew counted of it.
     const ownCost = c.chatCost ?? c.spent?.cost ?? c.agents.reduce((n, a) => n + (a.cost ?? 0), 0)
     // With its nested chats' (each counts its own, so none twice): one total, and the budget applies to it.
@@ -2937,7 +2947,7 @@ const webView = async ($: EngineInterface) => {
             editor: m.c.editor || 'code',
             hideOutside: !!m.c.hideOutside,
             outside: [actId({ k: 'set', hideOutside: false }), actId({ k: 'set', hideOutside: true })],
-            demoOn: m.c.agents.some(a => a.id.startsWith('demo-') && a.state !== 'done'),
+            demoOn: m.c.agents.some(a => isDemoAgent(a.id) && a.state !== 'done'),
             demo: actId({ k: 'demo' }),
             autoSave: !!m.c.autoSave,
             autoActs: [actId({ k: 'set', autoSave: false }), actId({ k: 'set', autoSave: true })],
@@ -3122,7 +3132,7 @@ const syncJournal = async ($: EngineInterface) => {
   const c = await readCrew?.()
   // Not until the journal is open: what is on disk goes in first, in its own chunks.
   if (!c || !journalOpen) return
-  const demoNames = new Set(c.agents.filter(a => a.id.startsWith('demo-')).map(a => a.name))
+  const demoNames = new Set(c.agents.filter(a => isDemoAgent(a.id)).map(a => a.name))
   const demoOn = demoNames.size > 0
   for (const l of c.log) if (!demoNames.has(l.who) && !(demoOn && l.who === 'Claude')) addToJournal(l)
   if (journalDir)
@@ -3153,7 +3163,7 @@ const writeTouched = async ($: EngineInterface, c: Crew) => {
   const errs = new Map<string, number>()
   for (const p of c.problems ?? []) errs.set(p.path, (errs.get(p.path) ?? 0) + 1)
   const files: TouchedFile[] = Object.entries(c.changes ?? {})
-    .filter(([p]) => !isSpecial(p) && !p.startsWith('demo/'))
+    .filter(([p]) => !isSpecial(p) && !isDemoPath(p))
     .sort((x, y) => y[1].at - x[1].at)
     .slice(0, 200)
     .map(([path, ch]) => ({ path, ...ch, ...(errs.get(path) ? { errs: errs.get(path) } : {}), ...(busy.has(path) ? { editing: true } : {}) }))
@@ -3640,26 +3650,20 @@ export const register: Register = on => {
       // A reload drops in-flight calls and the demo; migrate older state shapes too.
       // (What older versions kept for the map, the desks and the replay is dropped.)
       const { nodes: _n, trails: _t, timeline: _f, zoom: _z, showFiles: _s, folds: _o, track: _k, deskOpen: _d, view: _v, cardsOpen: _c, unfolded: _u, ...old } = (Array.isArray(c?.agents) ? c : {}) as Partial<Crew> & Record<string, unknown>
-      const base: Crew = { ...EMPTY, ...old, spent: old.spent ?? { tokens: 0, cost: 0 } }
+      const base = withoutDemo({ ...EMPTY, ...old, spent: old.spent ?? { tokens: 0, cost: 0 } })
       const agents = base.agents
-        .filter(a => !a.id.startsWith('demo-'))
         .map(({ from: _f, movedAt: _m, visited: _v, kinds: _k, ...a }: Agent & Record<string, unknown>) => ({ tokens: 0, cost: 0, stuck: '', recent: [], since: 0, ...a }))
         .map(a => (a.state === 'busy' ? { ...a, state: 'thinking' as const, pending: [] } : a))
       return {
         ...base,
         logView: undefined,
-        changes: Object.fromEntries(Object.entries(base.changes).filter(([p]) => !p.startsWith('demo/'))),
-        demoCodex: [],
         // A reload loses the calls that were waiting on tests; a background run may still be going but can't be followed.
         tests: (base.tests ?? [])
-          .filter(t => !t.agentId.startsWith('demo-'))
           .map(t => (t.status === 'running' ? { ...t, status: 'unknown' as const, endedAt: Date.now() } : t)),
-        shells: (base.shells ?? []).filter(x => !x.agentId.startsWith('demo-') && x.status === 'running' && x.background && x.shellId),
-        problems: (base.problems ?? []).filter(p => !p.path.startsWith('demo/')),
+        shells: (base.shells ?? []).filter(x => x.status === 'running' && x.background && x.shellId),
         spent: base.spent ?? { tokens: agents.reduce((n, a) => n + (a.tokens ?? 0), 0), cost: agents.reduce((n, a) => n + (a.cost ?? 0), 0) },
         startedAt: base.startedAt || Date.now(),
         agents: agents.some(a => a.id === 'main') ? agents : [MAIN(), ...agents],
-        reached: Object.fromEntries(Object.entries(base.reached ?? {}).filter(([p]) => !p.startsWith('demo/'))),
       }
     })
     // The editor choice lives in the store, so it survives across sessions.
@@ -3875,7 +3879,7 @@ export const register: Register = on => {
         cost: (a.cost ?? 0) + (u ? costOf(u) : 0),
       }))
       let f = log(d, id, 'info', e.reason === 'answer' ? 'finished' : `stopped (${e.reason})`)
-      if (u && !id.startsWith('demo-')) f = { ...f, spent: { tokens: (f.spent?.tokens ?? 0) + tokensOf(u), cost: (f.spent?.cost ?? 0) + costOf(u) } }
+      if (u && !isDemoAgent(id)) f = { ...f, spent: { tokens: (f.spent?.tokens ?? 0) + tokensOf(u), cost: (f.spent?.cost ?? 0) + costOf(u) } }
       // Spending: said once each as it passes half, 80% and all of the budget.
       const spent = f.spent?.cost ?? 0
       if (f.budget > 0) {
@@ -3998,7 +4002,7 @@ export const register: Register = on => {
         })
         // The summarising call costs tokens too; turns do not count them.
         const u = r?.usage
-        const spent = u && !id.startsWith('demo-') ? { tokens: (d.spent?.tokens ?? 0) + tokensOf(u), cost: (d.spent?.cost ?? 0) + costOf(u) } : d.spent
+        const spent = u && !isDemoAgent(id) ? { tokens: (d.spent?.tokens ?? 0) + tokensOf(u), cost: (d.spent?.cost ?? 0) + costOf(u) } : d.spent
         return log({ ...d, spent }, id, 'info', line)
       })
     }
