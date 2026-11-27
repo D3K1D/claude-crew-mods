@@ -2,7 +2,7 @@
 
 Newest first. Claude Crew is the `crew-map` plugin and Codex Bridge is the `codex-bridge` plugin.
 
-## Claude Crew 1.9.0 · Codex Bridge 1.2.5 (unreleased)
+## Claude Crew 1.9.0 · Codex Bridge 1.2.5 (2026-11-27)
 
 - A cleanup release; nothing you see changes. The code the old picture pane left behind is gone: the map, its layout and import scanning, the replay, and a hook that ran on every tool call. That's about 900 lines, and Claude Crew no longer reads every code file Claude opens.
 - The hooks module is split into files by job: the record (`track.ts`), the view (`model.ts`), the website and journal (`web.ts`), the pretend session (`demo.ts`), and the hooks with the text pane (`register.tsx`).
